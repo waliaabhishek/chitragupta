@@ -107,9 +107,17 @@ tenants:
 
     plugin_settings:
       # ── Cluster identity ───────────────────────────────────────────────────
-      # cluster_id: identifier used internally to reference this cluster's resources.
-      # Does not need to match the Kafka cluster.id property — it's for Chitragupta's DB only.
+      # cluster_id: Chitragupta's logical resource identifier for this cluster.
+      # It is not the Prometheus target selector and need not match Kafka's cluster.id.
       cluster_id: kafka-dc1
+
+      # Required operator-defined Prometheus target label value for this cluster.
+      # Every scraped broker target, including separately exposed endpoints, must have
+      # this exact label/value. It is separate from cluster_id.
+      metrics_identifier: kafka-dc1
+      # Prometheus target label name. Default: kafka_cluster_id; change only when
+      # your scrape configuration uses another label name.
+      metrics_identifier_label: kafka_cluster_id
 
       # broker_count: number of brokers in this cluster.
       # Used to compute total compute cost = broker_count * compute_hourly_rate * hours.
@@ -162,29 +170,22 @@ tenants:
         # bearer_token: "${PROMETHEUS_TOKEN}"
 
       # ── Identity source ────────────────────────────────────────────────────
-      # How to discover which principals (users/service accounts) are active.
-      # 'prometheus': extracts principals from metric labels (recommended — no extra setup).
-      # 'static': load from the static_identities list below.
-      # 'both': combine prometheus discovery with the static list.
+      # Quota telemetry is evidence about principal identity; it does not derive
+      # usage-weighted allocations. Static identities are the visible policy set.
+      # 'prometheus': record quota-telemetry evidence only.
+      # 'static': allocate across static_identities with measured_usage=false.
+      # 'both': retain static policy allocation and record quota evidence.
       identity_source:
-        source: prometheus
+        source: static
 
-        # default_team: team assigned to principals that have no explicit mapping.
-        default_team: UNASSIGNED
-
-        # principal_to_team: map Kafka principals to internal team names (optional).
-        # Used for allocation — costs are grouped by team in reports.
-        # principal_to_team:
-        #   "User:alice": platform-team
-        #   "User:bob": data-team
-        #   "ServiceAccount:etl": ingest-team
-
-        # static_identities: manually-defined identities (used when source=static or both).
-        # static_identities:
-        #   - identity_id: "User:alice"
-        #     identity_type: principal        # principal, team, or service_account
-        #     display_name: Alice Smith       # optional — human-readable label
-        #     team: platform-team             # optional — explicit team assignment
+        # static_identities: visible policy identities used by static and both.
+        static_identities:
+          - identity_id: platform-team
+            identity_type: team
+            display_name: Platform Team
+          - identity_id: data-team
+            identity_type: team
+            display_name: Data Team
 
       # ── Resource source ────────────────────────────────────────────────────
       # How to discover Kafka resources (topics, partitions).
@@ -201,16 +202,9 @@ tenants:
         # sasl_password: "${KAFKA_PASSWORD}"
 
       # ── Discovery window ───────────────────────────────────────────────────
-      # How many hours of Prometheus data to scan when discovering resources and identities.
+      # How many hours of Prometheus data to scan when discovering brokers and topics.
       # Default 1 hour is sufficient for most setups. Increase if metrics are sparse.
       # discovery_window_hours: 1
-
-      # ── Allocation tuning (optional) ───────────────────────────────────────
-      # Allocator-specific numeric/string/bool params passed to all allocators.
-      # Keys and semantics are allocator-defined.
-      # allocator_params:
-      #   min_bytes_threshold: 1073741824    # 1 GiB — principals below this excluded from usage ratio
-      #   fallback_to_even_split: true       # boolean param; interpretation is allocator-specific
 
       # ── Allocator overrides (optional) ─────────────────────────────────────
       # Override the default allocation strategy for specific product types.

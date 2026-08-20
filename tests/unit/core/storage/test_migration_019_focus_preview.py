@@ -194,7 +194,10 @@ def test_current_preview_migrations_match_create_all_schema(tmp_path: Path) -> N
     migrated_inspector = sa_inspect(migrated)
     direct_inspector = sa_inspect(direct)
 
-    migrated_tables = set(migrated_inspector.get_table_names()) - {"alembic_version"}
+    migrated_tables = set(migrated_inspector.get_table_names()) - {
+        "alembic_version",
+        "self_managed_kafka_scope_state",
+    }
     direct_tables = set(direct_inspector.get_table_names())
     assert migrated_tables == direct_tables
     for table in migrated_tables:

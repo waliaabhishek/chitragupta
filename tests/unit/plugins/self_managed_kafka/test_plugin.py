@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -13,6 +13,7 @@ from pydantic import ValidationError
 def base_settings() -> dict:
     return {
         "cluster_id": "kafka-001",
+        "metrics_identifier": "kraft-a-001",
         "broker_count": 3,
         "cost_model": {
             "compute_hourly_rate": "0.10",
@@ -253,209 +254,6 @@ class TestPluginInjectsDependencies:
         assert cost_input._metrics_source is plugin._metrics_source
 
 
-class TestPluginPrincipalLabelValidationStep:
-    """task-013: _validate_principal_label must use metrics_step_seconds from config."""
-
-    def test_validate_principal_label_uses_step_from_config(self, base_settings: dict) -> None:
-        from datetime import timedelta
-        from unittest.mock import MagicMock, patch
-
-        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
-
-        base_settings["identity_source"] = {"source": "prometheus"}
-        base_settings["metrics_step_seconds"] = 1800
-
-        plugin = SelfManagedKafkaPlugin()
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
-            mock_metrics = MagicMock()
-            mock_metrics.query.return_value = {"distinct_principals": []}
-            mock_create.return_value = mock_metrics
-
-            plugin.initialize(base_settings)
-
-        _, call_kwargs = mock_metrics.query.call_args
-        assert call_kwargs["step"] == timedelta(seconds=1800)
-
-    def test_validate_principal_label_default_step_is_one_hour(self, base_settings: dict) -> None:
-        from datetime import timedelta
-        from unittest.mock import MagicMock, patch
-
-        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
-
-        base_settings["identity_source"] = {"source": "prometheus"}
-        # No metrics_step_seconds → default 3600s → timedelta(hours=1)
-
-        plugin = SelfManagedKafkaPlugin()
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
-            mock_metrics = MagicMock()
-            mock_metrics.query.return_value = {"distinct_principals": []}
-            mock_create.return_value = mock_metrics
-
-            plugin.initialize(base_settings)
-
-        _, call_kwargs = mock_metrics.query.call_args
-        assert call_kwargs["step"] == timedelta(hours=1)
-
-
-class TestPluginPrincipalLabelValidation:
-    """Issue 3: startup validation of 'principal' label availability in Prometheus."""
-
-    def test_initialize_validates_principal_label_available(self, base_settings):
-        """Prometheus returns rows with 'principal' label → _prometheus_principals_available = True."""
-        from unittest.mock import MagicMock, patch
-
-        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
-
-        base_settings["identity_source"] = {"source": "prometheus"}
-
-        mock_row = MagicMock()
-        mock_row.labels = {"broker": "0", "topic": "orders", "principal": "User:alice"}
-
-        plugin = SelfManagedKafkaPlugin()
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
-            mock_metrics = MagicMock()
-            mock_metrics.query.return_value = {"combined_discovery": [mock_row]}
-            mock_create.return_value = mock_metrics
-
-            plugin.initialize(base_settings)
-
-        assert plugin._prometheus_principals_available is True
-
-    def test_initialize_warns_when_principal_label_missing(self, base_settings):
-        """Prometheus returns rows without 'principal' label → WARNING logged, flag = False."""
-        from unittest.mock import MagicMock, patch
-
-        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
-
-        base_settings["identity_source"] = {"source": "prometheus"}
-
-        mock_row = MagicMock()
-        mock_row.labels = {"broker": "0", "topic": "orders"}  # No 'principal' label
-
-        plugin = SelfManagedKafkaPlugin()
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
-            mock_metrics = MagicMock()
-            mock_metrics.query.return_value = {"combined_discovery": [mock_row]}
-            mock_create.return_value = mock_metrics
-
-            with patch("plugins.self_managed_kafka.plugin.logger") as mock_logger:
-                plugin.initialize(base_settings)
-                mock_logger.warning.assert_called_once()
-                warning_msg = mock_logger.warning.call_args[0][0]
-                assert "principal" in warning_msg.lower()
-
-        assert plugin._prometheus_principals_available is False
-
-    def test_initialize_handles_prometheus_unreachable(self, base_settings):
-        """MetricsQueryError during validation → WARNING logged, plugin continues."""
-        from unittest.mock import MagicMock, patch
-
-        from core.metrics.protocol import MetricsQueryError
-        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
-
-        base_settings["identity_source"] = {"source": "prometheus"}
-
-        plugin = SelfManagedKafkaPlugin()
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
-            mock_metrics = MagicMock()
-            mock_metrics.query.side_effect = MetricsQueryError("connection refused")
-            mock_create.return_value = mock_metrics
-
-            with patch("plugins.self_managed_kafka.plugin.logger") as mock_logger:
-                # Must not raise — plugin continues gracefully
-                plugin.initialize(base_settings)
-                mock_logger.warning.assert_called_once()
-
-        assert plugin._prometheus_principals_available is False
-        assert plugin._handler is not None
-
-    def test_gather_identities_static_fallback_when_prometheus_unavailable(self, base_settings):
-        """When principal label unavailable and static_identities configured → static identities returned."""
-        from unittest.mock import MagicMock, patch
-
-        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
-
-        base_settings["identity_source"] = {
-            "source": "prometheus",
-            "static_identities": [
-                {"identity_id": "User:alice", "identity_type": "principal", "display_name": "Alice"},
-            ],
-        }
-
-        plugin = SelfManagedKafkaPlugin()
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
-            mock_metrics = MagicMock()
-            # No principal labels → _prometheus_principals_available = False
-            mock_metrics.query.return_value = {"distinct_principals": []}
-            mock_create.return_value = mock_metrics
-
-            plugin.initialize(base_settings)
-
-        assert plugin._prometheus_principals_available is False
-
-        handler = plugin.get_service_handlers()["kafka"]
-        mock_uow = MagicMock()
-        identities = list(handler.gather_identities("tenant-1", mock_uow))
-
-        identity_ids = [i.identity_id for i in identities]
-        assert "User:alice" in identity_ids
-
-
-class TestPluginDiscoveryWindowHours:
-    """task-050: discovery_window_hours config option threading."""
-
-    def test_validate_principal_label_passes_discovery_window_to_combined(self, base_settings: dict) -> None:
-        """_validate_principal_label passes discovery_window_hours to run_combined_discovery."""
-        from unittest.mock import MagicMock, patch
-
-        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
-
-        base_settings["identity_source"] = {"source": "prometheus"}
-        base_settings["discovery_window_hours"] = 6
-
-        plugin = SelfManagedKafkaPlugin()
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
-            mock_metrics = MagicMock()
-            mock_metrics.query.return_value = {"combined_discovery": []}
-            mock_create.return_value = mock_metrics
-
-            with patch("plugins.self_managed_kafka.gathering.prometheus.run_combined_discovery") as mock_discovery:
-                mock_discovery.return_value = (frozenset(), frozenset(), frozenset())
-                plugin.initialize(base_settings)
-
-        # Check discovery_window_hours was passed
-        _, call_kwargs = mock_discovery.call_args
-        assert call_kwargs.get("discovery_window_hours") == 6
-
-    def test_build_shared_context_passes_discovery_window_to_combined(self, base_settings: dict) -> None:
-        """build_shared_context passes discovery_window_hours to run_combined_discovery."""
-        from unittest.mock import MagicMock, patch
-
-        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
-
-        base_settings["identity_source"] = {"source": "prometheus"}
-        base_settings["discovery_window_hours"] = 12
-
-        plugin = SelfManagedKafkaPlugin()
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source") as mock_create:
-            mock_metrics = MagicMock()
-            mock_create.return_value = mock_metrics
-
-            # Bypass _validate_principal_label to isolate build_shared_context
-            with patch.object(SelfManagedKafkaPlugin, "_validate_principal_label"):
-                plugin.initialize(base_settings)
-
-        # Clear cached discovery so build_shared_context actually calls run_combined_discovery
-        plugin._cached_discovery = None
-
-        with patch("plugins.self_managed_kafka.gathering.prometheus.run_combined_discovery") as mock_discovery:
-            mock_discovery.return_value = (frozenset(), frozenset(), frozenset())
-            plugin.build_shared_context("tenant-1")
-
-        _, call_kwargs = mock_discovery.call_args
-        assert call_kwargs.get("discovery_window_hours") == 12
-
-
 class TestPluginGetFallbackAllocator:
     """Tests for get_fallback_allocator() — GAP-074."""
 
@@ -465,3 +263,39 @@ class TestPluginGetFallbackAllocator:
 
         plugin = SelfManagedKafkaPlugin()
         assert plugin.get_fallback_allocator() is None
+
+
+class TestPluginTelemetryWiring:
+    def test_initialize_wires_configured_selector_without_startup_principal_inference(
+        self, base_settings: dict
+    ) -> None:
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        source = MagicMock()
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+            plugin.initialize(base_settings)
+
+        assert plugin.get_service_handlers()["kafka"]._config.metrics_identifier == "kraft-a-001"
+        assert plugin.get_cost_input()._config.metrics_identifier_label == "kafka_cluster_id"
+        source.query.assert_not_called()
+
+    def test_initialize_rejects_missing_metrics_identifier(self, base_settings: dict) -> None:
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        del base_settings["metrics_identifier"]
+
+        with pytest.raises(ValidationError) as error:
+            SelfManagedKafkaPlugin().initialize(base_settings)
+
+        assert error.value.errors()[0]["loc"] == ("metrics_identifier",)
+
+    def test_plugin_implements_scope_gate_protocol(self, base_settings: dict) -> None:
+        from core.plugin.protocols import ScopeGatePlugin
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=MagicMock()):
+            plugin.initialize(base_settings)
+
+        assert isinstance(plugin, ScopeGatePlugin)

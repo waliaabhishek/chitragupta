@@ -29,30 +29,29 @@ ECOSYSTEM = "self_managed_kafka"
 # Bytes per GiB (2^30)
 _BYTES_PER_GIB = Decimal("1073741824")
 
-# PromQL queries for cluster-wide cost construction.
-# No {} placeholder needed since we want cluster-wide totals (no resource filter).
-_BYTES_IN_QUERY = MetricQuery(
-    key="cluster_bytes_in",
-    query_expression="sum(increase(kafka_server_brokertopicmetrics_bytesin_total[1h]))",
-    label_keys=(),
-    resource_label="",
-)
 
-_BYTES_OUT_QUERY = MetricQuery(
-    key="cluster_bytes_out",
-    query_expression="sum(increase(kafka_server_brokertopicmetrics_bytesout_total[1h]))",
-    label_keys=(),
-    resource_label="",
-)
-
-_STORAGE_QUERY = MetricQuery(
-    key="cluster_storage_bytes",
-    query_expression="sum(kafka_log_log_size)",
-    label_keys=(),
-    resource_label="",
-)
-
-_COST_QUERIES: list[MetricQuery] = [_BYTES_IN_QUERY, _BYTES_OUT_QUERY, _STORAGE_QUERY]
+def _cost_queries(metrics_identifier_label: str) -> list[MetricQuery]:
+    """Build cost queries bound to this configured Prometheus target scope."""
+    return [
+        MetricQuery(
+            key="cluster_bytes_in",
+            query_expression="sum(increase(kafka_server_brokertopicmetrics_bytesin_total{}[1h]))",
+            label_keys=(),
+            resource_label=metrics_identifier_label,
+        ),
+        MetricQuery(
+            key="cluster_bytes_out",
+            query_expression="sum(increase(kafka_server_brokertopicmetrics_bytesout_total{}[1h]))",
+            label_keys=(),
+            resource_label=metrics_identifier_label,
+        ),
+        MetricQuery(
+            key="cluster_storage_bytes",
+            query_expression="sum(kafka_log_log_size{})",
+            label_keys=(),
+            resource_label=metrics_identifier_label,
+        ),
+    ]
 
 
 def _day_starts(start: datetime, end: datetime) -> Iterable[tuple[datetime, datetime]]:
@@ -111,12 +110,14 @@ class ConstructedCostInput(CostInput):
         Falls back to per-day queries if the batched query fails, preserving
         partial billing when only some days are unavailable.
         """
+        queries = _cost_queries(self._config.metrics_identifier_label)
         try:
             all_metrics = self._metrics_source.query(
-                queries=_COST_QUERIES,
+                queries=queries,
                 start=start,
                 end=end,
                 step=timedelta(seconds=self._config.metrics_step_seconds),
+                resource_id_filter=self._config.metrics_identifier,
             )
         except MetricsQueryError as exc:
             logger.warning(
@@ -126,7 +127,7 @@ class ConstructedCostInput(CostInput):
                 end.date(),
                 exc,
             )
-            yield from self._gather_day_by_day_fallback(tenant_id, start, end)
+            yield from self._gather_day_by_day_fallback(tenant_id, start, end, queries)
             return
 
         for day_start, day_end in _day_starts(start, end):
@@ -138,15 +139,17 @@ class ConstructedCostInput(CostInput):
         tenant_id: str,
         start: datetime,
         end: datetime,
+        queries: list[MetricQuery],
     ) -> Iterable[BillingLineItem]:
         """Original day-by-day query behavior used when the batched query fails."""
         for day_start, day_end in _day_starts(start, end):
             try:
                 metrics = self._metrics_source.query(
-                    queries=_COST_QUERIES,
+                    queries=queries,
                     start=day_start,
                     end=day_end,
                     step=timedelta(seconds=self._config.metrics_step_seconds),
+                    resource_id_filter=self._config.metrics_identifier,
                 )
             except MetricsQueryError as exc:
                 logger.warning(

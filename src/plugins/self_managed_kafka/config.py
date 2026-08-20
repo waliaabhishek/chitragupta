@@ -6,7 +6,7 @@ import logging
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from core.config.models import PluginSettingsBase
 from core.metrics.config import MetricsConnectionConfig  # noqa: TC001 — Pydantic evaluates field annotations at runtime
@@ -74,6 +74,15 @@ class SelfManagedKafkaConfig(PluginSettingsBase):
     """Validates plugin_settings for ecosystem='self_managed_kafka'."""
 
     cluster_id: str  # Logical identifier for this cluster (used as resource_id in billing)
+    metrics_identifier: str = Field(
+        min_length=1,
+        description="Operator-defined Prometheus label value used to scope this configured Kafka cluster.",
+    )
+    metrics_identifier_label: str = Field(
+        default="kafka_cluster_id",
+        min_length=1,
+        description="Prometheus target label name that carries metrics_identifier.",
+    )
     broker_count: int = Field(gt=0)  # Used for compute cost calculation
     region: str | None = None  # Optional region for cost overrides
     cost_model: CostModelConfig
@@ -81,6 +90,13 @@ class SelfManagedKafkaConfig(PluginSettingsBase):
     resource_source: ResourceSourceConfig = Field(default_factory=ResourceSourceConfig)
     metrics: MetricsConnectionConfig  # Required for cost construction + allocation
     discovery_window_hours: int = Field(default=1, gt=0)
+
+    @field_validator("metrics_identifier", "metrics_identifier_label")
+    @classmethod
+    def validate_metrics_selector_value(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
 
     @classmethod
     def from_plugin_settings(cls, settings: dict[str, Any]) -> SelfManagedKafkaConfig:

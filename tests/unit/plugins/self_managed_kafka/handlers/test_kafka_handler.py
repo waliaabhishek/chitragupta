@@ -36,6 +36,7 @@ def base_config():
     return SelfManagedKafkaConfig.from_plugin_settings(
         {
             "cluster_id": "kafka-001",
+            "metrics_identifier": "kraft-a-001",
             "broker_count": 3,
             "cost_model": {
                 "compute_hourly_rate": "0.10",
@@ -55,6 +56,7 @@ def static_config():
     return SelfManagedKafkaConfig.from_plugin_settings(
         {
             "cluster_id": "kafka-001",
+            "metrics_identifier": "kraft-a-001",
             "broker_count": 3,
             "cost_model": {
                 "compute_hourly_rate": "0.10",
@@ -76,15 +78,6 @@ def static_config():
 @pytest.fixture
 def mock_metrics_source():
     return MagicMock()
-
-
-def make_metric_row(key: str, principal: str, value: float) -> MetricRow:
-    return MetricRow(
-        timestamp=datetime(2026, 2, 1, tzinfo=UTC),
-        metric_key=key,
-        value=value,
-        labels={"principal": principal},
-    )
 
 
 class TestHandlerProperties:
@@ -126,7 +119,7 @@ class TestGatherResources:
         ctx = SMKSharedContext(
             cluster_resource=_make_smk_ctx("kafka-001").cluster_resource,
             discovered_brokers=frozenset({"0"}),
-            discovered_topics=frozenset(),
+            discovered_topics=frozenset({"orders"}),
         )
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
         uow = MagicMock()
@@ -135,6 +128,11 @@ class TestGatherResources:
         resource_types = [r.resource_type for r in resources]
         assert "cluster" in resource_types
         assert "broker" in resource_types
+        assert "topic" in resource_types
+        assert {(resource.resource_type, resource.parent_id) for resource in resources[1:]} == {
+            ("broker", "kafka-001"),
+            ("topic", "kafka-001"),
+        }
         mock_metrics_source.query.assert_not_called()
 
     def test_admin_api_source_uses_admin_client(self, mock_metrics_source):
@@ -144,6 +142,7 @@ class TestGatherResources:
         config = SelfManagedKafkaConfig.from_plugin_settings(
             {
                 "cluster_id": "kafka-001",
+                "metrics_identifier": "kraft-a-001",
                 "broker_count": 3,
                 "cost_model": {
                     "compute_hourly_rate": "0.10",
@@ -181,6 +180,7 @@ class TestGatherResources:
         config = SelfManagedKafkaConfig.from_plugin_settings(
             {
                 "cluster_id": "kafka-001",
+                "metrics_identifier": "kraft-a-001",
                 "broker_count": 3,
                 "cost_model": {
                     "compute_hourly_rate": "0.10",
@@ -206,269 +206,75 @@ class TestGatherResources:
         assert resource_types == {"cluster"}
 
 
-class TestGatherIdentities:
-    def test_prometheus_source_queries_metrics(self, base_config, mock_metrics_source):
+class TestHandlerIdentityResolution:
+    def test_broker_topic_rows_never_create_principal_identities(
+        self, base_config, mock_metrics_source: MagicMock
+    ) -> None:
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-        from plugins.self_managed_kafka.shared_context import SMKSharedContext
 
-        ctx = SMKSharedContext(
-            cluster_resource=_make_smk_ctx("kafka-001").cluster_resource,
-            discovered_brokers=frozenset(),
-            discovered_topics=frozenset(),
-            discovered_principals=frozenset({"User:alice"}),
-        )
+        mock_metrics_source.query.return_value = {"quota_byte_rate": [], "quota_throttle_time_ms": []}
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        uow = MagicMock()
-
-        # Populate _current_gather_ctx via gather_resources first
-        list(handler.gather_resources("tenant-1", uow, ctx))
-
-        identities = list(handler.gather_identities("tenant-1", uow))
-        assert len(identities) == 1
-        assert identities[0].identity_id == "User:alice"
-        mock_metrics_source.query.assert_not_called()
-
-    def test_static_source_loads_from_config(self, static_config, mock_metrics_source):
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        handler = SelfManagedKafkaHandler(static_config, mock_metrics_source)
-        uow = MagicMock()
-
-        identities = list(handler.gather_identities("tenant-1", uow))
-        assert len(identities) == 1
-        assert identities[0].identity_id == "team-data"
-        # Should NOT query Prometheus for identities
-        mock_metrics_source.query.assert_not_called()
-
-    def test_both_source_combines_prometheus_and_static(self, mock_metrics_source):
-        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-        from plugins.self_managed_kafka.shared_context import SMKSharedContext
-
-        config = SelfManagedKafkaConfig.from_plugin_settings(
-            {
-                "cluster_id": "kafka-001",
-                "broker_count": 3,
-                "cost_model": {
-                    "compute_hourly_rate": "0.10",
-                    "storage_per_gib_hourly": "0.0001",
-                    "network_ingress_per_gib": "0.01",
-                    "network_egress_per_gib": "0.02",
-                },
-                "identity_source": {
-                    "source": "both",
-                    "static_identities": [{"identity_id": "team-data", "identity_type": "team"}],
-                },
-                "metrics": {"url": "http://prom:9090"},
-            }
-        )
-
-        ctx = SMKSharedContext(
-            cluster_resource=_make_smk_ctx("kafka-001").cluster_resource,
-            discovered_brokers=frozenset(),
-            discovered_topics=frozenset(),
-            discovered_principals=frozenset({"User:alice"}),
-        )
-
-        handler = SelfManagedKafkaHandler(config, mock_metrics_source)
-        uow = MagicMock()
-
-        # Populate _current_gather_ctx via gather_resources first
-        list(handler.gather_resources("tenant-1", uow, ctx))
-
-        identities = list(handler.gather_identities("tenant-1", uow))
-        ids = {i.identity_id for i in identities}
-        assert "User:alice" in ids
-        assert "team-data" in ids
-
-
-class TestResolveIdentities:
-    def test_prometheus_source_extracts_principals_from_metrics_data(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        metrics_data = {
-            "bytes_in_per_principal": [make_metric_row("bytes_in_per_principal", "User:alice", 1000.0)],
+        broker_topic_rows = {
+            "topic_bytes": [
+                MetricRow(
+                    timestamp=datetime(2026, 8, 1, tzinfo=UTC),
+                    metric_key="topic_bytes",
+                    value=4096.0,
+                    labels={
+                        "broker": "1",
+                        "topic": "orders",
+                        "kafka_cluster_id": "kraft-a-001",
+                        "principal": "accidental-label",
+                    },
+                )
+            ]
         }
-        uow = MagicMock()
 
         resolution = handler.resolve_identities(
-            "tenant-1", "kafka-001", datetime(2026, 2, 1, tzinfo=UTC), timedelta(days=1), metrics_data, uow
+            "tenant-1",
+            "kafka-001",
+            datetime(2026, 8, 1, tzinfo=UTC),
+            timedelta(days=1),
+            broker_topic_rows,
+            MagicMock(),
         )
 
-        assert "User:alice" in resolution.metrics_derived
+        assert resolution.metrics_derived.ids() == frozenset()
+        assert resolution.context["principal_attribution_status"] == "not_observed"
 
-    def test_no_metrics_data_returns_empty_resolution(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        uow = MagicMock()
-
-        resolution = handler.resolve_identities(
-            "tenant-1", "kafka-001", datetime(2026, 2, 1, tzinfo=UTC), timedelta(days=1), None, uow
-        )
-
-        assert len(resolution.metrics_derived) == 0
-        assert len(resolution.resource_active) == 0
-
-    def test_static_source_populates_resource_active(self, static_config, mock_metrics_source):
+    def test_static_identities_remain_resource_active_policy_inputs(
+        self, static_config, mock_metrics_source: MagicMock
+    ) -> None:
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(static_config, mock_metrics_source)
-        uow = MagicMock()
-
         resolution = handler.resolve_identities(
-            "tenant-1", "kafka-001", datetime(2026, 2, 1, tzinfo=UTC), timedelta(days=1), None, uow
+            "tenant-1",
+            "kafka-001",
+            datetime(2026, 8, 1, tzinfo=UTC),
+            timedelta(days=1),
+            None,
+            MagicMock(),
         )
 
-        assert "team-data" in resolution.resource_active
+        assert resolution.resource_active.ids() == frozenset({"team-data"})
+        assert resolution.context["principal_attribution_status"] == "policy_only_configured"
+        mock_metrics_source.query.assert_not_called()
 
-    def test_both_source_populates_both_sets(self, mock_metrics_source):
-        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        config = SelfManagedKafkaConfig.from_plugin_settings(
-            {
-                "cluster_id": "kafka-001",
-                "broker_count": 3,
-                "cost_model": {
-                    "compute_hourly_rate": "0.10",
-                    "storage_per_gib_hourly": "0.0001",
-                    "network_ingress_per_gib": "0.01",
-                    "network_egress_per_gib": "0.02",
-                },
-                "identity_source": {
-                    "source": "both",
-                    "static_identities": [{"identity_id": "team-data", "identity_type": "team"}],
-                },
-                "metrics": {"url": "http://prom:9090"},
-            }
-        )
-
-        handler = SelfManagedKafkaHandler(config, mock_metrics_source)
-        metrics_data = {"bytes_in_per_principal": [make_metric_row("bytes_in_per_principal", "User:alice", 1000.0)]}
-        uow = MagicMock()
-
-        resolution = handler.resolve_identities(
-            "tenant-1", "kafka-001", datetime(2026, 2, 1, tzinfo=UTC), timedelta(days=1), metrics_data, uow
-        )
-
-        assert "team-data" in resolution.resource_active
-        assert "User:alice" in resolution.metrics_derived
-
-    def test_prometheus_unavailable_falls_back_to_static_in_resolve(self, mock_metrics_source):
-        """When prometheus_principals_available=False and static_identities configured,
-        resolve_identities() uses static identities instead of metrics_data."""
-        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        config = SelfManagedKafkaConfig.from_plugin_settings(
-            {
-                "cluster_id": "kafka-001",
-                "broker_count": 3,
-                "cost_model": {
-                    "compute_hourly_rate": "0.10",
-                    "storage_per_gib_hourly": "0.0001",
-                    "network_ingress_per_gib": "0.01",
-                    "network_egress_per_gib": "0.02",
-                },
-                "identity_source": {
-                    "source": "prometheus",
-                    "static_identities": [{"identity_id": "User:alice", "identity_type": "principal"}],
-                },
-                "metrics": {"url": "http://prom:9090"},
-            }
-        )
-
-        handler = SelfManagedKafkaHandler(config, mock_metrics_source, prometheus_principals_available=False)
-        metrics_data = {"bytes_in_per_principal": [make_metric_row("bytes_in_per_principal", "User:bob", 1000.0)]}
-        uow = MagicMock()
-
-        resolution = handler.resolve_identities(
-            "tenant-1", "kafka-001", datetime(2026, 2, 1, tzinfo=UTC), timedelta(days=1), metrics_data, uow
-        )
-
-        # Static fallback: alice from static_identities
-        assert "User:alice" in resolution.resource_active
-        # Prometheus path skipped: bob (from metrics_data) not in metrics_derived
-        assert "User:bob" not in resolution.metrics_derived
-
-
-class TestGetMetricsForProductType:
-    def test_prometheus_source_returns_principal_metrics(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-
-        for pt in (
+    @pytest.mark.parametrize(
+        "product_type",
+        [
             "SELF_KAFKA_COMPUTE",
             "SELF_KAFKA_STORAGE",
             "SELF_KAFKA_NETWORK_INGRESS",
             "SELF_KAFKA_NETWORK_EGRESS",
-        ):
-            metrics = handler.get_metrics_for_product_type(pt)
-            assert len(metrics) == 2
-            metric_keys = {m.key for m in metrics}
-            assert "bytes_in_per_principal" in metric_keys
-            assert "bytes_out_per_principal" in metric_keys
-
-    def test_static_source_returns_empty_metrics(self, static_config, mock_metrics_source):
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        handler = SelfManagedKafkaHandler(static_config, mock_metrics_source)
-
-        for pt in (
-            "SELF_KAFKA_COMPUTE",
-            "SELF_KAFKA_STORAGE",
-            "SELF_KAFKA_NETWORK_INGRESS",
-            "SELF_KAFKA_NETWORK_EGRESS",
-        ):
-            metrics = handler.get_metrics_for_product_type(pt)
-            assert metrics == []
-
-    def test_unknown_product_type_returns_empty(self, base_config, mock_metrics_source):
+        ],
+    )
+    def test_product_types_do_not_request_principal_broker_topic_metrics(
+        self, product_type: str, base_config, mock_metrics_source: MagicMock
+    ) -> None:
         from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_metrics_for_product_type("UNKNOWN") == []
 
-
-class TestGetAllocator:
-    def test_compute_allocator(self, base_config, mock_metrics_source):
-        from core.engine.allocation_models import ChainModel
-        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_COMPUTE") is SMK_INFRA_MODEL
-        assert isinstance(handler.get_allocator("SELF_KAFKA_COMPUTE"), ChainModel)
-
-    def test_storage_allocator(self, base_config, mock_metrics_source):
-        from core.engine.allocation_models import ChainModel
-        from plugins.self_managed_kafka.allocation_models import SMK_INFRA_MODEL
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_STORAGE") is SMK_INFRA_MODEL
-        assert isinstance(handler.get_allocator("SELF_KAFKA_STORAGE"), ChainModel)
-
-    def test_network_ingress_allocator(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.allocation_models import SMK_INGRESS_MODEL
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_NETWORK_INGRESS") is SMK_INGRESS_MODEL
-
-    def test_network_egress_allocator(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.allocation_models import SMK_EGRESS_MODEL
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        assert handler.get_allocator("SELF_KAFKA_NETWORK_EGRESS") is SMK_EGRESS_MODEL
-
-    def test_unknown_product_type_raises(self, base_config, mock_metrics_source):
-        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-
-        handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
-        with pytest.raises(ValueError, match="Unknown product type"):
-            handler.get_allocator("UNKNOWN_TYPE")
+        assert handler.get_metrics_for_product_type(product_type) == []

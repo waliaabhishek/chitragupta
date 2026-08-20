@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 TABLE_NAME = "ccloud_focus_preview_retention_outcomes"
 
 
-def test_revision_032_is_head_and_uses_guarded_preview_hook() -> None:
+def test_revision_032_uses_guarded_preview_hook_while_the_next_revision_is_head() -> None:
     config = _config("sqlite:///unused.db")
     script = ScriptDirectory.from_config(config)
     migration_path = (
@@ -30,7 +30,7 @@ def test_revision_032_is_head_and_uses_guarded_preview_hook() -> None:
         / "032_add_focus_preview_retention_outcomes.py"
     )
 
-    assert script.get_current_head() == "032"
+    assert script.get_current_head() == "033"
     source = migration_path.read_text(encoding="utf-8")
     assert 'run_preview_evidence_step("032")' in source
     assert 'run_preview_evidence_downgrade_step("032")' in source
@@ -89,7 +89,7 @@ def test_downgrade_032_removes_only_retention_outcome_table(
     assert "ccloud_preview_source_allocation_lineage_portions" in tables
 
 
-def test_runtime_preview_preparation_targets_revision_032(
+def test_runtime_preview_preparation_targets_current_revision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -113,4 +113,4 @@ def test_runtime_preview_preparation_targets_revision_032(
     finally:
         backend.dispose()
 
-    assert calls == ["032"]
+    assert calls == ["033"]

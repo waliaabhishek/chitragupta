@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -73,6 +73,41 @@ class TestGatherClusterResource:
             "self_managed_kafka", "t1", "my-cluster", 3, display_name="Production Cluster"
         )
         assert resource.display_name == "Production Cluster"
+
+
+class TestBrokerTopicDiscovery:
+    def test_discovery_is_cluster_scoped_and_does_not_interpret_principal_labels(self) -> None:
+        from plugins.self_managed_kafka.gathering.prometheus import run_broker_topic_discovery
+
+        metrics_source = MagicMock()
+        metrics_source.query.return_value = {
+            "broker_topic_discovery": [
+                make_row(
+                    "broker_topic_discovery",
+                    {
+                        "kafka_cluster_id": "kraft-a-001",
+                        "broker": "1",
+                        "topic": "orders",
+                        "principal": "accidental-label",
+                    },
+                )
+            ]
+        }
+
+        brokers, topics = run_broker_topic_discovery(
+            metrics_source,
+            metrics_identifier_label="kafka_cluster_id",
+            metrics_identifier="kraft-a-001",
+            step=timedelta(hours=1),
+        )
+
+        assert brokers == frozenset({"1"})
+        assert topics == frozenset({"orders"})
+        _, kwargs = metrics_source.query.call_args
+        assert kwargs["resource_id_filter"] == "kraft-a-001"
+        query = kwargs["queries"][0]
+        assert query.label_keys == ("broker", "topic")
+        assert query.resource_label == "kafka_cluster_id"
 
 
 class TestLoadStaticIdentities:

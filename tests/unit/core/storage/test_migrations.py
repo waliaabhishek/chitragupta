@@ -143,6 +143,7 @@ class TestBaselineMigration:
             "ccloud_allocation_lineage_runs",
             "ccloud_billing",
             "ccloud_cost_source_records",
+            "self_managed_kafka_scope_state",
         }
 
         tables_m = set(inspector_m.get_table_names()) - {"alembic_version"} - plugin_tables

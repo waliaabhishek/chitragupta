@@ -22,6 +22,8 @@ tenants:
       connection_string: "sqlite:///data/kafka-prod.db"
     plugin_settings:
       cluster_id: kafka-prod-cluster
+      metrics_identifier: kafka-prod-target
+      metrics_identifier_label: kafka_cluster_id
       broker_count: 3
       region: us-east-1
       cost_model:
@@ -33,11 +35,12 @@ tenants:
           eu-west-1:
             compute_hourly_rate: "0.60"
       identity_source:
-        source: prometheus
-        principal_to_team:
-          "User:alice": team-data-eng
-          "User:bob": team-platform
-        default_team: UNASSIGNED
+        source: static
+        static_identities:
+          - identity_id: team-data-eng
+            identity_type: team
+          - identity_id: team-platform
+            identity_type: team
       resource_source:
         source: prometheus
       metrics:
@@ -55,7 +58,9 @@ tenants:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `cluster_id` | string | required | Logical cluster identifier (used as resource_id) |
+| `cluster_id` | string | required | Logical Chitragupta resource ID for the cluster; it is not the Prometheus target selector |
+| `metrics_identifier` | string | required | Operator-defined value used to select this cluster's Prometheus targets |
+| `metrics_identifier_label` | string | `kafka_cluster_id` | Prometheus target-label name carrying `metrics_identifier` |
 | `broker_count` | int | required | Number of brokers (for compute cost) |
 | `region` | string | optional | Region for cost override lookup |
 | `cost_model.compute_hourly_rate` | Decimal | required | Per broker-hour cost |
@@ -63,17 +68,17 @@ tenants:
 | `cost_model.network_ingress_per_gib` | Decimal | required | Per GiB ingress cost |
 | `cost_model.network_egress_per_gib` | Decimal | required | Per GiB egress cost |
 | `cost_model.region_overrides` | dict | `{}` | Override any rate field per region |
-| `identity_source.source` | enum | `prometheus` | `prometheus`, `static`, or `both` |
-| `identity_source.principal_to_team` | dict | `{}` | Map principal ID → team name |
-| `identity_source.default_team` | string | `UNASSIGNED` | Team for unmapped principals |
-| `identity_source.static_identities` | list | `[]` | Hard-coded identities (for `static` / `both`) |
+| `identity_source.source` | enum | `prometheus` | `prometheus`, `static`, or `both`; controls quota-evidence collection and static policy identities |
+| `identity_source.principal_to_team` | dict | `{}` | Optional identity metadata; it does not make BrokerTopicMetrics principal evidence |
+| `identity_source.default_team` | string | `UNASSIGNED` | Optional identity metadata; it does not change static-policy allocation |
+| `identity_source.static_identities` | list | `[]` | Visible policy identities for `static` / `both`; allocations are marked `measured_usage=false` |
 | `resource_source.source` | enum | `prometheus` | `prometheus` or `admin_api` |
 | `resource_source.bootstrap_servers` | string | optional | Required for `admin_api` source |
 | `resource_source.sasl_mechanism` | enum | optional | `PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512` |
 | `resource_source.sasl_username` | string | optional | SASL username (required when `sasl_mechanism` is set) |
 | `resource_source.sasl_password` | secret | optional | SASL password (required when `sasl_mechanism` is set) |
 | `resource_source.security_protocol` | enum | `PLAINTEXT` | `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT`, `SASL_SSL` |
-| `identity_source.discovery_window_hours` | int | 1 | Hours of Prometheus data to scan for identity discovery (must be > 0) |
+| `discovery_window_hours` | int | 1 | Hours of Prometheus data to scan for broker/topic discovery (must be > 0) |
 | `metrics.url` | string | required | Prometheus URL |
 | `metrics.auth_type` | enum | `none` | `basic`, `bearer`, or `none` |
 | `allocator_overrides` | dict | `{}` | Replace allocator for specific product types (see [Advanced Scenarios](advanced-scenarios.md)) |
@@ -81,68 +86,94 @@ tenants:
 
 ## Required Prometheus metrics
 
-The cost model derives costs from these JMX exporter metrics:
+The cost model and target-scope check require these Prometheus metrics:
 
 | Metric | Type | Used for |
 |---|---|---|
-| `kafka_server_brokertopicmetrics_bytesin_total` | counter | Network ingress cost, identity discovery (principal label), CKU-equivalent usage attribution |
-| `kafka_server_brokertopicmetrics_bytesout_total` | counter | Network egress cost, identity discovery |
+| `kafka_server_brokertopicmetrics_bytesin_total` | counter | Network ingress cost and broker/topic discovery; it is not principal identity evidence |
+| `kafka_server_brokertopicmetrics_bytesout_total` | counter | Network egress cost; it is not principal identity evidence |
 | `kafka_log_log_size` | gauge | Storage cost (cluster-wide average) |
+| `up` | gauge | Required target-scope validation for every billing window |
+
+When `identity_source.source` is `prometheus` or `both`, the plugin also evaluates
+these optional quota-evidence series:
+
+| Metric | Type | Used for |
+|---|---|---|
+| `kafka_server_quota_byte_rate` | gauge | Principal-attribution evidence when quota telemetry is configured and observed |
+| `kafka_server_quota_throttle_time_ms` | gauge | Supplemental quota-throttling evidence |
+
+Each quota row must include the `quota_type`, `quota_scope`, `user`, and
+`client_id` labels. Accepted `quota_scope` values are `user`, `client-id`, and
+`user-client`; the associated user and/or client ID must be a real identity, not
+an empty or `not_applicable` value. Byte-rate values must be finite. Throttle
+rows use the same label validation, but a non-finite throttle value is reported
+as no finite positive throttling observed rather than as invalid quota evidence.
 
 Network metrics are queried with `sum(increase(...[1h]))` per step (summing hourly
 deltas gives total bytes transferred). Storage is averaged across all samples in the
 day (since it's a point-in-time gauge, not a cumulative counter).
 
-!!! note "Labels matter"
-    For identity discovery via Prometheus, the `principal` label must be present on
-    `kafka_server_brokertopicmetrics_bytesin_total`. If your JMX exporter doesn't
-    include this label, set `identity_source.source: static` and list identities
-    manually.
+## Prometheus target scope
 
-    The engine runs a combined discovery query at gather time:
-    ```promql
-    group by (broker, topic, principal) (kafka_server_brokertopicmetrics_bytesin_total{})
-    ```
-    This single query extracts brokers, topics, and principals in one round-trip.
+`cluster_id` remains the logical resource ID used in Chitragupta output. It does
+not select a Prometheus target. Set the required `metrics_identifier` to the
+operator-controlled value that identifies this cluster's metrics, and use
+`metrics_identifier_label` when your target label is not the default
+`kafka_cluster_id`.
+
+Every scraped broker target must carry the exact configured label/value, including
+separate JMX exporter or broker endpoints. For example, this configuration requires
+the scope selector:
+
+```promql
+up{kafka_cluster_id="kafka-prod-target"}
+```
+
+When scope validation fails, the runtime diagnostic is:
+`expected Prometheus target label <metrics_identifier_label>=<metrics_identifier>`.
+Query `up{<metrics_identifier_label>="<metrics_identifier>"}` and correct target
+relabeling or metric injection on every broker endpoint before retrying.
+
+The target must be present and healthy across each billing window. A missing target,
+label mismatch, incomplete coverage, or unhealthy target fails closed: billing and
+pipeline progress do not advance for that window. Topic metrics and quota metrics
+can appear lazily, so neither proves target scope.
+
+### Scope blocking and recovery
+
+When scope validation fails, Chitragupta opens a breaker before billing work is
+committed. While the breaker is open, billing and pipeline progress remain blocked.
+A later run performs one targeted health probe rather than starting the normal gather
+workload. Once healthy, it recovers the still-available windows in chronological
+order, bounded by the configured lookback range. If the earliest blocked windows are
+no longer available, the retained gap is reported as a retention gap; the engine does
+not fabricate billing for it.
 
 ## Produced product types
 
 | Product type | Cost formula | Allocation strategy | Why this strategy |
 |---|---|---|---|
-| `SELF_KAFKA_COMPUTE` | `broker_count × 24h × compute_hourly_rate` | Even split | Compute is shared infrastructure — every team benefits equally from broker availability regardless of their traffic volume. |
-| `SELF_KAFKA_STORAGE` | `avg_gib × 24h × storage_per_gib_hourly` | Even split | Storage is cluster-wide; individual principal contribution to log size is not directly measurable from JMX metrics. |
-| `SELF_KAFKA_NETWORK_INGRESS` | `sum_bytes_in ÷ 2^30 × network_ingress_per_gib` | Usage ratio (bytes in per principal) | Ingress is directly attributable — the `principal` label on `bytesin_total` tells you exactly who produced the data. |
-| `SELF_KAFKA_NETWORK_EGRESS` | `sum_bytes_out ÷ 2^30 × network_egress_per_gib` | Usage ratio (bytes out per principal) | Same as ingress — `bytesout_total` by principal measures actual consumption. |
+| `SELF_KAFKA_COMPUTE` | `broker_count × 24h × compute_hourly_rate` | Static policy split | Shared infrastructure is allocated across visible static policy identities. |
+| `SELF_KAFKA_STORAGE` | `avg_gib × 24h × storage_per_gib_hourly` | Static policy split | Storage is cluster-wide and is not inferred from a principal label. |
+| `SELF_KAFKA_NETWORK_INGRESS` | `sum_bytes_in ÷ 2^30 × network_ingress_per_gib` | Static policy split | BrokerTopicMetrics supplies the cluster total, not measured per-principal usage. |
+| `SELF_KAFKA_NETWORK_EGRESS` | `sum_bytes_out ÷ 2^30 × network_egress_per_gib` | Static policy split | BrokerTopicMetrics supplies the cluster total, not measured per-principal usage. |
 
 See [How Costs Work](../architecture/cost-model.md) for the complete math with
 worked examples.
 
-## Identity discovery via Prometheus
+## Principal evidence and static policy allocation
 
-With `identity_source.source: prometheus`, principals are extracted from metric labels
-during the discovery phase and again during identity resolution for each billing window:
+BrokerTopicMetrics is used for cluster costs and broker/topic discovery; it does not
+carry principal identity for allocation. With `identity_source.source: prometheus`
+or `both`, Chitragupta evaluates the configured quota telemetry for each billing
+window. Missing quota byte-rate telemetry is reported as `not_observed`, rather
+than being treated as a principal identity. Structurally valid throttle rows with
+non-finite values report that no positive throttling was observed; they do not turn
+the source into measured usage.
 
-```promql
-# Discovery (gather phase) — find all principals with any traffic
-group by (broker, topic, principal) (kafka_server_brokertopicmetrics_bytesin_total{})
-
-# Billing resolution (calculate phase) — per-principal bytes in a specific window
-sum by (principal) (increase(kafka_server_brokertopicmetrics_bytesin_total[1h]))
-```
-
-The first query runs once per gather cycle and populates the resource and identity
-inventory. The second runs per billing window and determines which principals were
-active during that specific period (stored as `metrics_derived` identities).
-
-### Fallback behavior
-
-If the engine discovers zero principals from Prometheus (e.g., the metric exists but
-has no `principal` label), the allocation chain falls through:
-
-1. **Usage ratio** — skipped (no per-principal data)
-2. **Even split across `resource_active`** — uses static identities if configured
-3. **Even split across `tenant_period`** — all identities seen during the billing period
-4. **Terminal** — allocates to `UNALLOCATED`
-
-Check `allocation_detail` on chargeback rows to see which tier fired. If you see
-`NO_METRICS_LOCATED` on network costs, your principal labels are likely missing.
+Static identities are the allocation policy visible to operators. For `static` and
+`both`, costs are split across those identities and chargeback rows state
+`measured_usage=false`. Quota telemetry supplies evidence status only; it does not
+change that policy split. If no static policy identities are configured, the normal
+unallocated outcome makes the missing policy visible instead of inventing an owner.

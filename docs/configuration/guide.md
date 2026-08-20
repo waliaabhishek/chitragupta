@@ -307,12 +307,12 @@ How does the engine discover your brokers and topics?
 
 | Source | How it works | Tradeoffs |
 |---|---|---|
-| `prometheus` (default) | Extracts broker, topic, and principal labels from `kafka_server_brokertopicmetrics_bytesin_total` | Zero additional credentials. Only discovers resources that have traffic. A topic with zero bytes in the discovery window won't appear. |
-| `admin_api` | Queries the Kafka AdminClient for cluster metadata | Discovers *all* topics including idle ones. Requires bootstrap server credentials. Does **not** discover principals (no ACL info). |
+| `prometheus` (default) | Extracts broker and topic labels from `kafka_server_brokertopicmetrics_bytesin_total` | Zero additional credentials. Only discovers resources that have traffic. A topic with zero bytes in the discovery window won't appear. |
+| `admin_api` | Queries the Kafka AdminClient for cluster metadata | Discovers *all* topics including idle ones. Requires bootstrap server credentials. |
 
 **When to use `admin_api`:** If you need a complete inventory of topics regardless
-of traffic. Combine with `identity_source: prometheus` or `both` to still get
-principal data from metrics.
+of traffic. Principal evidence and allocation policy remain separate from resource
+discovery.
 
 ```yaml
 resource_source:
@@ -324,22 +324,43 @@ resource_source:
   sasl_password: ${KAFKA_PASS}
 ```
 
-### Choosing an identity source
+### Binding a cluster to Prometheus targets
 
-How does the engine discover who is producing/consuming?
+`cluster_id` is the logical Chitragupta resource ID. Set the required
+`metrics_identifier` independently to the operator-defined Prometheus target value;
+`metrics_identifier_label` names that label and defaults to `kafka_cluster_id`.
+Every scraped broker target, including separately exposed JMX exporter endpoints,
+must carry the exact configured label/value.
+
+For each billing window, Chitragupta validates the exact target selector, for
+example `up{kafka_cluster_id="kafka-dc1"}`. A missing, mismatched, incomplete, or
+unhealthy target fails closed before billing or progress is committed. Its open
+breaker keeps both blocked. Later runs perform one targeted probe; once healthy,
+recovery proceeds chronologically within the available lookback range and records an
+older unavailable portion as a retention gap. Topic and quota series can appear only
+when active, so neither proves this target scope.
+
+### Choosing principal evidence and allocation policy
+
+BrokerTopicMetrics does not provide principal identity for allocation. How should
+the engine report quota evidence and choose visible policy identities?
 
 | Source | How it works | Tradeoffs |
 |---|---|---|
-| `prometheus` (default) | Extracts `principal` label from JMX metrics | Requires JMX exporter configured to expose principal labels. Only finds principals with recent traffic. |
-| `static` | You list identities in YAML | Works without Prometheus principal labels. You maintain the list manually. |
-| `both` | Combines Prometheus + static | Prometheus principals go to `metrics_derived` (dynamic, per-window). Static identities go to `resource_active` (always present). Good when Prometheus has partial coverage. |
+| `prometheus` (default) | Records quota-telemetry evidence for each billing window | Requires exported quota telemetry. It does not create policy identities or usage-weighted allocation. |
+| `static` | You list identities in YAML | Uses those visible identities for a policy split with `measured_usage=false`. |
+| `both` | Keeps static policy identities and records quota evidence | Useful when operators want a stable policy allocation plus evidence status. |
 
 **Which one should you use?**
 
-- If your JMX exporter includes `principal` labels on `kafka_server_brokertopicmetrics_*` → use `prometheus`
-- If JMX doesn't expose principal labels (common with older exporters) → use `static`
-- If some principals appear in metrics but you also want to include service accounts
-  that rarely produce traffic → use `both`
+- Use `prometheus` when quota telemetry is available and you need its evidence status.
+- Use `static` when operators define the allocation policy directly.
+- Use `both` when the static policy must remain visible while quota evidence is also recorded.
+
+Missing quota byte-rate telemetry is `not_observed`. Structurally valid non-finite
+throttle samples indicate no positive throttling was observed; they are not
+measured usage. In all cases, quota evidence does not replace the static policy
+split.
 
 ```yaml
 # Static identities example
@@ -354,22 +375,6 @@ identity_source:
       identity_type: service_account
       display_name: Bob (ETL service)
       team: platform
-```
-
-### Principal-to-team mapping
-
-Regardless of identity source, you can map raw principal IDs to team names. This
-is purely cosmetic — it doesn't affect allocation — but makes chargeback reports
-readable.
-
-```yaml
-identity_source:
-  source: prometheus
-  principal_to_team:
-    "User:alice": team-data-eng
-    "User:bob": team-platform
-    "User:etl-service": team-platform
-  default_team: UNASSIGNED    # Principals not in the map get this
 ```
 
 ---
@@ -660,6 +665,8 @@ tenants:
       connection_string: "sqlite:///data/kafka-dc1.db"
     plugin_settings:
       cluster_id: kafka-dc1-cluster
+      metrics_identifier: kafka-dc1
+      metrics_identifier_label: kafka_cluster_id
       broker_count: 5
       cost_model:
         compute_hourly_rate: "0.45"
@@ -668,10 +675,6 @@ tenants:
         network_egress_per_gib: "0.09"
       identity_source:
         source: both
-        principal_to_team:
-          "User:etl-service": team-platform
-          "User:analytics": team-data
-        default_team: UNASSIGNED
         static_identities:
           - identity_id: "User:batch-job"
             identity_type: service_account
@@ -695,7 +698,7 @@ This configuration:
 - Runs the pipeline hourly, processing both tenants in parallel
 - CCloud: fetches billing from the API, allocates CKUs 70/30, uses Telemetry API
   metrics for per-principal network attribution
-- On-prem: constructs billing from Prometheus metrics and your rates, discovers
-  principals from JMX labels plus a static entry for a batch job that rarely
-  appears in metrics
+- On-prem: constructs billing from target-scoped Prometheus metrics and your rates,
+  discovers brokers/topics separately, records quota evidence, and uses visible
+  static policy identities for allocation
 - Both tenants emit to CSV and (CCloud only) Prometheus

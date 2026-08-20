@@ -187,6 +187,27 @@ class TestSelfManagedExamples:
     def test_self_managed_full(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _load(EXAMPLES_DIR / "self-managed-full" / "config.yaml", PROM_ENV, monkeypatch)
 
+    def test_self_managed_full_declares_a_prometheus_scope_selector_separate_from_logical_cluster_id(self) -> None:
+        source = (EXAMPLES_DIR / "self-managed-full" / "config.yaml").read_text(encoding="utf-8")
+
+        assert "metrics_identifier:" in source
+        assert "metrics_identifier_label: kafka_cluster_id" in source
+        assert "Prometheus target label" in source
+
+    def test_self_managed_operator_docs_do_not_describe_broker_topic_metrics_as_principal_evidence(self) -> None:
+        documents = (
+            Path("docs/configuration/self-managed-reference.md").read_text(encoding="utf-8"),
+            Path("docs/configuration/guide.md").read_text(encoding="utf-8"),
+            (EXAMPLES_DIR / "self-managed-full" / "README.md").read_text(encoding="utf-8"),
+        )
+        config = (EXAMPLES_DIR / "self-managed-full" / "config.yaml").read_text(encoding="utf-8")
+
+        assert all("metrics_identifier" in source for source in documents)
+        assert "metrics_identifier" in config
+        assert "metrics_identifier_label: kafka_cluster_id" in config
+        assert all("principal label on BrokerTopicMetrics" not in source for source in documents)
+        assert all("quota" in source.lower() for source in documents)
+
 
 class TestSelfManagedKafkaTelemetryLabExample:
     LAB_DIR = EXAMPLES_DIR / "self-managed-kafka-telemetry-lab"

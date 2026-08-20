@@ -80,7 +80,7 @@ def test_direct_disabled_offline_upgrade_through_head_requires_online_preflight(
 ) -> None:
     output = io.StringIO()
     config = _config("sqlite:///offline.db", selection=selection, output=output)
-    assert ScriptDirectory.from_config(config).get_current_head() == "032"
+    assert ScriptDirectory.from_config(config).get_current_head() == "033"
     with pytest.raises(
         RuntimeError,
         match=r"migration 029 requires an online database connection.*without --sql",
@@ -327,7 +327,7 @@ def test_incompatible_preview_schema_does_not_block_all_core_revisions_through_h
     version_engine = create_engine(url)
     try:
         with version_engine.connect() as connection:
-            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "032"
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "033"
     finally:
         version_engine.dispose()
     assert backend.preview_evidence_availability.state.value == "unavailable"

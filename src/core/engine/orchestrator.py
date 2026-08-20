@@ -24,6 +24,10 @@ from core.models.pipeline import PipelineState
 from core.plugin.protocols import (
     OverlayPlugin,
     PreviewOrganizationGatherer,
+    ScopeBlockedError,
+    ScopeGateDecision,
+    ScopeGatePlugin,
+    ScopeGateResult,
     SupplementalResourceGatherer,
     TopicDiscoveryPlugin,
 )
@@ -78,6 +82,30 @@ def _get_ta_config(plugin: EcosystemPlugin) -> OverlayConfig | None:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _recovery_target_dates(
+    pending_states: Sequence[PipelineState],
+    result: ScopeGateResult,
+) -> set[date_type]:
+    """Return pending dates whose daily interval intersects the recovered range."""
+    if result.recovery_start is None or result.recovery_end is None:
+        return set()
+    dates: set[date_type] = set()
+    for pipeline_state in pending_states:
+        day_start = result.recovery_start.replace(
+            year=pipeline_state.tracking_date.year,
+            month=pipeline_state.tracking_date.month,
+            day=pipeline_state.tracking_date.day,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        day_end = day_start + timedelta(days=1)
+        if day_start < result.recovery_end and day_end > result.recovery_start:
+            dates.add(pipeline_state.tracking_date)
+    return dates
 
 
 def _safe_database_root_cause(exc: BaseException) -> str:
@@ -570,6 +598,17 @@ class GatherPhase:
         else:
             logger.warning("Skipping identity deletion detection — incomplete gather for %s", self._tenant_id)
 
+        plugin = self._bundle.plugin
+        if isinstance(plugin, ScopeGatePlugin):
+            scope_result = plugin.prepare_gather_scope(
+                self._tenant_id,
+                plan.refresh_start,
+                plan.refresh_end,
+                uow,
+            )
+            if scope_result.decision is not ScopeGateDecision.ALLOW:
+                raise ScopeBlockedError(scope_result)
+
         billing_result = self._gather_billing(uow, plan, source_attempt=source_attempt)
         gathered_billing_dates = set(billing_result.dates)
 
@@ -1047,6 +1086,15 @@ class CalculatePhase:
         else:
             line_window_cache = self._compute_line_window_cache(billing_lines)
             billing_windows = self._compute_billing_windows(billing_lines, line_window_cache)
+            plugin = self._bundle.plugin
+            if isinstance(plugin, ScopeGatePlugin):
+                scope_result = plugin.prepare_calculation_scope(
+                    self._tenant_id,
+                    sorted(billing_windows),
+                    uow,
+                )
+                if scope_result.decision is not ScopeGateDecision.ALLOW:
+                    raise ScopeBlockedError(scope_result)
             prefetched_metrics, failed_metric_keys = self._prefetch_metrics(billing_lines, line_window_cache)
             tenant_period_cache = self._build_tenant_period_cache(uow, billing_windows)
             resource_cache = self._build_resource_cache(uow, billing_windows)
@@ -1984,6 +2032,13 @@ class ChargebackOrchestrator:
         dates_gathered = 0
         dates_calculated = 0
         chargeback_rows_written = 0
+        scope_blocked = False
+        recovery_result: ScopeGateResult | None = None
+        recovery_target_dates: set[date_type] = set()
+        completed_pending_dates: set[date_type] = set()
+        recovery_targets_checked = False
+        recovery_active = False
+        recovery_interrupted = False
 
         logger.info(
             "pipeline_orchestration_started%s",
@@ -2003,19 +2058,53 @@ class ChargebackOrchestrator:
         gather_completed = False
         try:
             if plan.should_refresh:
-                source_state = self._prepare_preview_source_state(plan)
-                with self._storage_backend.create_unit_of_work() as uow:
-                    gather_result = self._gather_phase.run(
-                        uow,
-                        plan=plan,
-                        source_attempt=source_state,
-                    )
-                    dates_gathered = gather_result.dates_gathered
-                    errors.extend(gather_result.errors)
-                    gather_completed = True
-                    uow.commit()
-                self._gather_phase.accept_refresh(plan)
-                self._persist_preview_source_capture(gather_result)
+                plugin = self._bundle.plugin
+                effective_plan = plan
+                if isinstance(plugin, ScopeGatePlugin):
+                    with self._storage_backend.create_unit_of_work() as scope_uow:
+                        scope_result = plugin.prepare_gather_scope(
+                            self._tenant_id,
+                            plan.refresh_start,
+                            plan.refresh_end,
+                            scope_uow,
+                        )
+                    if scope_result.decision is ScopeGateDecision.BLOCKED:
+                        with self._storage_backend.create_unit_of_work() as persistence_uow:
+                            plugin.persist_scope_probe(self._tenant_id, scope_result, persistence_uow)
+                            persistence_uow.commit()
+                        errors.append(f"Gather scope blocked: {scope_result.detail}")
+                        gather_result = GatherResult(dates_gathered=0, errors=[errors[-1]])
+                        scope_blocked = True
+                    elif scope_result.decision is ScopeGateDecision.RECOVERY_READY:
+                        with self._storage_backend.create_unit_of_work() as persistence_uow:
+                            plugin.persist_scope_recovery(self._tenant_id, scope_result, persistence_uow)
+                            persistence_uow.commit()
+                        recovery_result = scope_result
+                        recovery_active = (
+                            scope_result.recovery_start is not None and scope_result.recovery_end is not None
+                        )
+                        if scope_result.recovery_start is not None:
+                            effective_plan = replace(plan, refresh_start=scope_result.recovery_start)
+                    elif scope_result.recovery_start is not None and scope_result.recovery_end is not None:
+                        recovery_result = scope_result
+                        recovery_active = True
+                        effective_plan = replace(plan, refresh_start=scope_result.recovery_start)
+                if not scope_blocked:
+                    source_state = self._prepare_preview_source_state(effective_plan)
+                    with self._storage_backend.create_unit_of_work() as uow:
+                        gather_result = self._gather_phase.run(
+                            uow,
+                            plan=effective_plan,
+                            source_attempt=source_state,
+                        )
+                        dates_gathered = gather_result.dates_gathered
+                        errors.extend(gather_result.errors)
+                        if recovery_active and gather_result.errors:
+                            recovery_interrupted = True
+                        gather_completed = True
+                        uow.commit()
+                    self._gather_phase.accept_refresh(effective_plan)
+                    self._persist_preview_source_capture(gather_result)
             else:
                 gather_result = GatherResult(dates_gathered=0, errors=[], skipped=True)
             self._consecutive_gather_failures = 0
@@ -2033,6 +2122,29 @@ class ChargebackOrchestrator:
                     operation="pipeline_run",
                     outcome="skipped" if gather_result.skipped else "completed",
                 ),
+            )
+        except ScopeBlockedError as exc:
+            plugin = self._bundle.plugin
+            if isinstance(plugin, ScopeGatePlugin):
+                with self._storage_backend.create_unit_of_work() as persistence_uow:
+                    if exc.result.probe_only:
+                        plugin.persist_scope_probe(self._tenant_id, exc.result, persistence_uow)
+                    else:
+                        plugin.persist_scope_blocked(self._tenant_id, exc.result, persistence_uow)
+                    persistence_uow.commit()
+            errors.append(f"Gather scope blocked: {exc.result.detail}")
+            with self._storage_backend.create_unit_of_work() as pending_uow:
+                pending_count = len(
+                    pending_uow.pipeline_state.find_needing_calculation(self._ecosystem, self._tenant_id)
+                )
+            return PipelineRunResult(
+                tenant_name=self._tenant_name,
+                tenant_id=self._tenant_id,
+                dates_gathered=0,
+                dates_calculated=0,
+                chargeback_rows_written=0,
+                dates_pending_calculation=pending_count,
+                errors=errors,
             )
         except Exception as exc:
             self._abort_preview_source_state(
@@ -2073,11 +2185,70 @@ class ChargebackOrchestrator:
                 errors=errors,
             )
 
-        with self._storage_backend.create_unit_of_work() as uow:
-            pending_states = uow.pipeline_state.find_needing_calculation(self._ecosystem, self._tenant_id)
+        pending_states = []
+        calculation_scope_blocked = scope_blocked
+        plugin = self._bundle.plugin
+        try:
+            with self._storage_backend.create_unit_of_work() as uow:
+                pending_states = uow.pipeline_state.find_needing_calculation(self._ecosystem, self._tenant_id)
+                if recovery_active and recovery_result is not None:
+                    recovery_target_dates.update(_recovery_target_dates(pending_states, recovery_result))
+                    recovery_targets_checked = True
+                if not calculation_scope_blocked and isinstance(plugin, ScopeGatePlugin):
+                    for pipeline_state in pending_states:
+                        billing_lines = uow.billing.find_by_date(
+                            self._ecosystem,
+                            self._tenant_id,
+                            pipeline_state.tracking_date,
+                        )
+                        if not billing_lines:
+                            continue
+                        line_window_cache = self._calculate_phase._compute_line_window_cache(billing_lines)
+                        billing_windows = self._calculate_phase._compute_billing_windows(
+                            billing_lines,
+                            line_window_cache,
+                        )
+                        scope_result = plugin.prepare_calculation_scope(
+                            self._tenant_id,
+                            sorted(billing_windows),
+                            uow,
+                        )
+                        if scope_result.recovery_start is not None and scope_result.recovery_end is not None:
+                            recovery_result = scope_result
+                            recovery_active = True
+                            recovery_target_dates.update(_recovery_target_dates([pipeline_state], scope_result))
+                            recovery_targets_checked = True
+                        if scope_result.decision is not ScopeGateDecision.ALLOW:
+                            raise ScopeBlockedError(scope_result)
+        except ScopeBlockedError as exc:
+            if isinstance(plugin, ScopeGatePlugin):
+                with self._storage_backend.create_unit_of_work() as persistence_uow:
+                    if exc.result.decision is ScopeGateDecision.RECOVERY_READY:
+                        plugin.persist_scope_recovery(self._tenant_id, exc.result, persistence_uow)
+                    elif exc.result.probe_only:
+                        plugin.persist_scope_probe(self._tenant_id, exc.result, persistence_uow)
+                    else:
+                        plugin.persist_scope_blocked(self._tenant_id, exc.result, persistence_uow)
+                    persistence_uow.commit()
+            if exc.result.decision is ScopeGateDecision.RECOVERY_READY:
+                recovery_result = exc.result
+                recovery_active = exc.result.recovery_start is not None and exc.result.recovery_end is not None
+                with self._storage_backend.create_unit_of_work() as refreshed_uow:
+                    pending_states = refreshed_uow.pipeline_state.find_needing_calculation(
+                        self._ecosystem,
+                        self._tenant_id,
+                    )
+                recovery_target_dates.update(_recovery_target_dates(pending_states, recovery_result))
+                recovery_targets_checked = True
+            else:
+                recovery_interrupted = True
+                errors.append(f"Calculate scope blocked: {exc.result.detail}")
+                calculation_scope_blocked = True
 
-        for pipeline_state in pending_states:
+        calculated_pending_states = pending_states if not calculation_scope_blocked else []
+        for pipeline_state in calculated_pending_states:
             if self._shutdown_check is not None and self._shutdown_check():
+                recovery_interrupted = recovery_interrupted or recovery_active
                 logger.info(
                     "Shutdown requested — stopping after %d dates processed for %s",
                     dates_calculated,
@@ -2118,9 +2289,10 @@ class ChargebackOrchestrator:
                             tracking_date,
                             calculation_run_id=calculation_run_id,
                         )
-                    chargeback_rows_written += rows
-                    dates_calculated += 1
                     uow.commit()
+                chargeback_rows_written += rows
+                dates_calculated += 1
+                completed_pending_dates.add(tracking_date)
                 if calculation_result is not None:
                     self._persist_preview_lineage(
                         calculation_result,
@@ -2142,6 +2314,24 @@ class ChargebackOrchestrator:
                         outcome="completed",
                     ),
                 )
+            except ScopeBlockedError as exc:
+                plugin = self._bundle.plugin
+                if isinstance(plugin, ScopeGatePlugin):
+                    with self._storage_backend.create_unit_of_work() as persistence_uow:
+                        if exc.result.decision is ScopeGateDecision.RECOVERY_READY:
+                            plugin.persist_scope_recovery(self._tenant_id, exc.result, persistence_uow)
+                            recovery_result = exc.result
+                            recovery_active = (
+                                exc.result.recovery_start is not None and exc.result.recovery_end is not None
+                            )
+                        elif exc.result.probe_only:
+                            plugin.persist_scope_probe(self._tenant_id, exc.result, persistence_uow)
+                        else:
+                            plugin.persist_scope_blocked(self._tenant_id, exc.result, persistence_uow)
+                        persistence_uow.commit()
+                recovery_interrupted = True
+                errors.append(f"Calculate scope blocked for date {tracking_date}: {exc.result.detail}")
+                break
             except Exception as exc:
                 logger.error(
                     "calculation_failed%s",
@@ -2157,7 +2347,22 @@ class ChargebackOrchestrator:
                         **safe_exception_context(exc),
                     ),
                 )
+                recovery_interrupted = True
                 errors.append(f"Calculate failed for date {tracking_date}: {exc}")
+
+        if (
+            recovery_result is not None
+            and recovery_active
+            and recovery_targets_checked
+            and recovery_target_dates
+            and recovery_target_dates.issubset(completed_pending_dates)
+            and not recovery_interrupted
+            and not errors
+            and isinstance(plugin, ScopeGatePlugin)
+        ):
+            with self._storage_backend.create_unit_of_work() as persistence_uow:
+                plugin.persist_scope_closed(self._tenant_id, recovery_result, persistence_uow)
+                persistence_uow.commit()
 
         if self._topic_overlay_phase is not None:
             with self._storage_backend.create_unit_of_work() as uow:

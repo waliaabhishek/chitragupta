@@ -526,6 +526,8 @@ def _downgrade_artifact_catalog(connection: Connection) -> None:
 
 class CCloudPreviewSchemaManager:
     def prepare(self, connection: Connection, *, target_revision: str) -> None:
+        if target_revision == "033":
+            target_revision = "032"
         if target_revision not in {"018", "021", "026", "027", "028", "030", "031", "032"}:
             raise ValueError(f"unknown Preview evidence target revision: {target_revision}")
         if target_revision in {"028", "030", "031", "032"}:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -24,7 +24,7 @@ from core.models.identity import CoreIdentity, Identity, IdentityResolution, Ide
 from core.models.pipeline import PipelineState
 from core.models.resource import CoreResource, Resource
 from core.plugin.protocols import EcosystemPlugin, SupplementalResourceGatherer
-from core.storage.interface import PipelineStateRepository
+from core.storage.interface import PipelineStateRepository, ReadOnlyUnitOfWork, StorageBackend, UnitOfWork
 
 if TYPE_CHECKING:
     from core.models.metrics import MetricQuery, MetricRow
@@ -303,20 +303,55 @@ class MockUnitOfWork:
         self.billing = MockBillingRepo()
         self.chargebacks = MockChargebackRepo()
         self.pipeline_state = MockPipelineStateRepo()
+        self.pipeline_runs = MagicMock()
         self.tags = MagicMock()
+        self.emissions = MagicMock()
         self.topic_attributions = MagicMock()
+        self.graph = MagicMock()
         self._committed = False
 
     def __enter__(self) -> MockUnitOfWork:
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         pass
 
     def commit(self) -> None:
         self._committed = True
 
     def rollback(self) -> None:
+        pass
+
+
+class MockReadOnlyUnitOfWork:
+    """Read-only façade over the shared in-memory repositories."""
+
+    def __init__(self, unit_of_work: MockUnitOfWork) -> None:
+        self.resources = unit_of_work.resources
+        self.identities = unit_of_work.identities
+        self.billing = unit_of_work.billing
+        self.chargebacks = unit_of_work.chargebacks
+        self.pipeline_state = unit_of_work.pipeline_state
+        self.pipeline_runs = unit_of_work.pipeline_runs
+        self.tags = unit_of_work.tags
+        self.emissions = unit_of_work.emissions
+        self.topic_attributions = unit_of_work.topic_attributions
+        self.graph = unit_of_work.graph
+
+    def __enter__(self) -> MockReadOnlyUnitOfWork:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
         pass
 
 
@@ -575,6 +610,19 @@ def test_pipeline_state_fake_structurally_satisfies_repository_protocol() -> Non
     assert isinstance(MockPipelineStateRepo(), PipelineStateRepository)
 
 
+def test_orchestrator_storage_fakes_satisfy_live_protocols() -> None:
+    backend = MockStorageBackend()
+    read_only_uow = backend.create_read_only_unit_of_work()
+
+    assert isinstance(backend, StorageBackend)
+    assert isinstance(backend.create_unit_of_work(), UnitOfWork)
+    assert isinstance(read_only_uow, ReadOnlyUnitOfWork)
+    assert not hasattr(read_only_uow, "commit")
+    assert not hasattr(read_only_uow, "rollback")
+    with read_only_uow as entered_uow:
+        assert entered_uow is read_only_uow
+
+
 def test_supplemental_plugin_fake_satisfies_every_production_protocol_member() -> None:
     plugin = MockSupplementalPlugin()
 
@@ -588,6 +636,9 @@ class MockStorageBackend:
 
     def create_unit_of_work(self) -> MockUnitOfWork:
         return self._uow
+
+    def create_read_only_unit_of_work(self) -> MockReadOnlyUnitOfWork:
+        return MockReadOnlyUnitOfWork(self._uow)
 
     def create_tables(self) -> None:
         pass
@@ -3356,3 +3407,679 @@ class TestOrchestratorEnvIdExtraction:
         rows = [r for r in uow.chargebacks._data if r.resource_id == "cluster-1"]
         assert len(rows) >= 1
         assert rows[0].metadata.get("env_id") == "env-test"
+
+
+class TestScopeGateIsolation:
+    def test_core_scope_gate_protocol_is_substitutable_without_self_managed_imports(self) -> None:
+        from pathlib import Path
+
+        from core.plugin.protocols import ScopeGateDecision, ScopeGatePlugin, ScopeGateResult
+
+        class GenericScopeGate(MockPlugin):
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "generic-scope", "scope valid")
+
+            def prepare_calculation_scope(
+                self,
+                tenant_id: str,
+                windows: Sequence[tuple[datetime, datetime]],
+                uow: Any,
+            ) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "generic-scope", "scope valid")
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+        assert isinstance(GenericScopeGate(), ScopeGatePlugin)
+        orchestrator_source = Path("src/core/engine/orchestrator.py").read_text(encoding="utf-8")
+        assert "plugins.self_managed_kafka" not in orchestrator_source
+
+    def test_gather_scope_failure_rolls_back_work_and_commits_breaker_state_in_a_second_unit_of_work(self) -> None:
+        from core.plugin.protocols import ScopeBlockedError, ScopeGateDecision, ScopeGateResult
+
+        class CountingCostInput(MockCostInput):
+            def __init__(self) -> None:
+                super().__init__([_make_billing_line(timestamp=NOW - timedelta(days=10))])
+                self.gather_calls = 0
+
+            def gather(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> Iterable[BillingLineItem]:
+                self.gather_calls += 1
+                return super().gather(tenant_id, start, end, uow)
+
+        class BlockingScopePlugin(MockPlugin):
+            def __init__(self, cost_input: CountingCostInput) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()}, cost_input=cost_input)
+                self.blocked_uows: list[MockUnitOfWork] = []
+
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                raise ScopeBlockedError(
+                    ScopeGateResult(
+                        ScopeGateDecision.BLOCKED,
+                        "billing-cluster-a",
+                        "expected Prometheus target label kafka_cluster_id=kraft-a-001",
+                    )
+                )
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "scope valid")
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.blocked_uows.append(uow)
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+        class SeparateUnitOfWorkStorage(MockStorageBackend):
+            def __init__(self) -> None:
+                super().__init__()
+                self.uows: list[MockUnitOfWork] = []
+
+            def create_unit_of_work(self) -> MockUnitOfWork:
+                uow = MockUnitOfWork()
+                self._uow = uow
+                self.uows.append(uow)
+                return uow
+
+        cost_input = CountingCostInput()
+        plugin = BlockingScopePlugin(cost_input)
+        storage = SeparateUnitOfWorkStorage()
+        assert isinstance(storage, StorageBackend)
+        orchestrator = ChargebackOrchestrator(TENANT_NAME, _make_tenant_config(), plugin, storage, None)
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert cost_input.gather_calls == 0
+        assert result.dates_gathered == 0
+        assert plugin.blocked_uows
+        assert plugin.blocked_uows[0]._committed is True
+        assert any("kafka_cluster_id=kraft-a-001" in error for error in result.errors)
+
+    def test_calculate_scope_failure_keeps_date_pending_and_commits_breaker_in_a_separate_unit_of_work(self) -> None:
+        from core.models import MetricQuery
+        from core.plugin.protocols import ScopeBlockedError, ScopeGateDecision, ScopeGateResult
+
+        class TrackingUnitOfWork(MockUnitOfWork):
+            def __init__(self) -> None:
+                super().__init__()
+                self.rolled_back = False
+
+            def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+                if exc_type is not None:
+                    self.rolled_back = True
+
+        class BlockingCalculationPlugin(MockPlugin):
+            def __init__(self) -> None:
+                handler = MockServiceHandler(
+                    metrics_queries=[
+                        MetricQuery(
+                            key="expensive_metric",
+                            query_expression="sum(expensive_metric_total{})",
+                            resource_label="resource_id",
+                            label_keys=(),
+                        )
+                    ]
+                )
+                super().__init__(handlers={"kafka": handler})
+                self.blocked_uows: list[TrackingUnitOfWork] = []
+
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "generic-scope", "scope valid")
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                raise ScopeBlockedError(
+                    ScopeGateResult(
+                        ScopeGateDecision.BLOCKED,
+                        "billing-cluster-a",
+                        "expected Prometheus target label kafka_cluster_id=kraft-a-001",
+                    )
+                )
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.blocked_uows.append(uow)
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+        class SequencedStorage(MockStorageBackend):
+            def __init__(self, units: list[TrackingUnitOfWork]) -> None:
+                super().__init__(units[0])
+                self._units = units
+                self._index = 0
+
+            def create_unit_of_work(self) -> TrackingUnitOfWork:
+                unit = self._units[self._index]
+                self._index += 1
+                self._uow = unit
+                return unit
+
+        state_uow = TrackingUnitOfWork()
+        calculation_uow = TrackingUnitOfWork()
+        calculation_uow.billing = state_uow.billing
+        calculation_uow.pipeline_state = state_uow.pipeline_state
+        persistence_uow = TrackingUnitOfWork()
+        line = _make_billing_line(timestamp=NOW - timedelta(days=10))
+        state = PipelineState(
+            ecosystem=ECOSYSTEM,
+            tenant_id=TENANT_ID,
+            tracking_date=line.timestamp.date(),
+            billing_gathered=True,
+            resources_gathered=True,
+        )
+        state_uow.billing.upsert(line)
+        state_uow.pipeline_state.upsert(state)
+        metrics_source = MagicMock()
+        plugin = BlockingCalculationPlugin()
+        from core.plugin.protocols import ScopeGatePlugin
+
+        assert isinstance(plugin, ScopeGatePlugin)
+        storage = SequencedStorage([state_uow, calculation_uow, persistence_uow])
+        assert isinstance(storage, StorageBackend)
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 3600}),
+            plugin,
+            storage,
+            metrics_source,
+        )
+        orchestrator._gather_phase._last_resource_gather_at = NOW
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert result.dates_calculated == 0
+        assert result.dates_pending_calculation == 1
+        assert calculation_uow.rolled_back is True
+        assert calculation_uow.chargebacks._data == []
+        assert state.chargeback_calculated is False
+        assert plugin.blocked_uows == [persistence_uow]
+        assert persistence_uow._committed is True
+        metrics_source.query.assert_not_called()
+        assert any("kafka_cluster_id=kraft-a-001" in error for error in result.errors)
+
+    def test_open_scope_runs_one_probe_without_starting_workload_gather(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision, ScopeGateResult
+
+        class CountingCostInput(MockCostInput):
+            def __init__(self) -> None:
+                super().__init__([_make_billing_line(timestamp=NOW - timedelta(days=10))])
+                self.gather_calls = 0
+
+            def gather(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> Iterable[BillingLineItem]:
+                self.gather_calls += 1
+                return super().gather(tenant_id, start, end, uow)
+
+        class OpenScopePlugin(MockPlugin):
+            def __init__(self, cost_input: CountingCostInput) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()}, cost_input=cost_input)
+                self.prepare_calls = 0
+                self.probe_uows: list[MockUnitOfWork] = []
+
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                self.prepare_calls += 1
+                return ScopeGateResult(
+                    ScopeGateDecision.BLOCKED,
+                    "billing-cluster-a",
+                    "expected Prometheus target label kafka_cluster_id=kraft-a-001",
+                )
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "generic-scope", "scope valid")
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.probe_uows.append(uow)
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+        class RecordingStorage(MockStorageBackend):
+            def __init__(self) -> None:
+                super().__init__()
+                self.units: list[MockUnitOfWork] = []
+
+            def create_unit_of_work(self) -> MockUnitOfWork:
+                unit = MockUnitOfWork()
+                self._uow = unit
+                self.units.append(unit)
+                return unit
+
+        cost_input = CountingCostInput()
+        plugin = OpenScopePlugin(cost_input)
+        storage = RecordingStorage()
+        assert isinstance(storage, StorageBackend)
+        orchestrator = ChargebackOrchestrator(TENANT_NAME, _make_tenant_config(), plugin, storage, None)
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert result.dates_gathered == 0
+        assert plugin.prepare_calls == 1
+        assert cost_input.gather_calls == 0
+        assert len(plugin.probe_uows) == 1
+        assert plugin.probe_uows[0]._committed is True
+        assert all(not unit.billing._data for unit in storage.units)
+
+    def test_recovery_state_is_committed_before_bounded_backfill_begins(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision, ScopeGateResult
+
+        recovery_start = NOW - timedelta(days=7)
+        recovery_end = NOW - timedelta(days=5)
+
+        class RecordingCostInput(MockCostInput):
+            def __init__(self) -> None:
+                super().__init__([_make_billing_line(timestamp=NOW - timedelta(days=6))])
+                self.windows: list[tuple[datetime, datetime]] = []
+                self.events: list[str] = []
+
+            def gather(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> Iterable[BillingLineItem]:
+                self.windows.append((start, end))
+                self.events.append("workload")
+                return super().gather(tenant_id, start, end, uow)
+
+        class RecoveringScopePlugin(MockPlugin):
+            def __init__(self, cost_input: RecordingCostInput) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()}, cost_input=cost_input)
+                self.events = cost_input.events
+                self.gather_gate_calls = 0
+                self.recovery_uows: list[MockUnitOfWork] = []
+
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                self.gather_gate_calls += 1
+                self.events.append("scope")
+                if self.gather_gate_calls == 1:
+                    return ScopeGateResult(
+                        ScopeGateDecision.RECOVERY_READY,
+                        "billing-cluster-a",
+                        "scope recovered",
+                        recovery_start=recovery_start,
+                        retention_gap_start=NOW - timedelta(days=30),
+                        retention_gap_end=recovery_start,
+                    )
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "scope valid")
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "scope valid")
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.events.append("recovery")
+                self.recovery_uows.append(uow)
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+        class RecordingStorage(MockStorageBackend):
+            def __init__(self) -> None:
+                super().__init__()
+                self.units: list[MockUnitOfWork] = []
+
+            def create_unit_of_work(self) -> MockUnitOfWork:
+                unit = MockUnitOfWork()
+                self._uow = unit
+                self.units.append(unit)
+                return unit
+
+        cost_input = RecordingCostInput()
+        plugin = RecoveringScopePlugin(cost_input)
+        storage = RecordingStorage()
+        assert isinstance(storage, StorageBackend)
+        orchestrator = ChargebackOrchestrator(TENANT_NAME, _make_tenant_config(), plugin, storage, None)
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            orchestrator.run()
+
+        assert plugin.events[:3] == ["scope", "recovery", "scope"]
+        assert cost_input.events[-1] == "workload"
+        assert cost_input.windows == [(recovery_start, recovery_end)]
+        assert len(plugin.recovery_uows) == 1
+        assert plugin.recovery_uows[0]._committed is True
+
+    def test_per_date_scope_block_stops_the_remaining_pending_batch(self) -> None:
+        from core.plugin.protocols import ScopeBlockedError, ScopeGateDecision, ScopeGateResult
+
+        class PerDateBlockingScopePlugin(MockPlugin):
+            def __init__(self) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()})
+                self.calculation_scope_calls = 0
+                self.persisted_blocks = 0
+
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "scope valid")
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                self.calculation_scope_calls += 1
+                if self.calculation_scope_calls == 3:
+                    raise ScopeBlockedError(
+                        ScopeGateResult(ScopeGateDecision.BLOCKED, "billing-cluster-a", "target scope blocked")
+                    )
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "scope valid")
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.persisted_blocks += 1
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+        storage = MockStorageBackend()
+        dates = [date(2026, 2, 1), date(2026, 2, 2)]
+        for tracking_date in dates:
+            storage._uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem=ECOSYSTEM,
+                    tenant_id=TENANT_ID,
+                    tracking_date=tracking_date,
+                    billing_gathered=True,
+                    resources_gathered=True,
+                )
+            )
+            storage._uow.billing.upsert(
+                _make_billing_line(timestamp=datetime.combine(tracking_date, datetime.min.time(), UTC))
+            )
+        storage._uow.resources.upsert(_make_resource())
+        plugin = PerDateBlockingScopePlugin()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 3600}),
+            plugin,
+            storage,
+            None,
+        )
+        orchestrator._gather_phase._last_resource_gather_at = NOW
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert result.dates_calculated == 0
+        assert result.dates_pending_calculation == 2
+        assert plugin.calculation_scope_calls == 3
+        assert plugin.persisted_blocks == 1
+        assert all(not state.chargeback_calculated for state in storage._uow.pipeline_state._data.values())
+
+    def test_shutdown_keeps_recovery_open_until_every_target_date_commits(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision, ScopeGateResult
+
+        recovery_start = datetime(2026, 2, 1, tzinfo=UTC)
+        recovery_end = datetime(2026, 2, 3, tzinfo=UTC)
+
+        class RecoveringScopePlugin(MockPlugin):
+            def __init__(self) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()})
+                self.closed = 0
+
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "scope valid")
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                return ScopeGateResult(
+                    ScopeGateDecision.ALLOW,
+                    "billing-cluster-a",
+                    "target scope recovery continuing",
+                    recovery_start=recovery_start,
+                    recovery_end=recovery_end,
+                )
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.closed += 1
+
+        storage = MockStorageBackend()
+        dates = [date(2026, 2, 1), date(2026, 2, 2)]
+        for tracking_date in dates:
+            storage._uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem=ECOSYSTEM,
+                    tenant_id=TENANT_ID,
+                    tracking_date=tracking_date,
+                    billing_gathered=True,
+                    resources_gathered=True,
+                )
+            )
+            storage._uow.billing.upsert(
+                _make_billing_line(timestamp=datetime.combine(tracking_date, datetime.min.time(), UTC))
+            )
+        storage._uow.resources.upsert(_make_resource())
+        shutdown_calls = 0
+
+        def shutdown_after_one_date() -> bool:
+            nonlocal shutdown_calls
+            shutdown_calls += 1
+            return shutdown_calls > 1
+
+        plugin = RecoveringScopePlugin()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 3600}),
+            plugin,
+            storage,
+            None,
+            shutdown_check=shutdown_after_one_date,
+        )
+        orchestrator._gather_phase._last_resource_gather_at = NOW
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert result.dates_calculated == 1
+        assert result.dates_pending_calculation == 2
+        assert plugin.closed == 0
+        assert storage._uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, dates[0]).chargeback_calculated is True
+        assert storage._uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, dates[1]).chargeback_calculated is False
+
+    def test_outside_recovery_range_scope_block_keeps_reopened_breaker_open(self) -> None:
+        from core.plugin.protocols import ScopeBlockedError, ScopeGateDecision, ScopeGateResult
+
+        recovery_start = datetime(2026, 2, 1, tzinfo=UTC)
+        recovery_end = datetime(2026, 2, 2, tzinfo=UTC)
+        tracking_date = date(2026, 2, 3)
+
+        class RecoveringThenBlockingScopePlugin(MockPlugin):
+            def __init__(self) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()})
+                self.calculation_scope_calls = 0
+                self.blocks = 0
+                self.closed = 0
+
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "scope valid")
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                self.calculation_scope_calls += 1
+                if self.calculation_scope_calls == 2:
+                    raise ScopeBlockedError(
+                        ScopeGateResult(ScopeGateDecision.BLOCKED, "billing-cluster-a", "target scope blocked")
+                    )
+                return ScopeGateResult(
+                    ScopeGateDecision.ALLOW,
+                    "billing-cluster-a",
+                    "target scope recovery continuing",
+                    recovery_start=recovery_start,
+                    recovery_end=recovery_end,
+                )
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.blocks += 1
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.closed += 1
+
+        storage = MockStorageBackend()
+        storage._uow.pipeline_state.upsert(
+            PipelineState(
+                ecosystem=ECOSYSTEM,
+                tenant_id=TENANT_ID,
+                tracking_date=tracking_date,
+                billing_gathered=True,
+                resources_gathered=True,
+            )
+        )
+        storage._uow.billing.upsert(
+            _make_billing_line(timestamp=datetime.combine(tracking_date, datetime.min.time(), UTC))
+        )
+        storage._uow.resources.upsert(_make_resource())
+        plugin = RecoveringThenBlockingScopePlugin()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 3600}),
+            plugin,
+            storage,
+            None,
+        )
+        orchestrator._gather_phase._last_resource_gather_at = NOW
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert result.dates_calculated == 0
+        assert plugin.calculation_scope_calls == 2
+        assert plugin.blocks == 1
+        assert plugin.closed == 0
+        assert storage._uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, tracking_date).chargeback_calculated is False
+
+    def test_calculation_only_recovery_closes_after_its_pending_date_commits(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision, ScopeGateResult
+
+        recovery_start = datetime(2026, 2, 1, tzinfo=UTC)
+        recovery_end = datetime(2026, 2, 2, tzinfo=UTC)
+        tracking_date = recovery_start.date()
+
+        class RecoveringCalculationScopePlugin(MockPlugin):
+            def __init__(self) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()})
+                self.closed = 0
+
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "scope valid")
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                return ScopeGateResult(
+                    ScopeGateDecision.ALLOW,
+                    "billing-cluster-a",
+                    "target scope recovery continuing",
+                    recovery_start=recovery_start,
+                    recovery_end=recovery_end,
+                )
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.closed += 1
+
+        storage = MockStorageBackend()
+        storage._uow.pipeline_state.upsert(
+            PipelineState(
+                ecosystem=ECOSYSTEM,
+                tenant_id=TENANT_ID,
+                tracking_date=tracking_date,
+                billing_gathered=True,
+                resources_gathered=True,
+            )
+        )
+        storage._uow.billing.upsert(_make_billing_line(timestamp=recovery_start))
+        storage._uow.resources.upsert(_make_resource())
+        plugin = RecoveringCalculationScopePlugin()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 3600}),
+            plugin,
+            storage,
+            None,
+        )
+        orchestrator._gather_phase._last_resource_gather_at = NOW
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert result.dates_calculated == 1
+        assert plugin.closed == 1
+        assert storage._uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, tracking_date).chargeback_calculated is True

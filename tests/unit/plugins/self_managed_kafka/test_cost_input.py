@@ -19,6 +19,7 @@ def sample_config():
     return SelfManagedKafkaConfig.from_plugin_settings(
         {
             "cluster_id": "kafka-cluster-001",
+            "metrics_identifier": "kraft-a-001",
             "broker_count": 3,
             "cost_model": {
                 "compute_hourly_rate": "0.10",
@@ -69,6 +70,25 @@ def sample_metrics_data() -> dict:
 
 
 class TestConstructedCostInputBillingLines:
+    def test_queries_use_the_configured_prometheus_target_selector(
+        self, sample_config, mock_metrics_source, day_start, day_end
+    ) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        mock_metrics_source.query.return_value = sample_metrics_data()
+        cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
+        list(cost_input.gather("tenant-1", day_start, day_end, MagicMock()))
+
+        _, kwargs = mock_metrics_source.query.call_args
+        assert kwargs["resource_id_filter"] == "kraft-a-001"
+        queries = kwargs["queries"]
+        assert {query.resource_label for query in queries} == {"kafka_cluster_id"}
+        assert {query.query_expression for query in queries} == {
+            "sum(increase(kafka_server_brokertopicmetrics_bytesin_total{}[1h]))",
+            "sum(increase(kafka_server_brokertopicmetrics_bytesout_total{}[1h]))",
+            "sum(kafka_log_log_size{})",
+        }
+
     def test_generates_four_product_types_per_day(self, sample_config, mock_metrics_source, day_start, day_end):
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 
@@ -238,6 +258,7 @@ class TestConstructedCostInputStepParam:
         config = SelfManagedKafkaConfig.from_plugin_settings(
             {
                 "cluster_id": "kafka-001",
+                "metrics_identifier": "kraft-a-001",
                 "broker_count": 3,
                 "metrics_step_seconds": 1800,
                 "cost_model": {
@@ -378,6 +399,7 @@ class TestEdgeCases:
         config = SelfManagedKafkaConfig.from_plugin_settings(
             {
                 "cluster_id": "kafka-001",
+                "metrics_identifier": "kraft-a-001",
                 "broker_count": 3,
                 "region": "us-west-2",
                 "cost_model": {

@@ -22,12 +22,10 @@ class SMKSharedContext:
     (no API call). Moving it to Phase 1 provides structural consistency with the
     CCloud pattern rather than eliminating an API round-trip.
 
-    The discovery fields are populated when prometheus is the resource/identity source,
-    consolidating three former queries into one combined round-trip.
-    None means the combined query was not run (e.g. admin_api + static sources).
+    The discovery fields are populated when Prometheus is the resource source.
+    None means the broker/topic query was not run (for example, Admin API discovery).
     """
 
     cluster_resource: Resource
     discovered_brokers: frozenset[str] | None = None
     discovered_topics: frozenset[str] | None = None
-    discovered_principals: frozenset[str] | None = None

@@ -27,6 +27,7 @@ def base_metrics() -> dict:
 def base_settings(base_cost_model, base_metrics) -> dict:
     return {
         "cluster_id": "kafka-cluster-001",
+        "metrics_identifier": "kraft-a-001",
         "broker_count": 3,
         "cost_model": base_cost_model,
         "metrics": base_metrics,
@@ -226,8 +227,31 @@ class TestSelfManagedKafkaConfig:
 
         config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
         assert config.cluster_id == "kafka-cluster-001"
+        assert config.metrics_identifier == "kraft-a-001"
+        assert config.metrics_identifier_label == "kafka_cluster_id"
         assert config.broker_count == 3
         assert config.region is None
+
+    def test_metrics_identifier_is_required(self, base_settings):
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        del base_settings["metrics_identifier"]
+
+        with pytest.raises(ValidationError) as error:
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert error.value.errors()[0]["loc"] == ("metrics_identifier",)
+
+    @pytest.mark.parametrize("field", ["metrics_identifier", "metrics_identifier_label"])
+    def test_metrics_selector_values_must_not_be_blank(self, base_settings, field: str) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings[field] = ""
+
+        with pytest.raises(ValidationError) as error:
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert error.value.errors()[0]["loc"] == (field,)
 
     def test_broker_count_must_be_positive(self, base_settings):
         from plugins.self_managed_kafka.config import SelfManagedKafkaConfig

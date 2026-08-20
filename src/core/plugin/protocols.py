@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import date as date_type
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
 
 if TYPE_CHECKING:
@@ -61,6 +63,13 @@ class StorageModule(Protocol):
     def create_chargeback_repository(self, session: Session) -> ChargebackRepository: ...
 
     def register_tables(self, engine: Engine) -> None: ...
+
+
+@runtime_checkable
+class UnitOfWorkRepositoryAttachment(Protocol):
+    """Optional plugin hook for repositories that are not core-owned."""
+
+    def attach_unit_of_work_repositories(self, uow: UnitOfWork, session: Session) -> None: ...
 
 
 @runtime_checkable
@@ -205,6 +214,65 @@ class EcosystemPlugin(Protocol):
     def get_storage_module(self) -> StorageModule: ...
 
     def close(self) -> None: ...
+
+
+class ScopeGateDecision(StrEnum):
+    ALLOW = "allow"
+    BLOCKED = "blocked"
+    RECOVERY_READY = "recovery_ready"
+
+
+@dataclass(frozen=True)
+class ScopeGateResult:
+    decision: ScopeGateDecision
+    scope_id: str
+    detail: str
+    blocked_window_start: datetime | None = None
+    blocked_window_end: datetime | None = None
+    recovery_start: datetime | None = None
+    recovery_end: datetime | None = None
+    retention_gap_start: datetime | None = None
+    retention_gap_end: datetime | None = None
+    status: str | None = None
+    reason: str | None = None
+    evidence: object | None = None
+    probe_only: bool = False
+
+
+class ScopeBlockedError(RuntimeError):
+    """A plugin could not establish the scope required for pipeline work."""
+
+    def __init__(self, result: ScopeGateResult) -> None:
+        super().__init__(result.detail)
+        self.result = result
+
+
+@runtime_checkable
+class ScopeGatePlugin(Protocol):
+    """Optional core-owned gate for provider-specific telemetry scope checks."""
+
+    def prepare_gather_scope(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        uow: UnitOfWork,
+    ) -> ScopeGateResult: ...
+
+    def prepare_calculation_scope(
+        self,
+        tenant_id: str,
+        windows: Sequence[tuple[datetime, datetime]],
+        uow: UnitOfWork,
+    ) -> ScopeGateResult: ...
+
+    def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: UnitOfWork) -> None: ...
+
+    def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: UnitOfWork) -> None: ...
+
+    def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: UnitOfWork) -> None: ...
+
+    def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: UnitOfWork) -> None: ...
 
 
 @runtime_checkable

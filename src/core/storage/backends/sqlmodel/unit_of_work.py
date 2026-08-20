@@ -94,6 +94,10 @@ class SQLModelUnitOfWork:
         self.tags = SQLModelEntityTagRepository(self._session)
         self.graph = SQLModelGraphRepository(self._session, self.tags)
         self.emissions = SQLModelEmissionRepository(self._session)
+        from core.plugin.protocols import UnitOfWorkRepositoryAttachment
+
+        if isinstance(self._storage_module, UnitOfWorkRepositoryAttachment):
+            self._storage_module.attach_unit_of_work_repositories(self, self._session)
         if self._preview_source_fallback_module is not None:
             self.source_attempt_fallback = (
                 self._preview_source_fallback_module.create_preview_source_attempt_fallback_repository(self._session)
@@ -382,7 +386,7 @@ class SQLModelBackend:
             else:
                 collector.record(
                     PreviewEvidenceIssue(
-                        revision="032",
+                        revision="033",
                         kind=PreviewEvidenceIssueKind.CAPABILITY_MISSING,
                         error_type="PreviewEvidenceStorageModule",
                     )
@@ -446,7 +450,7 @@ class SQLModelBackend:
             return
         if not isinstance(self._storage_module, PreviewEvidenceStorageModule):
             issue = PreviewEvidenceIssue(
-                revision="032",
+                revision="033",
                 kind=PreviewEvidenceIssueKind.CAPABILITY_MISSING,
                 error_type="PreviewEvidenceStorageModule",
             )
@@ -462,7 +466,7 @@ class SQLModelBackend:
             with self._engine.begin() as connection:
                 self._storage_module.prepare_preview_evidence_migration(
                     connection,
-                    target_revision="032",
+                    target_revision="033",
                 )
         except (PreviewEvidenceSchemaError, SQLAlchemyError) as exc:
             issue_kind = (
@@ -472,13 +476,13 @@ class SQLModelBackend:
             )
             issues.append(
                 PreviewEvidenceIssue(
-                    revision="032",
+                    revision="033",
                     kind=issue_kind,
                     error_type=type(exc).__name__,
                 )
             )
             logger.warning(
-                "preview_evidence_prepare_unavailable revision=032 issue_kind=%s%s",
+                "preview_evidence_prepare_unavailable revision=033 issue_kind=%s%s",
                 issue_kind.value,
                 safe_log_context(
                     stage="preview_evidence_prepare",

@@ -25,7 +25,7 @@ Full stack for self-managed Kafka: chargeback engine (pipeline + REST API), Graf
 cp .env.example .env
 vim .env   # set PROMETHEUS_URL
 
-# 2. Edit config.yaml to set your cost model rates and broker count
+# 2. Edit config.yaml to set cost model rates, broker count, and Prometheus target scope
 vim config.yaml
 
 # 3. Start the stack
@@ -52,18 +52,37 @@ Edit the `cost_model` section in `config.yaml` to match your infrastructure cost
 | `network_ingress_per_gib` | `0.01` | USD per GiB of data ingested |
 | `network_egress_per_gib` | `0.09` | USD per GiB of data consumed |
 
-### Identity → team mapping
+### Prometheus target scope
 
-Add your principal-to-team mapping under `identity_source.principal_to_team` in `config.yaml`:
+`cluster_id` is the logical resource ID shown in Chitragupta. It is separate from
+the required `metrics_identifier`, the operator-defined value used to select this
+cluster's Prometheus targets. `metrics_identifier_label` names that target label
+and defaults to `kafka_cluster_id`.
+
+Every scraped broker target must carry the exact configured label/value, even when
+brokers or JMX exporters use separate endpoints. For the supplied configuration,
+the target health selector is `up{kafka_cluster_id="kafka-dc1"}`.
+
+### Quota evidence and static policy allocation
+
+BrokerTopicMetrics supplies cluster cost and broker/topic discovery data; it does
+not supply principal identity for allocation. Quota telemetry records principal
+evidence for each billing window. Static identities are the visible allocation
+policy and produce chargeback rows with `measured_usage=false`.
 
 ```yaml
 identity_source:
-  source: prometheus
-  default_team: UNASSIGNED
-  principal_to_team:
-    User:alice: platform-team
-    User:bob: data-team
+  source: both
+  static_identities:
+    - identity_id: platform-team
+      identity_type: team
+    - identity_id: data-team
+      identity_type: team
 ```
+
+If quota byte-rate telemetry is absent, its status is `not_observed`; allocation
+does not infer an owner from topic traffic. Structurally valid non-finite throttle
+samples mean no positive throttling was observed, not measured usage.
 
 ### Using Admin API for resource discovery
 
@@ -71,7 +90,9 @@ Change `resource_source.source` to `admin_api` in `config.yaml` and set `KAFKA_B
 
 ### Multi-cluster setup
 
-Add additional entries under `tenants:` in `config.yaml`. Each cluster entry gets its own `cluster_id`, `broker_count`, `cost_model`, and `connection_string`.
+Add additional entries under `tenants:` in `config.yaml`. Each cluster entry gets
+its own `cluster_id`, `metrics_identifier`, `broker_count`, `cost_model`, and
+`connection_string`.
 
 ### Pipeline frequency
 
@@ -83,13 +104,30 @@ Add additional entries under `tenants:` in `config.yaml`. Each cluster entry get
 
 ## Prometheus requirements
 
-The engine queries these JMX metrics from Prometheus:
+The engine requires these metrics from Prometheus:
 
-- `kafka_server_brokertopicmetrics_bytesin_total` — bytes produced per topic
-- `kafka_server_brokertopicmetrics_bytesout_total` — bytes consumed per topic
-- `kafka_log_log_size` — storage per topic/partition
+- `up` — target health for each billing window
+- `kafka_server_brokertopicmetrics_bytesin_total` — cluster ingress cost and broker/topic discovery
+- `kafka_server_brokertopicmetrics_bytesout_total` — cluster egress cost
+- `kafka_log_log_size` — cluster storage cost
 
-Ensure your JMX exporter configuration exposes these metrics with `topic` and `partition` labels.
+When `identity_source.source` is `prometheus` or `both`, it also evaluates
+`kafka_server_quota_byte_rate` and `kafka_server_quota_throttle_time_ms` as quota
+evidence.
+
+Ensure every target carries the configured `metrics_identifier_label` and
+`metrics_identifier` value. The `up` selector must be healthy and complete for the
+full billing window. Topic and quota metrics may appear only when active, so they
+cannot prove target scope.
+
+## Scope blocking and recovery
+
+If the target selector is missing, mismatched, incomplete, or unhealthy, the
+pipeline fails closed: it does not commit billing or progress for that window. A
+breaker remains open and blocks both until a later run sends one targeted probe
+before starting normal work. Once healthy, it recovers available windows in
+chronological order within the configured lookback range; older unavailable windows
+remain visible as a retention gap rather than receiving fabricated billing.
 
 ## Troubleshooting
 
@@ -101,9 +139,14 @@ Ensure your JMX exporter configuration exposes these metrics with `topic` and `p
 - Check Prometheus is reachable: `docker compose exec chitragupta python -c "import urllib.request; print(urllib.request.urlopen('$PROMETHEUS_URL/-/healthy').status)"`
 - Verify the Grafana time range covers dates with data
 
-**No principals discovered**
-- Confirm Prometheus has JMX metrics with principal labels: query `kafka_server_brokertopicmetrics_bytesin_total` in Prometheus UI
-- Try `identity_source.source: static` with an explicit `principal_to_team` mapping
+**No quota evidence**
+- Confirm quota telemetry is available with the configured target label/value
+- Use `identity_source.source: static` or `both` and list the policy identities
+  that should receive the static split
+
+**Scope blocked**
+- Query the exact `up{<metrics_identifier_label>="<metrics_identifier>"}` selector
+- Confirm the label/value is injected on every broker target, including separate endpoints
 
 **Cost model looks wrong**
 - Adjust `compute_hourly_rate`, `storage_per_gib_hourly`, etc. in `config.yaml`
