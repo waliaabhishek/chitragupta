@@ -84,6 +84,31 @@ If quota byte-rate telemetry is absent, its status is `not_observed`; allocation
 does not infer an owner from topic traffic. Structurally valid non-finite throttle
 samples mean no positive throttling was observed, not measured usage.
 
+### Optional topic attribution
+
+The default is cluster-level chargeback only. To add a topic-level analytical view,
+enable the independent overlay:
+
+```yaml
+topic_attribution:
+  enabled: true
+  compute_policy: shared_even_v1
+  # Omit this key, or use [], to exclude no topics.
+  # exclude_topic_patterns:
+  #   - "internal-*"
+```
+
+Ingress, egress, and storage use topic-labelled evidence. `shared_even_v1`
+allocates the full fixed compute pool evenly across complete active topics; it is a
+shared policy, not measured usage. Omit the block to leave the overlay disabled,
+or leave `compute_policy: disabled` to keep compute as `__UNATTRIBUTED__`.
+
+Exclusion patterns are reporting-only. Allocation and stored amounts keep the real
+topic names. After the service's normal configuration reload or restart, changed
+patterns reclassify both current and historical results without rerunning the
+pipeline. Analytics collapse matching topics into `Excluded topics`; the table and
+CSV retain each topic name and show its derived exclusion status.
+
 ### Using Admin API for resource discovery
 
 Change `resource_source.source` to `admin_api` in `config.yaml` and set `KAFKA_BOOTSTRAP_SERVERS` in `.env` to query Kafka directly instead of deriving resources from Prometheus labels.
@@ -100,25 +125,45 @@ its own `cluster_id`, `metrics_identifier`, `broker_count`, `cost_model`, and
 |---------|---------|-------------|
 | `features.refresh_interval` | `900` | Seconds between pipeline runs (15 min) |
 | `tenants.*.lookback_days` | `30` | Historical data range on first run |
-| `tenants.*.cutoff_days` | `3` | Skip most-recent N days |
+| `tenants.*.cutoff_days` | `2` | Skip the most-recent 1–2 days so a full UTC day closes |
 
 ## Prometheus requirements
 
-The engine requires these metrics from Prometheus:
+The engine requires these metrics from Prometheus on every broker target:
 
 - `up` — target health for each billing window
-- `kafka_server_brokertopicmetrics_bytesin_total` — cluster ingress cost and broker/topic discovery
-- `kafka_server_brokertopicmetrics_bytesout_total` — cluster egress cost
-- `kafka_log_log_size` — cluster storage cost
+- `kafka_server_brokertopicmetrics_alltopics_bytesin_total` — broker-wide client ingress pool
+- `kafka_server_brokertopicmetrics_alltopics_bytesout_total` — broker-wide client egress pool
+- `kafka_log_log_size` — storage pool and per-topic partition storage evidence
+
+The `alltopics` counters build the network cost pools and exclude replication
+traffic. The Prometheus resource source also uses
+`kafka_server_brokertopicmetrics_bytesin_total` with a `topic` label for discovery.
+When topic attribution is enabled, export both that counter and
+`kafka_server_brokertopicmetrics_bytesout_total`. They divide the client pools
+among topics; they do not construct the pools themselves.
+
+`kafka_log_log_size` must carry topic and partition evidence. A reported zero is a
+valid storage value. A missing storage family leaves the day retryable unless a
+successful Admin API inventory proves the cluster has no topics or partitions.
+
+Every one of those series must carry the configured `metrics_identifier_label`.
+The `alltopics` counters need a `broker` label and no `topic` label; topic counters
+need `broker` and `topic`; for topic attribution `kafka_log_log_size` needs
+`broker`, `topic`, and `partition`.
 
 When `identity_source.source` is `prometheus` or `both`, it also evaluates
 `kafka_server_quota_byte_rate` and `kafka_server_quota_throttle_time_ms` as quota
 evidence.
 
 Ensure every target carries the configured `metrics_identifier_label` and
-`metrics_identifier` value. The `up` selector must be healthy and complete for the
-full billing window. Topic and quota metrics may appear only when active, so they
-cannot prove target scope.
+`metrics_identifier` value. Chitragupta applies that selector to `up`, resource
+discovery, all broker-wide pools, and topic evidence. The `up` selector must be
+healthy and complete for the full billing window. Topic and quota metrics may appear
+only when active, so they cannot prove target scope.
+
+All pool and topic queries use the same `[00:00 UTC, 00:00 UTC)` day. Start with a
+1–2 day cutoff so the pipeline does not gather an incomplete current day.
 
 ## Scope blocking and recovery
 

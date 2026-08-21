@@ -47,6 +47,12 @@ tenants:
         type: prometheus
         url: http://prometheus:9090
         auth_type: none
+      # Omit topic_attribution to leave the topic-level overlay disabled.
+      # topic_attribution:
+      #   enabled: true
+      #   compute_policy: shared_even_v1
+      #   # exclude_topic_patterns:
+      #   #   - "internal-*"
       emitters:
         - type: csv
           aggregation: daily
@@ -81,19 +87,41 @@ tenants:
 | `discovery_window_hours` | int | 1 | Hours of Prometheus data to scan for broker/topic discovery (must be > 0) |
 | `metrics.url` | string | required | Prometheus URL |
 | `metrics.auth_type` | enum | `none` | `basic`, `bearer`, or `none` |
+| `topic_attribution.enabled` | bool | `false` | Enable the independent topic-level analytical overlay. It does not change principal chargebacks. |
+| `topic_attribution.compute_policy` | enum | `disabled` | `disabled` keeps compute as `__UNATTRIBUTED__`; `shared_even_v1` uses the fixed, shared-even policy described below. |
+| `topic_attribution.exclude_topic_patterns` | list[string] | `[]` | Optional shell-style topic patterns for read-time reporting classification. Omit it, or set `[]`, to exclude no topics. |
+| `topic_attribution.retention_days` | int | `90` | Days to retain topic-attribution rows (1–365). |
+| `topic_attribution.emitters` | list | `[]` | Optional emitter specs for topic-attribution output. |
 | `allocator_overrides` | dict | `{}` | Replace allocator for specific product types (see [Advanced Scenarios](advanced-scenarios.md)) |
 | `identity_resolution_overrides` | dict | `{}` | Replace identity resolver for specific product types |
 
 ## Required Prometheus metrics
 
-The cost model and target-scope check require these Prometheus metrics:
+The cost model and target-scope check require these Prometheus metrics on every
+scraped broker target:
 
 | Metric | Type | Used for |
 |---|---|---|
-| `kafka_server_brokertopicmetrics_bytesin_total` | counter | Network ingress cost and broker/topic discovery; it is not principal identity evidence |
-| `kafka_server_brokertopicmetrics_bytesout_total` | counter | Network egress cost; it is not principal identity evidence |
-| `kafka_log_log_size` | gauge | Storage cost (cluster-wide average) |
+| `kafka_server_brokertopicmetrics_alltopics_bytesin_total` | counter | Broker-wide client ingress cost pool; it excludes replication traffic. |
+| `kafka_server_brokertopicmetrics_alltopics_bytesout_total` | counter | Broker-wide client egress cost pool; it excludes replication traffic. |
+| `kafka_log_log_size` | gauge | Cluster storage cost pool and, when topic attribution is enabled, per-topic storage evidence. |
 | `up` | gauge | Required target-scope validation for every billing window |
+
+With `resource_source.source: prometheus`, export the topic-labelled ingress
+counter for resource discovery. When `topic_attribution.enabled` is `true`,
+export both topic-labelled counters. They are allocation evidence, not the cost
+pools themselves:
+
+| Metric | Type | Used for |
+|---|---|---|
+| `kafka_server_brokertopicmetrics_bytesin_total` | counter | Topic ingress ratio |
+| `kafka_server_brokertopicmetrics_bytesout_total` | counter | Topic egress ratio |
+
+Each series must carry the configured `metrics_identifier_label`. The broker-wide
+`alltopics` counters also need `broker` and must not carry `topic`; topic counters
+need `broker` and `topic`. For topic attribution, `kafka_log_log_size` also needs
+`broker`, `topic`, and `partition`. `up` must carry the configured selector label
+on every target.
 
 When `identity_source.source` is `prometheus` or `both`, the plugin also evaluates
 these optional quota-evidence series:
@@ -110,9 +138,56 @@ an empty or `not_applicable` value. Byte-rate values must be finite. Throttle
 rows use the same label validation, but a non-finite throttle value is reported
 as no finite positive throttling observed rather than as invalid quota evidence.
 
-Network metrics are queried with `sum(increase(...[1h]))` per step (summing hourly
-deltas gives total bytes transferred). Storage is averaged across all samples in the
-day (since it's a point-in-time gauge, not a cumulative counter).
+All Prometheus queries inject the configured
+`metrics_identifier_label=metrics_identifier` selector. That includes target
+health, discovery, broker-wide pools, and topic evidence, so multiple configured
+clusters can safely share one Prometheus endpoint.
+
+Network pools use the broker-wide `alltopics` counters over a closed UTC day.
+Storage is averaged across all `kafka_log_log_size` samples in that same day
+(since it is a point-in-time gauge, not a cumulative counter).
+
+## Optional topic attribution
+
+Topic attribution is a self-managed Kafka overlay on top of the existing cluster
+chargeback. It is opt-in and independent of principal evidence and principal
+allocation policy. Enabling it writes a topic breakdown; it never uses
+BrokerTopicMetrics as principal identity evidence.
+
+```yaml
+plugin_settings:
+  topic_attribution:
+    enabled: true
+    compute_policy: shared_even_v1
+```
+
+Ingress and egress use topic-labelled bytes-in and bytes-out evidence against
+their respective broker-wide client pools. Storage uses partition log size,
+summed by topic and averaged across the day. A present zero value is valid. If
+the storage metric family is absent, the day remains retryable unless successful
+Admin API inventory proves that the cluster has no topics or partitions.
+
+Every processed pool is represented by topic rows or by `__UNATTRIBUTED__`. When
+topic evidence is incomplete, its unmatched cost remains `__UNATTRIBUTED__`;
+topic amounts and that residual reconcile to the cluster pool. The overlay uses
+the same closed `[00:00 UTC, 00:00 UTC)` day for the pool and all topic evidence.
+Start with a 1–2 day tenant cutoff so only fully closed metric days are processed.
+
+`shared_even_v1` is an explicit fixed-cost policy, not measured usage. It assigns
+100% of compute evenly across the complete active-topic universe before any
+reporting exclusions are applied. `disabled` is the default and makes the compute
+topic row `__UNATTRIBUTED__`. Future compute algorithms use new policy names;
+the meaning of `shared_even_v1` does not change.
+
+`exclude_topic_patterns` is optional reporting policy. Omission and `[]` both
+mean that no topics are excluded; there are no implicit internal-topic patterns.
+Actual topic names and amounts are persisted. After the application's normal
+configuration reload or restart, changed patterns reclassify both current and
+historical results at read time without a Prometheus query, allocation rerun, or
+storage rewrite. Aggregate analytics collapse matching topics into `Excluded topics`;
+detailed API rows and CSV retain each actual name with its derived exclusion status.
+
+Confluent Cloud topic attribution keeps its existing configuration and behavior.
 
 ## Prometheus target scope
 

@@ -157,6 +157,26 @@ describe("fetchTopicAttributionAggregation", () => {
     expect(capturedUrl).toContain("time_bucket=month");
   });
 
+  it("sends the excluded-topic collapse flag for analytical requests", async () => {
+    let capturedUrl = "";
+    server.use(
+      http.get(`${BASE}/tenants/acme/topic-attributions/aggregate`, ({ request }) => {
+        capturedUrl = request.url;
+        return HttpResponse.json({ buckets: [], total_amount: "0.00", total_rows: 0 });
+      }),
+    );
+
+    await fetchTopicAttributionAggregation("acme", {
+      group_by: ["topic_name"],
+      time_bucket: "day",
+      start_date: "2026-01-01",
+      end_date: "2026-01-31",
+      collapse_excluded: true,
+    });
+
+    expect(capturedUrl).toContain("collapse_excluded=true");
+  });
+
   it("throws on HTTP error", async () => {
     server.use(
       http.get(

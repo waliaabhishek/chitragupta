@@ -209,6 +209,8 @@ def _check_prometheus(evidence_dir: Path, contract: dict[str, Any], failures: li
         raise ValueError("workload contract must define exactly one over-quota profile")
     over_quota_scope = str(over_quota_profiles[0]["scope"])
     query_by_series = {
+        "kafka_server_brokertopicmetrics_alltopics_bytesin_total": "alltopics_bytes_in",
+        "kafka_server_brokertopicmetrics_alltopics_bytesout_total": "alltopics_bytes_out",
         "kafka_server_brokertopicmetrics_bytesin_total": "topic_bytes_in",
         "kafka_server_brokertopicmetrics_bytesout_total": "topic_bytes_out",
         "kafka_log_log_size": "partition_log_size",
@@ -227,6 +229,17 @@ def _check_prometheus(evidence_dir: Path, contract: dict[str, Any], failures: li
             missing_labels = sorted(set(metric["required_labels"]) - labels.keys())
             if missing_labels:
                 failures.append(Failure("missing_label", f"{name} sample lacks labels: {missing_labels}", path.name))
+                break
+            forbidden_labels = metric.get("forbidden_labels", [])
+            present_forbidden_labels = sorted(set(forbidden_labels) & labels.keys())
+            if present_forbidden_labels:
+                failures.append(
+                    Failure(
+                        "cluster_selector",
+                        f"{name} broker-wide sample has forbidden labels: {present_forbidden_labels}",
+                        path.name,
+                    )
+                )
                 break
 
     quota_queries = {
@@ -323,6 +336,23 @@ def _check_prometheus(evidence_dir: Path, contract: dict[str, Any], failures: li
                 path.name,
             )
         )
+
+    for query_name in ("alltopics_bytes_in", "alltopics_bytes_out"):
+        samples = _query_samples(queries, query_name)
+        cluster_ids = {
+            labels.get("kafka_cluster_id")
+            for labels, _ in samples
+            if labels.get("lab_cluster") in {"cluster-a", "cluster-b"}
+        }
+        lab_clusters = {labels.get("lab_cluster") for labels, _ in samples}
+        if lab_clusters != {"cluster-a", "cluster-b"} or len(cluster_ids - {None}) != 2:
+            failures.append(
+                Failure(
+                    "cluster_selector",
+                    f"{query_name} broker-wide series are not isolated by two explicit cluster identities",
+                    path.name,
+                )
+            )
 
 
 def _restart_requirements(contract: dict[str, Any]) -> dict[str, Any]:

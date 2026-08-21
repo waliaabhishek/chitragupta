@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
     from core.engine.allocation import AllocationContext, AllocationResult
+    from core.engine.topic_attribution_provider import TopicAttributionProvider
     from core.metrics.protocol import MetricsSource
     from core.models import (
         BillingLineItem,
@@ -309,6 +310,17 @@ class TopicDiscoveryPlugin(Protocol):
         tenant_id: str,
         cluster_ids: list[str],
     ) -> Iterable[Resource]: ...
+
+
+@runtime_checkable
+class TopicAttributionProviderPlugin(Protocol):
+    """Optional plugin capability for an ecosystem-owned attribution strategy."""
+
+    def get_topic_attribution_provider(self) -> TopicAttributionProvider | None: ...
+
+    def reset_topic_attribution_inventory_proof(self) -> None: ...
+
+    def topic_attribution_inventory_ready(self, shared_context: object | None) -> bool: ...
 
 
 @runtime_checkable

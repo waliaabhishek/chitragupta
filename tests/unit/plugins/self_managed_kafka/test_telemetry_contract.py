@@ -384,11 +384,25 @@ class TestMetricContractTypes:
         fixture = Path("tests/fixtures/self_managed_kafka_telemetry_lab/exporter-cluster-a.metrics")
         source = fixture.read_text(encoding="utf-8")
 
-        topic_lines = [line for line in source.splitlines() if line.startswith("kafka_server_brokertopicmetrics_")]
+        broker_wide_lines = [
+            line for line in source.splitlines() if line.startswith("kafka_server_brokertopicmetrics_alltopics_")
+        ]
+        topic_lines = [
+            line
+            for line in source.splitlines()
+            if line.startswith(
+                (
+                    "kafka_server_brokertopicmetrics_bytesin_total{",
+                    "kafka_server_brokertopicmetrics_bytesout_total{",
+                )
+            )
+        ]
+        assert broker_wide_lines
         assert topic_lines
-        assert all('kafka_cluster_id="kraft-a-001"' in line for line in topic_lines)
+        assert all('kafka_cluster_id="kraft-a-001"' in line for line in broker_wide_lines + topic_lines)
+        assert all("topic=" not in line for line in broker_wide_lines)
         assert all('topic="shared-topic"' in line for line in topic_lines)
-        assert all("principal=" not in line for line in topic_lines)
+        assert all("principal=" not in line for line in broker_wide_lines + topic_lines)
 
         quota_lines = [line for line in source.splitlines() if line.startswith("kafka_server_quota_byte_rate{")]
         assert quota_lines
@@ -546,7 +560,7 @@ class TestTargetScopeEvidence:
             key = queries[0].key
             if key == "target_up":
                 return {key: target_rows(queries[0], kwargs)}
-            if key == "broker_topic_discovery":
+            if key.startswith("broker_topic_discovery"):
                 return {key: []}
             if key.startswith("quota_"):
                 return {

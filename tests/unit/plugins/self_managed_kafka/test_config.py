@@ -337,6 +337,52 @@ class TestSelfManagedKafkaConfig:
         assert config.discovery_window_hours == 1
 
 
+class TestSelfManagedTopicAttributionConfig:
+    def test_defaults_to_disabled_without_implicit_topic_exclusions(self, base_settings: dict[str, object]) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.topic_attribution.enabled is False
+        assert config.topic_attribution.compute_policy == "disabled"
+        assert config.topic_attribution.exclude_topic_patterns == []
+        assert config.topic_attribution.retention_days == 90
+        assert config.topic_attribution.emitters == []
+
+    def test_accepts_the_versioned_shared_compute_policy(self, base_settings: dict[str, object]) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["topic_attribution"] = {
+            "enabled": True,
+            "compute_policy": "shared_even_v1",
+            "exclude_topic_patterns": ["__consumer_offsets", "_confluent-*"],
+            "retention_days": 14,
+        }
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.topic_attribution.enabled is True
+        assert config.topic_attribution.compute_policy == "shared_even_v1"
+        assert config.topic_attribution.exclude_topic_patterns == ["__consumer_offsets", "_confluent-*"]
+        assert config.topic_attribution.retention_days == 14
+
+    def test_rejects_unknown_compute_policy_and_invalid_exclusion_shape(self, base_settings: dict[str, object]) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["topic_attribution"] = {
+            "enabled": True,
+            "compute_policy": "usage_weighted_v1",
+            "exclude_topic_patterns": "__consumer_offsets",
+        }
+
+        with pytest.raises(ValidationError) as error:
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        locations = {issue["loc"] for issue in error.value.errors()}
+        assert ("topic_attribution", "compute_policy") in locations
+        assert ("topic_attribution", "exclude_topic_patterns") in locations
+
+
 class TestCostModelConfigGiBFields:
     """Issue 2: config fields renamed from _per_gb to _per_gib."""
 

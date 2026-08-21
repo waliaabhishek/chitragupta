@@ -8,7 +8,7 @@ pricing × usage metrics.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -30,20 +30,26 @@ ECOSYSTEM = "self_managed_kafka"
 _BYTES_PER_GIB = Decimal("1073741824")
 
 
+class _MissingStorageEvidenceError(MetricsQueryError):
+    """A retryable daily storage-evidence gap that must not abort other days."""
+
+
 def _cost_queries(metrics_identifier_label: str) -> list[MetricQuery]:
     """Build cost queries bound to this configured Prometheus target scope."""
     return [
         MetricQuery(
             key="cluster_bytes_in",
-            query_expression="sum(increase(kafka_server_brokertopicmetrics_bytesin_total{}[1h]))",
+            query_expression="sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesin_total{}[86400s]))",
             label_keys=(),
             resource_label=metrics_identifier_label,
+            query_mode="instant",
         ),
         MetricQuery(
             key="cluster_bytes_out",
-            query_expression="sum(increase(kafka_server_brokertopicmetrics_bytesout_total{}[1h]))",
+            query_expression="sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesout_total{}[86400s]))",
             label_keys=(),
             resource_label=metrics_identifier_label,
+            query_mode="instant",
         ),
         MetricQuery(
             key="cluster_storage_bytes",
@@ -64,17 +70,12 @@ def _day_starts(start: datetime, end: datetime) -> Iterable[tuple[datetime, date
         current = day_end
 
 
-def _slice_metrics_for_day(
-    all_metrics: dict[str, list[MetricRow]],
-    day_start: datetime,
-    day_end: datetime,
-) -> dict[str, list[MetricRow]]:
-    """Return a copy of all_metrics filtered to rows in [day_start, day_end).
-
-    O(N×T) where N=days and T=total rows. Acceptable: billing ranges are ≤31 days
-    and row counts are in the hundreds, so pre-grouping adds complexity for no gain.
-    """
-    return {key: [row for row in rows if day_start <= row.timestamp < day_end] for key, rows in all_metrics.items()}
+def _utc_day_floor(value: datetime) -> datetime:
+    """Return the UTC calendar-day start containing an aware timestamp."""
+    if value.tzinfo is None:
+        raise ValueError(f"Naive datetime not allowed: {value!r}")
+    utc_value = value.astimezone(UTC)
+    return utc_value.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 class ConstructedCostInput(CostInput):
@@ -94,9 +95,11 @@ class ConstructedCostInput(CostInput):
         self,
         config: SelfManagedKafkaConfig,
         metrics_source: MetricsSource,
+        inventory_is_partitionless: Callable[[], bool] | None = None,
     ) -> None:
         self._config = config
         self._metrics_source = metrics_source
+        self._inventory_is_partitionless = inventory_is_partitionless or (lambda: False)
 
     def gather(
         self,
@@ -105,44 +108,14 @@ class ConstructedCostInput(CostInput):
         end: datetime,
         uow: UnitOfWork,
     ) -> Iterable[BillingLineItem]:
-        """Query Prometheus once for the full range, then process each day's slice.
-
-        Falls back to per-day queries if the batched query fails, preserving
-        partial billing when only some days are unavailable.
-        """
-        queries = _cost_queries(self._config.metrics_identifier_label)
-        try:
-            all_metrics = self._metrics_source.query(
-                queries=queries,
-                start=start,
-                end=end,
-                step=timedelta(seconds=self._config.metrics_step_seconds),
-                resource_id_filter=self._config.metrics_identifier,
-            )
-        except MetricsQueryError as exc:
-            logger.warning(
-                "Batched Prometheus query failed for tenant=%s range=%s..%s — falling back to per-day queries: %s",
-                tenant_id,
-                start.date(),
-                end.date(),
-                exc,
-            )
-            yield from self._gather_day_by_day_fallback(tenant_id, start, end, queries)
+        """Construct daily pools using identical closed UTC calendar windows."""
+        normalized_start = _utc_day_floor(start)
+        normalized_end = _utc_day_floor(end)
+        if normalized_start >= normalized_end:
             return
 
-        for day_start, day_end in _day_starts(start, end):
-            day_metrics = _slice_metrics_for_day(all_metrics, day_start, day_end)
-            yield from self._process_day(tenant_id, day_start, day_end, day_metrics)
-
-    def _gather_day_by_day_fallback(
-        self,
-        tenant_id: str,
-        start: datetime,
-        end: datetime,
-        queries: list[MetricQuery],
-    ) -> Iterable[BillingLineItem]:
-        """Original day-by-day query behavior used when the batched query fails."""
-        for day_start, day_end in _day_starts(start, end):
+        queries = _cost_queries(self._config.metrics_identifier_label)
+        for day_start, day_end in _day_starts(normalized_start, normalized_end):
             try:
                 metrics = self._metrics_source.query(
                     queries=queries,
@@ -153,13 +126,16 @@ class ConstructedCostInput(CostInput):
                 )
             except MetricsQueryError as exc:
                 logger.warning(
-                    "Per-day Prometheus query failed for tenant=%s date=%s — skipping: %s",
+                    "Daily Prometheus query failed for tenant=%s date=%s — skipping: %s",
                     tenant_id,
                     day_start.date(),
                     exc,
                 )
                 continue
-            yield from self._process_day(tenant_id, day_start, day_end, metrics)
+            try:
+                yield from self._process_day(tenant_id, day_start, day_end, metrics)
+            except _MissingStorageEvidenceError:
+                continue
 
     def _process_day(
         self,
@@ -169,14 +145,34 @@ class ConstructedCostInput(CostInput):
         metrics: dict[str, list[MetricRow]],
     ) -> Iterable[BillingLineItem]:
         """Generate billing lines for a single day from pre-fetched metrics."""
-        has_data = any(rows for rows in metrics.values())
-        if not has_data:
-            logger.warning(
-                "No Prometheus data for tenant=%s date=%s — skipping billing period",
+        bytes_in_rows = metrics.get("cluster_bytes_in", [])
+        bytes_out_rows = metrics.get("cluster_bytes_out", [])
+        storage_rows = [row for row in metrics.get("cluster_storage_bytes", []) if day_start <= row.timestamp < day_end]
+        if not bytes_in_rows or not bytes_out_rows:
+            missing_metric = (
+                "kafka_server_brokertopicmetrics_alltopics_bytesin_total"
+                if not bytes_in_rows
+                else "kafka_server_brokertopicmetrics_alltopics_bytesout_total"
+            )
+            logger.error(
+                "Missing broker-wide client counter tenant=%s cluster=%s selector=%s date=%s metric=%s",
                 tenant_id,
+                self._config.cluster_id,
+                self._config.metrics_identifier,
+                day_start.date(),
+                missing_metric,
+            )
+            raise MetricsQueryError(f"Missing required broker-wide metric family: {missing_metric}")
+
+        if not storage_rows and not self._inventory_is_partitionless():
+            logger.warning(
+                "Missing storage metric family tenant=%s cluster=%s selector=%s date=%s metric=kafka_log_log_size",
+                tenant_id,
+                self._config.cluster_id,
+                self._config.metrics_identifier,
                 day_start.date(),
             )
-            return
+            raise _MissingStorageEvidenceError("Missing required storage metric family: kafka_log_log_size")
 
         cost_model = self._config.get_effective_cost_model()
         hours = Decimal(str((day_end - day_start).total_seconds() / 3600))
@@ -184,15 +180,13 @@ class ConstructedCostInput(CostInput):
         timestamp = day_start.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC)
 
         yield from _make_compute_line(tenant_id, cluster_id, timestamp, self._config.broker_count, hours, cost_model)
-        yield from _make_storage_line(
-            tenant_id, cluster_id, timestamp, metrics.get("cluster_storage_bytes", []), hours, cost_model
-        )
+        yield from _make_storage_line(tenant_id, cluster_id, timestamp, storage_rows, hours, cost_model)
         yield from _make_network_lines(
             tenant_id,
             cluster_id,
             timestamp,
-            metrics.get("cluster_bytes_in", []),
-            metrics.get("cluster_bytes_out", []),
+            bytes_in_rows,
+            bytes_out_rows,
             cost_model,
         )
 

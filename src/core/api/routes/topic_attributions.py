@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import csv
+import fnmatch
 import io
 import logging
 import math
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping
 from datetime import date
 from typing import Annotated
 
@@ -21,7 +22,7 @@ from core.api.schemas import (
 from core.api.schemas import (
     TopicAttributionAggregationBucket as TopicAttributionAggregationBucketSchema,
 )
-from core.config.models import TenantConfig  # noqa: TC001
+from core.config.models import PluginSettingsBase, TenantConfig  # noqa: TC001
 from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
 from core.utils.tag_validation import is_valid_tag_key
 
@@ -30,12 +31,39 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["topic-attributions"])
 
 
+def _build_topic_exclusion_matcher(
+    plugin_settings: PluginSettingsBase,
+) -> Callable[[str], bool]:
+    topic_attribution: object = getattr(plugin_settings, "topic_attribution", None)
+    if isinstance(topic_attribution, Mapping):
+        patterns_value: object = topic_attribution.get("exclude_topic_patterns", ())
+    else:
+        patterns_value = getattr(topic_attribution, "exclude_topic_patterns", ())
+    patterns = (
+        tuple(value for value in patterns_value if isinstance(value, str))
+        if isinstance(patterns_value, list | tuple)
+        else ()
+    )
+
+    def is_excluded(topic_name: str) -> bool:
+        return any(fnmatch.fnmatch(topic_name, pattern) for pattern in patterns)
+
+    return is_excluded
+
+
+def _get_topic_exclusion_matcher(
+    tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+) -> Callable[[str], bool]:
+    return _build_topic_exclusion_matcher(tenant_config.plugin_settings)
+
+
 @router.get(
     "/tenants/{tenant_name}/topic-attributions",
     response_model=PaginatedResponse[TopicAttributionResponse],
 )
 async def list_topic_attributions(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    is_excluded: Annotated[Callable[[str], bool], Depends(_get_topic_exclusion_matcher)],
     uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
@@ -81,6 +109,11 @@ async def list_topic_attributions(
                 product_type=r.product_type,
                 attribution_method=r.attribution_method,
                 amount=r.amount,
+                is_excluded=(
+                    r.topic_name != "__UNATTRIBUTED__" and is_excluded(r.topic_name)
+                    if tenant_config.ecosystem == "self_managed_kafka"
+                    else None
+                ),
             )
             for r in items
         ],
@@ -98,6 +131,7 @@ async def list_topic_attributions(
 async def aggregate_topic_attributions(
     request: Request,
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    is_excluded: Annotated[Callable[[str], bool], Depends(_get_topic_exclusion_matcher)],
     uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     group_by: Annotated[list[str] | None, Query(description="Dimension columns or tag:{key} to group by")] = None,
     time_bucket: Annotated[str, Query()] = "day",
@@ -107,6 +141,7 @@ async def aggregate_topic_attributions(
     cluster_resource_id: Annotated[str | None, Query()] = None,
     topic_name: Annotated[str | None, Query()] = None,
     product_type: Annotated[str | None, Query()] = None,
+    collapse_excluded: Annotated[bool, Query()] = False,
 ) -> TopicAttributionAggregationResponse:
     start_dt, end_dt = resolve_date_range(start_date, end_date, timezone=timezone)
 
@@ -149,16 +184,38 @@ async def aggregate_topic_attributions(
         tag_group_by=tag_group_by or None,
         tag_filters=tag_filters or None,
     )
+    response_buckets = [
+        TopicAttributionAggregationBucketSchema(
+            dimensions=bucket.dimensions,
+            time_bucket=bucket.time_bucket,
+            total_amount=bucket.total_amount,
+            row_count=bucket.row_count,
+        )
+        for bucket in result.buckets
+    ]
+    if tenant_config.ecosystem == "self_managed_kafka" and collapse_excluded and "topic_name" in dim_group_by:
+        collapsed: dict[tuple[str, tuple[tuple[str, str], ...]], TopicAttributionAggregationBucketSchema] = {}
+        for bucket in response_buckets:
+            dimensions = dict(bucket.dimensions)
+            topic_name = dimensions.get("topic_name")
+            if topic_name != "__UNATTRIBUTED__" and topic_name is not None and is_excluded(topic_name):
+                dimensions["topic_name"] = "Excluded topics"
+            collapse_key = bucket.time_bucket, tuple(sorted(dimensions.items()))
+            existing = collapsed.get(collapse_key)
+            if existing is None:
+                collapsed[collapse_key] = TopicAttributionAggregationBucketSchema(
+                    dimensions=dimensions,
+                    time_bucket=bucket.time_bucket,
+                    total_amount=bucket.total_amount,
+                    row_count=bucket.row_count,
+                )
+            else:
+                existing.total_amount += bucket.total_amount
+                existing.row_count += bucket.row_count
+        response_buckets = list(collapsed.values())
+
     return TopicAttributionAggregationResponse(
-        buckets=[
-            TopicAttributionAggregationBucketSchema(
-                dimensions=b.dimensions,
-                time_bucket=b.time_bucket,
-                total_amount=b.total_amount,
-                row_count=b.row_count,
-            )
-            for b in result.buckets
-        ],
+        buckets=response_buckets,
         total_amount=result.total_amount,
         total_rows=result.total_rows,
     )
@@ -182,6 +239,7 @@ async def list_topic_attribution_dates(
 @router.post("/tenants/{tenant_name}/topic-attributions/export")
 async def export_topic_attributions(
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
+    is_excluded: Annotated[Callable[[str], bool], Depends(_get_topic_exclusion_matcher)],
     uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
@@ -198,38 +256,61 @@ async def export_topic_attributions(
     def generate() -> Iterator[str]:
         buf = io.StringIO()
         writer = csv.writer(buf, lineterminator="\n")
-        writer.writerow(
-            [
-                "ecosystem",
-                "tenant_id",
-                "timestamp",
-                "env_id",
-                "cluster_resource_id",
-                "topic_name",
-                "product_category",
-                "product_type",
-                "attribution_method",
-                "amount",
-            ]
-        )
+        if tenant_config.ecosystem == "self_managed_kafka":
+            writer.writerow(
+                [
+                    "ecosystem",
+                    "tenant_id",
+                    "timestamp",
+                    "env_id",
+                    "cluster_resource_id",
+                    "topic_name",
+                    "is_excluded",
+                    "product_category",
+                    "product_type",
+                    "attribution_method",
+                    "amount",
+                ]
+            )
+        else:
+            writer.writerow(
+                [
+                    "ecosystem",
+                    "tenant_id",
+                    "timestamp",
+                    "env_id",
+                    "cluster_resource_id",
+                    "topic_name",
+                    "product_category",
+                    "product_type",
+                    "attribution_method",
+                    "amount",
+                ]
+            )
         yield buf.getvalue()
         for row in rows:
             buf.seek(0)
             buf.truncate(0)
-            writer.writerow(
+            values: list[str] = [
+                row.ecosystem,
+                row.tenant_id,
+                row.timestamp.isoformat(),
+                row.env_id,
+                row.cluster_resource_id,
+                row.topic_name,
+            ]
+            if tenant_config.ecosystem == "self_managed_kafka":
+                excluded = row.topic_name != "__UNATTRIBUTED__" and is_excluded(row.topic_name)
+                values.append(str(excluded).lower())
+            values.extend(
                 [
-                    row.ecosystem,
-                    row.tenant_id,
-                    row.timestamp.isoformat(),
-                    row.env_id,
-                    row.cluster_resource_id,
-                    row.topic_name,
                     row.product_category,
                     row.product_type,
                     row.attribution_method,
                     str(row.amount),
                 ]
             )
+            writer.writerow(values)
             yield buf.getvalue()
 
     return StreamingResponse(

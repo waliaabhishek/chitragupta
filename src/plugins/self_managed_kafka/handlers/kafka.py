@@ -83,6 +83,8 @@ class SelfManagedKafkaHandler:
         self._metrics_scope_evidence = metrics_scope_evidence
         self._ecosystem = "self_managed_kafka"
         self._current_gather_ctx: SMKSharedContext | None = None
+        self._admin_inventory_complete = False
+        self._admin_inventory_is_partitionless = False
         self._principal_evidence_cache: dict[tuple[str, str, datetime, datetime], PrincipalTelemetryEvidence] = {}
 
     @property
@@ -113,9 +115,25 @@ class SelfManagedKafkaHandler:
         yield shared_ctx.cluster_resource
 
         if self._config.resource_source.source == "admin_api":
+            self.clear_admin_inventory_proof()
             yield from self._gather_resources_from_admin(tenant_id)
         else:
             yield from self._gather_resources_from_prometheus(tenant_id)
+
+    @property
+    def admin_inventory_complete(self) -> bool:
+        """Whether the current gather completed authoritative Admin API discovery."""
+        return self._admin_inventory_complete
+
+    def clear_admin_inventory_proof(self) -> None:
+        """Discard the prior gather's Admin API inventory proof."""
+        self._admin_inventory_complete = False
+        self._admin_inventory_is_partitionless = False
+
+    @property
+    def admin_inventory_is_partitionless(self) -> bool:
+        """Whether current authoritative Admin API discovery found no topics."""
+        return self._admin_inventory_complete and self._admin_inventory_is_partitionless
 
     def _gather_resources_from_prometheus(self, tenant_id: str) -> Iterable[Resource]:
         """Gather brokers and topics from cached discovery sets in shared context."""
@@ -139,7 +157,12 @@ class SelfManagedKafkaHandler:
             return
 
         yield from gather_brokers_from_admin(self._admin_client, self._ecosystem, tenant_id, self._config.cluster_id)
-        yield from gather_topics_from_admin(self._admin_client, self._ecosystem, tenant_id, self._config.cluster_id)
+        topics = tuple(
+            gather_topics_from_admin(self._admin_client, self._ecosystem, tenant_id, self._config.cluster_id)
+        )
+        self._admin_inventory_complete = True
+        self._admin_inventory_is_partitionless = not topics
+        yield from topics
 
     def gather_identities(self, tenant_id: str, uow: UnitOfWork) -> Iterable[Identity]:
         """Gather configured static policy identities only."""

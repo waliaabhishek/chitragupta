@@ -685,10 +685,10 @@ class WorkflowRunner:
                     # Post-pipeline hook: emit topic attribution after successful pipeline commit
                     ta_config = _get_overlay_ta_config(runtime.plugin)
                     if ta_config and ta_config.enabled:
-                        from core.engine.topic_attribution_models import TopicAttributionConfigProtocol
+                        from core.engine.topic_attribution_models import TopicAttributionOutputConfigProtocol
 
-                        if isinstance(ta_config, TopicAttributionConfigProtocol):
-                            emitters = getattr(ta_config, "emitters", None)
+                        if isinstance(ta_config, TopicAttributionOutputConfigProtocol):
+                            emitters = ta_config.emitters
                         else:
                             emitters = None
                         if emitters:
@@ -1535,19 +1535,15 @@ class WorkflowRunner:
                     ta_config = _get_overlay_ta_config(runtime.plugin)
                     deleted_ta = 0
                     if ta_config and ta_config.enabled:
-                        from core.engine.topic_attribution_models import (
-                            TopicAttributionConfigProtocol,
-                        )
+                        from core.engine.topic_attribution_models import TopicAttributionOutputConfigProtocol
 
-                        if isinstance(ta_config, TopicAttributionConfigProtocol):
-                            retention_days = getattr(ta_config, "retention_days", None)
-                            if retention_days:
-                                ta_cutoff = cleanup_now - timedelta(days=retention_days)
-                                deleted_ta = uow.topic_attributions.delete_before(
-                                    config.ecosystem,
-                                    config.tenant_id,
-                                    ta_cutoff,
-                                )
+                        if isinstance(ta_config, TopicAttributionOutputConfigProtocol):
+                            ta_cutoff = cleanup_now - timedelta(days=ta_config.retention_days)
+                            deleted_ta = uow.topic_attributions.delete_before(
+                                config.ecosystem,
+                                config.tenant_id,
+                                ta_cutoff,
+                            )
 
                     uow.commit()
 

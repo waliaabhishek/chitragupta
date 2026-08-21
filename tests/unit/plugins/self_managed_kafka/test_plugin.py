@@ -152,6 +152,83 @@ class TestPluginGetCostInput:
             plugin.get_cost_input()
 
 
+class TestPluginTopicAttributionProvider:
+    def test_enabled_configuration_constructs_provider_and_exposes_overlay_config(
+        self, base_settings: dict[str, object]
+    ) -> None:
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        base_settings["topic_attribution"] = {
+            "enabled": True,
+            "compute_policy": "shared_even_v1",
+            "exclude_topic_patterns": ["__consumer_offsets"],
+        }
+        plugin = SelfManagedKafkaPlugin()
+        plugin.initialize(base_settings)
+
+        config = plugin.get_overlay_config("topic_attribution")
+        provider = plugin.get_topic_attribution_provider()
+
+        assert config is not None
+        assert config.enabled is True
+        assert config.compute_policy == "shared_even_v1"
+        assert config.exclude_topic_patterns == ["__consumer_offsets"]
+        assert provider is not None
+        assert provider.supported_product_types == frozenset(
+            {
+                "SELF_KAFKA_COMPUTE",
+                "SELF_KAFKA_STORAGE",
+                "SELF_KAFKA_NETWORK_INGRESS",
+                "SELF_KAFKA_NETWORK_EGRESS",
+            }
+        )
+
+    def test_disabled_configuration_does_not_create_provider(self, base_settings: dict[str, object]) -> None:
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        plugin = SelfManagedKafkaPlugin()
+        plugin.initialize(base_settings)
+
+        assert plugin.get_overlay_config("topic_attribution").enabled is False
+        assert plugin.get_topic_attribution_provider() is None
+
+    def test_disabled_overlay_preserves_legacy_discovery_query(self, base_settings: dict[str, object]) -> None:
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        plugin = SelfManagedKafkaPlugin()
+        plugin.initialize(base_settings)
+        source = MagicMock()
+        source.query.return_value = {"broker_topic_discovery": []}
+        plugin._metrics_source = source
+
+        plugin.build_shared_context("tenant-1")
+
+        queries = source.query.call_args.kwargs["queries"]
+        assert [query.key for query in queries] == ["broker_topic_discovery"]
+
+    def test_new_pipeline_cycle_discards_stale_admin_partitionless_proof(
+        self, base_settings: dict[str, object]
+    ) -> None:
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        base_settings["resource_source"] = {
+            "source": "admin_api",
+            "bootstrap_servers": "kafka:9092",
+        }
+        with patch("plugins.self_managed_kafka.gathering.admin_api.create_admin_client"):
+            plugin = SelfManagedKafkaPlugin()
+            plugin.initialize(base_settings)
+
+        assert plugin._handler is not None
+        plugin._handler._admin_inventory_complete = True
+        plugin._handler._admin_inventory_is_partitionless = True
+
+        plugin.reset_topic_attribution_inventory_proof()
+
+        assert plugin._handler.admin_inventory_complete is False
+        assert plugin._handler.admin_inventory_is_partitionless is False
+
+
 class TestPluginGetMetricsSource:
     def test_returns_metrics_source_after_initialize(self, base_settings):
         from core.metrics.prometheus import PrometheusMetricsSource

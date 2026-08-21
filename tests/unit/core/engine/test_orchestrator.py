@@ -4083,3 +4083,152 @@ class TestScopeGateIsolation:
         assert result.dates_calculated == 1
         assert plugin.closed == 1
         assert storage._uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, tracking_date).chargeback_calculated is True
+
+    def test_overlay_only_recovery_stays_open_until_the_overlay_target_commits(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision, ScopeGateResult
+
+        tracking_date = date(2026, 2, 1)
+        recovery_start = datetime(2026, 2, 1, tzinfo=UTC)
+        recovery_end = datetime(2026, 2, 2, tzinfo=UTC)
+
+        class OverlayPipelineStateRepo(MockPipelineStateRepo):
+            def mark_topic_attribution_calculated(
+                self,
+                ecosystem: str,
+                tenant_id: str,
+                target_date: date,
+            ) -> None:
+                state = self.get(ecosystem, tenant_id, target_date)
+                assert state is not None
+                state.topic_attribution_calculated = True
+
+            def find_needing_topic_attribution(self, ecosystem: str, tenant_id: str) -> list[PipelineState]:
+                return [
+                    state
+                    for state in self._data.values()
+                    if state.ecosystem == ecosystem
+                    and state.tenant_id == tenant_id
+                    and state.chargeback_calculated
+                    and state.topic_overlay_gathered
+                    and not state.topic_attribution_calculated
+                ]
+
+        class RecoveringOverlayPlugin(MockPlugin):
+            def __init__(self) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()})
+                self.closed = 0
+                self.events: list[str] = []
+
+            def get_overlay_config(self, name: str) -> Any:
+                assert name == "topic_attribution"
+                return type("OverlayConfig", (), {"enabled": True})()
+
+            def get_topic_attribution_provider(self) -> Any:
+                return type("Provider", (), {"config": object()})()
+
+            def reset_topic_attribution_inventory_proof(self) -> None:
+                return None
+
+            def topic_attribution_inventory_ready(self, shared_context: object | None) -> bool:
+                return True
+
+            def prepare_gather_scope(
+                self,
+                tenant_id: str,
+                start: datetime,
+                end: datetime,
+                uow: Any,
+            ) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "scope valid")
+
+            def prepare_calculation_scope(
+                self,
+                tenant_id: str,
+                windows: Sequence[tuple[datetime, datetime]],
+                uow: Any,
+            ) -> ScopeGateResult:
+                self.events.append("scope")
+                return ScopeGateResult(
+                    ScopeGateDecision.RECOVERY_READY,
+                    "billing-cluster-a",
+                    "overlay recovery continuing",
+                    recovery_start=recovery_start,
+                    recovery_end=recovery_end,
+                )
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.events.append("recovery")
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.closed += 1
+
+        storage = MockStorageBackend()
+        storage._uow.pipeline_state = OverlayPipelineStateRepo()
+        storage._uow.pipeline_state.upsert(
+            PipelineState(
+                ecosystem=ECOSYSTEM,
+                tenant_id=TENANT_ID,
+                tracking_date=tracking_date,
+                billing_gathered=True,
+                resources_gathered=True,
+                chargeback_calculated=True,
+                topic_overlay_gathered=True,
+            )
+        )
+        plugin = RecoveringOverlayPlugin()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 3600}),
+            plugin,
+            storage,
+            None,
+        )
+        overlay_phase = MagicMock()
+
+        def leave_overlay_pending(uow: Any, target_date: date) -> int:
+            plugin.events.append("provider")
+            return 0
+
+        overlay_phase.run.side_effect = leave_overlay_pending
+        orchestrator._topic_overlay_phase = overlay_phase
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert result.errors == []
+        assert plugin.events == ["scope", "recovery", "provider"]
+        assert plugin.closed == 0
+        state = storage._uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, tracking_date)
+        assert state is not None
+        assert state.topic_attribution_calculated is False
+
+        def complete_overlay(uow: Any, target_date: date) -> int:
+            plugin.events.append("provider")
+            uow.pipeline_state.mark_topic_attribution_calculated(ECOSYSTEM, TENANT_ID, target_date)
+            return 0
+
+        overlay_phase.run.side_effect = complete_overlay
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW + timedelta(hours=1)
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert result.errors == []
+        assert plugin.events == [
+            "scope",
+            "recovery",
+            "provider",
+            "scope",
+            "recovery",
+            "provider",
+        ]
+        assert plugin.closed == 1
+        assert state.topic_attribution_calculated is True

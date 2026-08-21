@@ -255,6 +255,8 @@ def _build_valid_evidence(tmp_path: Path) -> Path:
         shutil.copy(FIXTURES_DIR / f"exporter-cluster-{cluster}.metrics", evidence)
 
     topic_samples: dict[str, list[tuple[dict[str, str], float]]] = {
+        "alltopics_bytes_in": [],
+        "alltopics_bytes_out": [],
         "topic_bytes_in": [],
         "topic_bytes_out": [],
         "partition_log_size": [],
@@ -268,6 +270,12 @@ def _build_valid_evidence(tmp_path: Path) -> Path:
     for cluster in ("cluster-a", "cluster-b"):
         cluster_id = f"kraft-{cluster[-1]}-001"
         common = {"lab_cluster": cluster, "kafka_cluster_id": cluster_id, "broker": "1"}
+        topic_samples["alltopics_bytes_in"].append(
+            ({"__name__": "kafka_server_brokertopicmetrics_alltopics_bytesin_total", **common}, 8192)
+        )
+        topic_samples["alltopics_bytes_out"].append(
+            ({"__name__": "kafka_server_brokertopicmetrics_alltopics_bytesout_total", **common}, 4096)
+        )
         topic_samples["topic_bytes_in"].append(
             ({"__name__": "kafka_server_brokertopicmetrics_bytesin_total", **common, "topic": "shared-topic"}, 4096)
         )
@@ -433,6 +441,16 @@ def test_jmx_exporter_rules_match_live_canonical_bean_order_and_values() -> None
     config = _read_yaml(LAB_DIR / "jmx" / "kafka-jmx.yml")
     sanitized_inputs = [
         (
+            "kafka.server<type=BrokerTopicMetrics, name=BytesInPerSec><>Count: 3175386",
+            "kafka_server_brokertopicmetrics_alltopics_bytesin_total",
+            {},
+        ),
+        (
+            "kafka.server<type=BrokerTopicMetrics, name=BytesOutPerSec><>Count: 3175386",
+            "kafka_server_brokertopicmetrics_alltopics_bytesout_total",
+            {},
+        ),
+        (
             "kafka.server<type=BrokerTopicMetrics, name=BytesInPerSec, topic=shared-topic><>Count: 3175386",
             "kafka_server_brokertopicmetrics_bytesin_total",
             {"topic": "shared-topic"},
@@ -498,6 +516,8 @@ def test_generated_jmx_attribute_allowlist_uses_exact_matrix_object_names(tmp_pa
         assert attributes[f"kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec,topic={name}"] == ["Count"]
         assert attributes[f"kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec,topic={name}"] == ["Count"]
         assert attributes[f"kafka.log:type=Log,name=Size,topic={name},partition=0"] == ["Value"]
+    assert attributes["kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"] == ["Count"]
+    assert attributes["kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec"] == ["Count"]
     for profile in workloads["quota_profiles"]:
         entity = {
             "user": f"user={profile['user']}",
@@ -595,6 +615,17 @@ def test_static_evidence_samples_require_explicit_cluster_identity_for_overlappi
     assert bytes_in_a["topic"] == bytes_in_b["topic"] == EXPECTED_CONTRACT["overlap_names"]["topic"]
     assert bytes_in_a["lab_cluster"] != bytes_in_b["lab_cluster"]
     assert bytes_in_a["kafka_cluster_id"] != bytes_in_b["kafka_cluster_id"]
+
+    all_topics_in_a = cluster_a_metrics["kafka_server_brokertopicmetrics_alltopics_bytesin_total"][0]
+    all_topics_in_b = cluster_b_metrics["kafka_server_brokertopicmetrics_alltopics_bytesin_total"][0]
+    all_topics_out_a = cluster_a_metrics["kafka_server_brokertopicmetrics_alltopics_bytesout_total"][0]
+    all_topics_out_b = cluster_b_metrics["kafka_server_brokertopicmetrics_alltopics_bytesout_total"][0]
+
+    for all_topics_sample in (all_topics_in_a, all_topics_in_b, all_topics_out_a, all_topics_out_b):
+        assert "topic" not in all_topics_sample
+        assert {"lab_cluster", "kafka_cluster_id", "broker"} <= all_topics_sample.keys()
+    assert all_topics_in_a["kafka_cluster_id"] != all_topics_in_b["kafka_cluster_id"]
+    assert all_topics_out_a["kafka_cluster_id"] != all_topics_out_b["kafka_cluster_id"]
 
     quota_a = [
         sample for sample in cluster_a_metrics["kafka_server_quota_byte_rate"] if sample["quota_scope"] == "user-client"

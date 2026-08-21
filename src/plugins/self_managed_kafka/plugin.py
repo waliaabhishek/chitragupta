@@ -19,8 +19,9 @@ from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
 from plugins.self_managed_kafka.telemetry_contract import MetricsScopeEvidence, MetricsScopeStatus
 
 if TYPE_CHECKING:
+    from core.engine.topic_attribution_provider import TopicAttributionProvider
     from core.metrics.protocol import MetricsSource
-    from core.plugin.protocols import CostAllocator, CostInput, ServiceHandler
+    from core.plugin.protocols import CostAllocator, CostInput, OverlayConfig, ServiceHandler
     from core.storage.interface import UnitOfWork
     from plugins.self_managed_kafka.shared_context import SMKSharedContext
     from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
@@ -44,6 +45,7 @@ class SelfManagedKafkaPlugin:
         self._metrics_source: MetricsSource | None = None
         self._admin_client: Any = None
         self._handler: SelfManagedKafkaHandler | None = None
+        self._topic_attribution_provider: TopicAttributionProvider | None = None
         self._scope_evidence_by_window: dict[tuple[str, datetime, datetime], MetricsScopeEvidence] = {}
 
     @property
@@ -62,6 +64,7 @@ class SelfManagedKafkaPlugin:
             "plugin_initialize_started provider=self_managed_kafka%s",
             safe_log_context(stage="plugin_initialize", operation="initialize", outcome="started"),
         )
+        self._topic_attribution_provider = None
         self._config = SelfManagedKafkaConfig.from_plugin_settings(config)
         # Always create MetricsSource (required for cost construction)
         self._metrics_source = create_metrics_source(self._config.metrics)
@@ -79,6 +82,16 @@ class SelfManagedKafkaPlugin:
             admin_client=self._admin_client,
             metrics_scope_evidence=self._scope_evidence_for_window,
         )
+        if self._config.topic_attribution.enabled:
+            from plugins.self_managed_kafka.overlays.topic_attribution import SelfManagedKafkaTopicAttributionProvider
+
+            self._topic_attribution_provider = SelfManagedKafkaTopicAttributionProvider(
+                config=self._config,
+                metrics_source=self._metrics_source,
+                inventory_is_partitionless=lambda: (
+                    self._handler is not None and self._handler.admin_inventory_is_partitionless
+                ),
+            )
         logger.info(
             "plugin_initialize_completed provider=self_managed_kafka%s",
             safe_log_context(stage="plugin_initialize", operation="initialize", outcome="completed"),
@@ -94,7 +107,43 @@ class SelfManagedKafkaPlugin:
         """Return ConstructedCostInput backed by Prometheus metrics."""
         if self._config is None or self._metrics_source is None:
             raise RuntimeError("Plugin not initialized. Call initialize() first.")
-        return ConstructedCostInput(self._config, self._metrics_source)
+        return ConstructedCostInput(
+            self._config,
+            self._metrics_source,
+            inventory_is_partitionless=lambda: (
+                self._handler is not None and self._handler.admin_inventory_is_partitionless
+            ),
+        )
+
+    def get_overlay_config(self, name: str) -> OverlayConfig | None:
+        """Return the typed configuration for supported optional overlays."""
+        if name == "topic_attribution" and self._config is not None:
+            return self._config.topic_attribution
+        return None
+
+    def get_topic_attribution_provider(self) -> TopicAttributionProvider | None:
+        """Return the enabled self-managed topic-attribution provider."""
+        return self._topic_attribution_provider
+
+    def reset_topic_attribution_inventory_proof(self) -> None:
+        """Require current Admin API discovery before absent storage is treated as zero."""
+        if self._handler is not None:
+            self._handler.clear_admin_inventory_proof()
+
+    def topic_attribution_inventory_ready(self, shared_context: object | None) -> bool:
+        """Report current-gather topic inventory readiness to the overlay lifecycle."""
+        if self._config is None or not self._config.topic_attribution.enabled:
+            return False
+        if self._config.resource_source.source == "admin_api":
+            return self._handler is not None and self._handler.admin_inventory_complete
+
+        from plugins.self_managed_kafka.shared_context import SMKSharedContext
+
+        return (
+            isinstance(shared_context, SMKSharedContext)
+            and shared_context.discovered_brokers is not None
+            and shared_context.discovered_topics is not None
+        )
 
     def get_metrics_source(self) -> MetricsSource | None:
         """Return metrics source (always set after initialize)."""
@@ -144,6 +193,7 @@ class SelfManagedKafkaPlugin:
                     metrics_identifier=self._config.metrics_identifier,
                     step=step,
                     discovery_window_hours=self._config.discovery_window_hours,
+                    include_topic_evidence=self._config.topic_attribution.enabled,
                 )
                 context = SMKSharedContext(
                     cluster_resource=cluster,
@@ -505,3 +555,4 @@ class SelfManagedKafkaPlugin:
         if self._metrics_source is not None:
             self._metrics_source.close()
             self._metrics_source = None
+        self._topic_attribution_provider = None

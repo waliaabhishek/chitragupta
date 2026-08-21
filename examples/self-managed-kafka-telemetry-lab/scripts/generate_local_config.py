@@ -129,7 +129,10 @@ def _runtime_plan(matrix: dict[str, Any]) -> str:
 
 
 def _jmx_object_name_attributes(matrix: dict[str, Any]) -> dict[str, list[str]]:
-    attributes: dict[str, list[str]] = {}
+    attributes: dict[str, list[str]] = {
+        "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec": ["Count"],
+        "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec": ["Count"],
+    }
     partitions = int(matrix["topic_config"]["partitions"])
     for topic in matrix["topics"]:
         topic_name = str(topic["name"])

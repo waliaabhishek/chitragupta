@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from core.metrics.protocol import MetricsQueryError
 from core.models import CoreIdentity, CoreResource, Identity, MetricQuery, Resource
 
 if TYPE_CHECKING:
@@ -15,7 +16,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _broker_topic_discovery_query(metrics_identifier_label: str) -> MetricQuery:
+def _broker_topic_discovery_queries(metrics_identifier_label: str) -> list[MetricQuery]:
+    """Build the independent topic-evidence discovery queries.
+
+    Kafka creates the bytes-in and bytes-out meters lazily, while log-size is
+    present for loaded local partitions. Discovery therefore uses their union.
+    """
+    return [
+        MetricQuery(
+            key="broker_topic_discovery_bytes_in",
+            query_expression="group by (broker, topic) (kafka_server_brokertopicmetrics_bytesin_total{})",
+            label_keys=("broker", "topic"),
+            resource_label=metrics_identifier_label,
+        ),
+        MetricQuery(
+            key="broker_topic_discovery_bytes_out",
+            query_expression="group by (broker, topic) (kafka_server_brokertopicmetrics_bytesout_total{})",
+            label_keys=("broker", "topic"),
+            resource_label=metrics_identifier_label,
+        ),
+        MetricQuery(
+            key="broker_topic_discovery_log_size",
+            query_expression="group by (broker, topic) (kafka_log_log_size{})",
+            label_keys=("broker", "topic"),
+            resource_label=metrics_identifier_label,
+        ),
+    ]
+
+
+def _legacy_broker_topic_discovery_query(metrics_identifier_label: str) -> MetricQuery:
+    """Build the pre-overlay discovery query used when the overlay is disabled."""
     return MetricQuery(
         key="broker_topic_discovery",
         query_expression="group by (broker, topic) (kafka_server_brokertopicmetrics_bytesin_total{})",
@@ -58,24 +88,33 @@ def run_broker_topic_discovery(
     metrics_identifier: str,
     step: timedelta,
     discovery_window_hours: int = 1,
+    include_topic_evidence: bool = True,
 ) -> tuple[frozenset[str], frozenset[str]]:
     """Discover broker and topic labels without deriving any identities."""
     now = datetime.now(UTC)
-    query = _broker_topic_discovery_query(metrics_identifier_label)
+    queries = (
+        _broker_topic_discovery_queries(metrics_identifier_label)
+        if include_topic_evidence
+        else [_legacy_broker_topic_discovery_query(metrics_identifier_label)]
+    )
     results = metrics_source.query(
-        queries=[query],
+        queries=queries,
         start=now - timedelta(hours=discovery_window_hours),
         end=now,
         step=step,
         resource_id_filter=metrics_identifier,
     )
+    missing_keys = [query.key for query in queries if query.key not in results]
+    if missing_keys:
+        raise MetricsQueryError("Missing required topic discovery result families: " + ", ".join(missing_keys))
     brokers: set[str] = set()
     topics: set[str] = set()
-    for row in results.get(query.key, []):
-        if b := row.labels.get("broker"):
-            brokers.add(b)
-        if t := row.labels.get("topic"):
-            topics.add(t)
+    for rows in (results.get(query.key, []) for query in queries):
+        for row in rows:
+            if b := row.labels.get("broker"):
+                brokers.add(b)
+            if t := row.labels.get("topic"):
+                topics.add(t)
     return frozenset(brokers), frozenset(topics)
 
 

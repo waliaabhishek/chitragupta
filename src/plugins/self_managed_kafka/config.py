@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
-from core.config.models import PluginSettingsBase
+from core.config.models import EmitterSpec, PluginSettingsBase
 from core.metrics.config import MetricsConnectionConfig  # noqa: TC001 — Pydantic evaluates field annotations at runtime
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,16 @@ class ResourceSourceConfig(BaseModel):
         return self
 
 
+class SelfManagedTopicAttributionConfig(BaseModel):
+    """Configuration for the self-managed Kafka topic-attribution overlay."""
+
+    enabled: bool = False
+    compute_policy: Literal["disabled", "shared_even_v1"] = "disabled"
+    exclude_topic_patterns: list[str] = Field(default_factory=list)
+    retention_days: int = Field(default=90, gt=0, le=365)
+    emitters: list[EmitterSpec] = Field(default_factory=list)
+
+
 class SelfManagedKafkaConfig(PluginSettingsBase):
     """Validates plugin_settings for ecosystem='self_managed_kafka'."""
 
@@ -90,6 +100,7 @@ class SelfManagedKafkaConfig(PluginSettingsBase):
     resource_source: ResourceSourceConfig = Field(default_factory=ResourceSourceConfig)
     metrics: MetricsConnectionConfig  # Required for cost construction + allocation
     discovery_window_hours: int = Field(default=1, gt=0)
+    topic_attribution: SelfManagedTopicAttributionConfig = Field(default_factory=SelfManagedTopicAttributionConfig)
 
     @field_validator("metrics_identifier", "metrics_identifier_label")
     @classmethod

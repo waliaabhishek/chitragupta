@@ -7,11 +7,12 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from core.api.app import create_app
 from core.api.dependencies import get_unit_of_work
-from core.config.models import ApiConfig, AppSettings, LoggingConfig, StorageConfig, TenantConfig
+from core.config.models import ApiConfig, AppSettings, LoggingConfig, PluginSettingsBase, StorageConfig, TenantConfig
 from core.models.topic_attribution import (
     TopicAttributionAggregationBucket,
     TopicAttributionAggregationResult,
@@ -33,10 +34,74 @@ def _make_settings() -> AppSettings:
     )
 
 
+def _make_self_managed_settings(exclude_topic_patterns: list[str] | None) -> AppSettings:
+    topic_attribution: dict[str, object] = {"enabled": True}
+    if exclude_topic_patterns is not None:
+        topic_attribution["exclude_topic_patterns"] = exclude_topic_patterns
+    return AppSettings(
+        api=ApiConfig(host="127.0.0.1", port=8080),
+        logging=LoggingConfig(),
+        tenants={
+            "prod": TenantConfig(
+                tenant_id="prod",
+                ecosystem="self_managed_kafka",
+                storage=StorageConfig(connection_string="sqlite:///:memory:"),
+                plugin_settings=PluginSettingsBase.model_validate({"topic_attribution": topic_attribution}),
+            )
+        },
+    )
+
+
+def _make_ccloud_settings() -> AppSettings:
+    return AppSettings(
+        api=ApiConfig(host="127.0.0.1", port=8080),
+        logging=LoggingConfig(),
+        tenants={
+            "prod": TenantConfig(
+                tenant_id="prod",
+                ecosystem="confluent_cloud",
+                storage=StorageConfig(connection_string="sqlite:///:memory:"),
+                plugin_settings=PluginSettingsBase.model_validate(
+                    {"topic_attribution": {"exclude_topic_patterns": ["__consumer_offsets"]}}
+                ),
+            )
+        },
+    )
+
+
 @contextmanager
 def _app_with_mock_uow(mock_uow: MagicMock) -> Iterator[TestClient]:
     settings = _make_settings()
     app = create_app(settings)
+
+    def _uow_override() -> Iterator[MagicMock]:
+        yield mock_uow
+
+    app.dependency_overrides[get_unit_of_work] = _uow_override
+    with TestClient(app) as client:
+        yield client
+    app.dependency_overrides.clear()
+
+
+@contextmanager
+def _self_managed_app_with_mock_uow(
+    mock_uow: MagicMock,
+    exclude_topic_patterns: list[str] | None,
+) -> Iterator[TestClient]:
+    app = create_app(_make_self_managed_settings(exclude_topic_patterns))
+
+    def _uow_override() -> Iterator[MagicMock]:
+        yield mock_uow
+
+    app.dependency_overrides[get_unit_of_work] = _uow_override
+    with TestClient(app) as client:
+        yield client
+    app.dependency_overrides.clear()
+
+
+@contextmanager
+def _ccloud_app_with_mock_uow(mock_uow: MagicMock) -> Iterator[TestClient]:
+    app = create_app(_make_ccloud_settings())
 
     def _uow_override() -> Iterator[MagicMock]:
         yield mock_uow
@@ -132,6 +197,86 @@ class TestListTopicAttributionsEndpoint:
             resp = client.get("/api/v1/tenants/nonexistent/topic-attributions")
         assert resp.status_code == 404
 
+    def test_self_managed_matcher_runs_before_unavailable_storage_dependency(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import core.api.routes.topic_attributions as topic_attribution_routes
+
+        matcher_calls: list[object] = []
+
+        def build_matcher(plugin_settings: object):
+            matcher_calls.append(plugin_settings)
+            return lambda _topic_name: False
+
+        def unavailable_uow() -> Iterator[MagicMock]:
+            raise HTTPException(status_code=503, detail="Storage backend provider is unavailable")
+            yield MagicMock()
+
+        monkeypatch.setattr(
+            topic_attribution_routes,
+            "_build_topic_exclusion_matcher",
+            build_matcher,
+            raising=False,
+        )
+        app = create_app(_make_self_managed_settings([]))
+        app.dependency_overrides[get_unit_of_work] = unavailable_uow
+        with TestClient(app) as client:
+            response = client.get("/api/v1/tenants/prod/topic-attributions")
+        app.dependency_overrides.clear()
+
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Storage backend provider is unavailable"}
+        assert len(matcher_calls) == 1
+
+    @pytest.mark.parametrize("patterns", [None, []])
+    def test_self_managed_omitted_or_empty_exclusions_leave_every_topic_included(
+        self, patterns: list[str] | None
+    ) -> None:
+        mock_uow = MagicMock()
+        mock_uow.topic_attributions.find_by_filters.return_value = (
+            [_make_ta_row(topic_name="orders"), _make_ta_row(topic_name="__consumer_offsets")],
+            2,
+        )
+
+        with _self_managed_app_with_mock_uow(mock_uow, patterns) as client:
+            response = client.get("/api/v1/tenants/prod/topic-attributions")
+
+        assert response.status_code == 200
+        assert [(item["topic_name"], item["is_excluded"]) for item in response.json()["items"]] == [
+            ("orders", False),
+            ("__consumer_offsets", False),
+        ]
+
+    def test_restart_with_changed_patterns_reclassifies_stored_rows_without_reallocation(self) -> None:
+        mock_uow = MagicMock()
+        stored_rows = [
+            _make_ta_row(topic_name="orders", amount=Decimal("4.00")),
+            _make_ta_row(topic_name="payments", amount=Decimal("6.00")),
+        ]
+        mock_uow.topic_attributions.find_by_filters.return_value = (stored_rows, 2)
+
+        with _self_managed_app_with_mock_uow(mock_uow, ["orders"]) as first_client:
+            before_restart = first_client.get("/api/v1/tenants/prod/topic-attributions")
+        with _self_managed_app_with_mock_uow(mock_uow, ["payments"]) as second_client:
+            after_restart = second_client.get("/api/v1/tenants/prod/topic-attributions")
+
+        before_rows = [
+            (item["topic_name"], item["is_excluded"], item["amount"]) for item in before_restart.json()["items"]
+        ]
+        assert before_rows == [
+            ("orders", True, "4.00"),
+            ("payments", False, "6.00"),
+        ]
+        after_rows = [
+            (item["topic_name"], item["is_excluded"], item["amount"]) for item in after_restart.json()["items"]
+        ]
+        assert after_rows == [
+            ("orders", False, "4.00"),
+            ("payments", True, "6.00"),
+        ]
+        mock_uow.topic_attributions.upsert_batch.assert_not_called()
+        mock_uow.topic_attributions.delete_by_date.assert_not_called()
+
 
 class TestAggregateTopicAttributionsEndpoint:
     def test_aggregate_by_topic_name_returns_buckets(self) -> None:
@@ -192,6 +337,63 @@ class TestAggregateTopicAttributionsEndpoint:
         data = resp.json()
         assert data["buckets"] == []
         assert data["total_rows"] == 0
+
+    def test_self_managed_aggregate_collapses_only_matching_topic_buckets(self) -> None:
+        mock_uow = MagicMock()
+        mock_uow.topic_attributions.aggregate.return_value = TopicAttributionAggregationResult(
+            buckets=[
+                TopicAttributionAggregationBucket(
+                    dimensions={"topic_name": "orders", "product_type": "SELF_KAFKA_STORAGE"},
+                    time_bucket="2026-01-01",
+                    total_amount=Decimal("4.00"),
+                    row_count=1,
+                ),
+                TopicAttributionAggregationBucket(
+                    dimensions={"topic_name": "__consumer_offsets", "product_type": "SELF_KAFKA_STORAGE"},
+                    time_bucket="2026-01-01",
+                    total_amount=Decimal("6.00"),
+                    row_count=1,
+                ),
+            ],
+            total_amount=Decimal("10.00"),
+            total_rows=2,
+        )
+
+        with _self_managed_app_with_mock_uow(mock_uow, ["__consumer_offsets"]) as client:
+            response = client.get(
+                "/api/v1/tenants/prod/topic-attributions/aggregate",
+                params=[("group_by", "topic_name"), ("group_by", "product_type"), ("collapse_excluded", "true")],
+            )
+
+        assert response.status_code == 200
+        assert response.json()["buckets"] == [
+            {
+                "dimensions": {"topic_name": "orders", "product_type": "SELF_KAFKA_STORAGE"},
+                "time_bucket": "2026-01-01",
+                "total_amount": "4.00",
+                "row_count": 1,
+            },
+            {
+                "dimensions": {"topic_name": "Excluded topics", "product_type": "SELF_KAFKA_STORAGE"},
+                "time_bucket": "2026-01-01",
+                "total_amount": "6.00",
+                "row_count": 1,
+            },
+        ]
+
+    def test_invalid_collapse_excluded_value_returns_fastapi_validation_error(self) -> None:
+        mock_uow = MagicMock()
+        mock_uow.topic_attributions.aggregate.return_value = TopicAttributionAggregationResult(
+            buckets=[], total_amount=Decimal("0"), total_rows=0
+        )
+        with _self_managed_app_with_mock_uow(mock_uow, []) as client:
+            response = client.get(
+                "/api/v1/tenants/prod/topic-attributions/aggregate",
+                params={"collapse_excluded": "not-a-boolean"},
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["loc"][-1] == "collapse_excluded"
 
 
 class TestListTopicAttributionDatesEndpoint:
@@ -327,3 +529,93 @@ class TestExportTopicAttributionsEndpoint:
         with _app_with_mock_uow(mock_uow) as client:
             resp = client.post("/api/v1/tenants/nonexistent/topic-attributions/export")
         assert resp.status_code == 404
+
+    def test_self_managed_export_keeps_actual_names_and_adds_derived_exclusion_status(self) -> None:
+        mock_uow = MagicMock()
+        mock_uow.topic_attributions.iter_by_filters.return_value = iter(
+            [_make_ta_row(topic_name="__consumer_offsets", amount=Decimal("5.00"))]
+        )
+        with _self_managed_app_with_mock_uow(mock_uow, ["__consumer_offsets"]) as client:
+            response = client.post("/api/v1/tenants/prod/topic-attributions/export")
+
+        lines = response.text.strip().splitlines()
+        assert lines[0].split(",")[5:7] == ["topic_name", "is_excluded"]
+        assert "__consumer_offsets,true" in lines[1]
+
+    def test_ccloud_list_and_csv_are_exactly_unchanged_when_exclusions_exist(self) -> None:
+        mock_uow = MagicMock()
+        row = _make_ta_row(topic_name="__consumer_offsets")
+        mock_uow.topic_attributions.find_by_filters.return_value = ([row], 1)
+        mock_uow.topic_attributions.iter_by_filters.return_value = iter([row])
+        mock_uow.topic_attributions.aggregate.return_value = TopicAttributionAggregationResult(
+            buckets=[
+                TopicAttributionAggregationBucket(
+                    dimensions={"topic_name": "__consumer_offsets"},
+                    time_bucket="2026-01-01",
+                    total_amount=Decimal("10.00"),
+                    row_count=1,
+                )
+            ],
+            total_amount=Decimal("10.00"),
+            total_rows=1,
+        )
+
+        with _ccloud_app_with_mock_uow(mock_uow) as client:
+            list_response = client.get("/api/v1/tenants/prod/topic-attributions")
+            csv_response = client.post("/api/v1/tenants/prod/topic-attributions/export")
+            default_aggregate_response = client.get(
+                "/api/v1/tenants/prod/topic-attributions/aggregate",
+                params=[("group_by", "topic_name")],
+            )
+            collapsed_aggregate_response = client.get(
+                "/api/v1/tenants/prod/topic-attributions/aggregate",
+                params=[("group_by", "topic_name"), ("collapse_excluded", "true")],
+            )
+
+        assert list_response.json() == {
+            "items": [
+                {
+                    "dimension_id": 1,
+                    "ecosystem": "eco",
+                    "tenant_id": "prod",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "env_id": "env-1",
+                    "cluster_resource_id": "lkc-abc",
+                    "topic_name": "__consumer_offsets",
+                    "product_category": "KAFKA",
+                    "product_type": "KAFKA_NETWORK_WRITE",
+                    "attribution_method": "bytes_ratio",
+                    "amount": "10.00",
+                }
+            ],
+            "total": 1,
+            "page": 1,
+            "page_size": 100,
+            "pages": 1,
+        }
+        assert csv_response.text.splitlines()[0].split(",") == [
+            "ecosystem",
+            "tenant_id",
+            "timestamp",
+            "env_id",
+            "cluster_resource_id",
+            "topic_name",
+            "product_category",
+            "product_type",
+            "attribution_method",
+            "amount",
+        ]
+        expected_aggregate = {
+            "buckets": [
+                {
+                    "dimensions": {"topic_name": "__consumer_offsets"},
+                    "time_bucket": "2026-01-01",
+                    "total_amount": "10.00",
+                    "row_count": 1,
+                }
+            ],
+            "total_amount": "10.00",
+            "total_rows": 1,
+        }
+        assert default_aggregate_response.json() == expected_aggregate
+        assert collapsed_aggregate_response.json() == expected_aggregate

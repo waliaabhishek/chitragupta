@@ -171,6 +171,8 @@ class TestGatherResources:
         assert "topic" in resource_types
         # Should NOT query Prometheus for resources when admin_api configured
         mock_metrics_source.query.assert_not_called()
+        assert handler.admin_inventory_complete is True
+        assert handler.admin_inventory_is_partitionless is False
 
     def test_admin_api_source_with_none_client_yields_only_cluster(self, mock_metrics_source):
         """_gather_resources_from_admin returns early when admin_client is None."""
@@ -204,6 +206,36 @@ class TestGatherResources:
         resource_types = {r.resource_type for r in resources}
         # Only cluster is yielded; brokers/topics skipped due to early return
         assert resource_types == {"cluster"}
+        assert handler.admin_inventory_complete is False
+        assert handler.admin_inventory_is_partitionless is False
+
+    def test_admin_api_failure_clears_previous_partitionless_inventory_proof(
+        self, base_config, mock_metrics_source
+    ) -> None:
+        from plugins.self_managed_kafka.config import ResourceSourceConfig
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+
+        config = base_config.model_copy(
+            update={
+                "resource_source": ResourceSourceConfig.model_validate(
+                    {"source": "admin_api", "bootstrap_servers": "kafka:9092"}
+                )
+            }
+        )
+        mock_admin = MagicMock()
+        mock_admin.describe_cluster.return_value = {"brokers": []}
+        mock_admin.list_topics.return_value = []
+        handler = SelfManagedKafkaHandler(config, mock_metrics_source, admin_client=mock_admin)
+
+        list(handler.gather_resources("tenant-1", MagicMock(), _make_smk_ctx("kafka-001")))
+        assert handler.admin_inventory_is_partitionless is True
+
+        mock_admin.describe_cluster.side_effect = RuntimeError("unavailable")
+        with pytest.raises(RuntimeError, match="Failed to gather brokers"):
+            list(handler.gather_resources("tenant-1", MagicMock(), _make_smk_ctx("kafka-001")))
+
+        assert handler.admin_inventory_complete is False
+        assert handler.admin_inventory_is_partitionless is False
 
 
 class TestHandlerIdentityResolution:

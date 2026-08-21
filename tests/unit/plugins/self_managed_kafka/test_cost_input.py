@@ -84,10 +84,38 @@ class TestConstructedCostInputBillingLines:
         queries = kwargs["queries"]
         assert {query.resource_label for query in queries} == {"kafka_cluster_id"}
         assert {query.query_expression for query in queries} == {
-            "sum(increase(kafka_server_brokertopicmetrics_bytesin_total{}[1h]))",
-            "sum(increase(kafka_server_brokertopicmetrics_bytesout_total{}[1h]))",
+            "sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesin_total{}[86400s]))",
+            "sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesout_total{}[86400s]))",
             "sum(kafka_log_log_size{})",
         }
+        by_key = {query.key: query for query in queries}
+        assert by_key["cluster_bytes_in"].query_mode == "instant"
+        assert by_key["cluster_bytes_out"].query_mode == "instant"
+        assert by_key["cluster_storage_bytes"].query_mode == "range"
+
+    def test_non_midnight_refresh_bounds_produce_identical_utc_calendar_days(
+        self,
+        sample_config,
+        mock_metrics_source,
+    ) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        mock_metrics_source.query.return_value = sample_metrics_data()
+        cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
+
+        lines = list(
+            cost_input.gather(
+                "tenant-1",
+                datetime(2026, 2, 1, 13, 42, tzinfo=UTC),
+                datetime(2026, 2, 2, 13, 42, tzinfo=UTC),
+                MagicMock(),
+            )
+        )
+
+        assert {line.timestamp for line in lines} == {datetime(2026, 2, 1, tzinfo=UTC)}
+        query_kwargs = mock_metrics_source.query.call_args.kwargs
+        assert query_kwargs["start"] == datetime(2026, 2, 1, tzinfo=UTC)
+        assert query_kwargs["end"] == datetime(2026, 2, 2, tzinfo=UTC)
 
     def test_generates_four_product_types_per_day(self, sample_config, mock_metrics_source, day_start, day_end):
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
@@ -185,14 +213,16 @@ class TestStorageCostCalculation:
         assert storage.quantity == Decimal("100") * Decimal("24")
         assert storage.unit_price == Decimal("0.0001")
 
-    def test_storage_zero_when_no_storage_data(self, sample_config, mock_metrics_source, day_start, day_end):
+    def test_present_zero_storage_family_produces_measured_zero_line(
+        self, sample_config, mock_metrics_source, day_start, day_end
+    ) -> None:
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 
         gb = 1073741824
         mock_metrics_source.query.return_value = {
             "cluster_bytes_in": [make_metric_row("cluster_bytes_in", gb)],
             "cluster_bytes_out": [make_metric_row("cluster_bytes_out", gb)],
-            "cluster_storage_bytes": [],
+            "cluster_storage_bytes": [make_metric_row("cluster_storage_bytes", 0)],
         }
         cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
         uow = MagicMock()
@@ -203,8 +233,130 @@ class TestStorageCostCalculation:
         assert storage.quantity == Decimal("0")
         assert storage.total_cost == Decimal("0")
 
+    def test_absent_storage_family_omits_the_day_without_fabricating_a_zero_cost_line(
+        self, sample_config, mock_metrics_source, day_start, day_end, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        gb = 1073741824
+        mock_metrics_source.query.return_value = {
+            "cluster_bytes_in": [make_metric_row("cluster_bytes_in", gb)],
+            "cluster_bytes_out": [make_metric_row("cluster_bytes_out", gb)],
+            "cluster_storage_bytes": [],
+        }
+        cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
+
+        assert list(cost_input.gather("tenant-1", day_start, day_end, MagicMock())) == []
+        assert "tenant=tenant-1" in caplog.text
+        assert "cluster=kafka-cluster-001" in caplog.text
+        assert "selector=kraft-a-001" in caplog.text
+        assert "date=2026-02-01" in caplog.text
+        assert "metric=kafka_log_log_size" in caplog.text
+
+    def test_storage_sample_at_exact_day_end_is_not_used_by_the_prior_day(
+        self, sample_config, mock_metrics_source, day_start, day_end
+    ) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        gb = 1073741824
+        mock_metrics_source.query.return_value = {
+            "cluster_bytes_in": [make_metric_row("cluster_bytes_in", gb)],
+            "cluster_bytes_out": [make_metric_row("cluster_bytes_out", gb)],
+            "cluster_storage_bytes": [
+                MetricRow(
+                    timestamp=day_end,
+                    metric_key="cluster_storage_bytes",
+                    value=gb * 100,
+                    labels={"kafka_cluster_id": "kraft-a-001", "broker": "1"},
+                )
+            ],
+        }
+        cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
+
+        assert list(cost_input.gather("tenant-1", day_start, day_end, MagicMock())) == []
+
+    def test_exact_end_storage_sample_belongs_only_to_the_adjacent_utc_day(
+        self, sample_config, mock_metrics_source, day_start, day_end
+    ) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        gb = 1073741824
+        mock_metrics_source.query.side_effect = [
+            {
+                "cluster_bytes_in": [make_metric_row("cluster_bytes_in", gb)],
+                "cluster_bytes_out": [make_metric_row("cluster_bytes_out", gb)],
+                "cluster_storage_bytes": [
+                    make_metric_row("cluster_storage_bytes", gb),
+                    MetricRow(
+                        timestamp=day_end,
+                        metric_key="cluster_storage_bytes",
+                        value=gb * 100,
+                        labels={"kafka_cluster_id": "kraft-a-001", "broker": "1"},
+                    ),
+                ],
+            },
+            {
+                "cluster_bytes_in": [MetricRow(day_end, "cluster_bytes_in", gb, {})],
+                "cluster_bytes_out": [MetricRow(day_end, "cluster_bytes_out", gb, {})],
+                "cluster_storage_bytes": [MetricRow(day_end, "cluster_storage_bytes", gb * 100, {})],
+            },
+        ]
+        cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
+
+        items = list(cost_input.gather("tenant-1", day_start, day_end + (day_end - day_start), MagicMock()))
+        storage_by_day = {item.timestamp: item.quantity for item in items if item.product_type == "SELF_KAFKA_STORAGE"}
+
+        assert storage_by_day == {
+            day_start: Decimal("24"),
+            day_end: Decimal("2400"),
+        }
+
+    def test_successful_empty_admin_inventory_proves_absent_storage_is_zero(
+        self, sample_config, mock_metrics_source, day_start, day_end
+    ) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        gb = 1073741824
+        mock_metrics_source.query.return_value = {
+            "cluster_bytes_in": [make_metric_row("cluster_bytes_in", gb)],
+            "cluster_bytes_out": [make_metric_row("cluster_bytes_out", gb)],
+            "cluster_storage_bytes": [],
+        }
+        cost_input = ConstructedCostInput(
+            sample_config,
+            mock_metrics_source,
+            inventory_is_partitionless=lambda: True,
+        )
+
+        items = list(cost_input.gather("tenant-1", day_start, day_end, MagicMock()))
+
+        assert len(items) == 4
+        storage = next(item for item in items if item.product_type == "SELF_KAFKA_STORAGE")
+        assert storage.quantity == Decimal("0")
+
 
 class TestNetworkCostCalculation:
+    def test_present_zero_broker_wide_counters_produce_zero_network_lines(
+        self, sample_config, mock_metrics_source, day_start, day_end
+    ) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        mock_metrics_source.query.return_value = {
+            "cluster_bytes_in": [make_metric_row("cluster_bytes_in", 0)],
+            "cluster_bytes_out": [make_metric_row("cluster_bytes_out", 0)],
+            "cluster_storage_bytes": [make_metric_row("cluster_storage_bytes", 0)],
+        }
+
+        items = list(
+            ConstructedCostInput(sample_config, mock_metrics_source).gather("tenant-1", day_start, day_end, MagicMock())
+        )
+
+        network_lines = [item for item in items if item.product_type.startswith("SELF_KAFKA_NETWORK_")]
+        assert [(item.quantity, item.total_cost) for item in network_lines] == [
+            (Decimal("0"), Decimal("0.00")),
+            (Decimal("0"), Decimal("0.00")),
+        ]
+
     def test_ingress_cost_bytes_to_gb_times_rate(self, sample_config, mock_metrics_source, day_start, day_end):
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 
@@ -317,19 +469,36 @@ class TestEdgeCases:
         items = list(cost_input.gather("tenant-1", day_start, day_end, uow))
         assert items == []
 
-    def test_empty_metrics_skips_billing_period(self, sample_config, mock_metrics_source, day_start, day_end):
+    @pytest.mark.parametrize(
+        ("missing_key", "metric_name"),
+        [
+            ("cluster_bytes_in", "alltopics_bytesin_total"),
+            ("cluster_bytes_out", "alltopics_bytesout_total"),
+        ],
+    )
+    def test_absent_broker_wide_metrics_fail_closed(
+        self,
+        sample_config,
+        mock_metrics_source,
+        day_start,
+        day_end,
+        missing_key: str,
+        metric_name: str,
+    ) -> None:
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 
         mock_metrics_source.query.return_value = {
-            "cluster_bytes_in": [],
-            "cluster_bytes_out": [],
-            "cluster_storage_bytes": [],
+            "cluster_bytes_in": [] if missing_key == "cluster_bytes_in" else [make_metric_row("cluster_bytes_in", 0)],
+            "cluster_bytes_out": []
+            if missing_key == "cluster_bytes_out"
+            else [make_metric_row("cluster_bytes_out", 0)],
+            "cluster_storage_bytes": [make_metric_row("cluster_storage_bytes", 0)],
         }
         cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
         uow = MagicMock()
 
-        items = list(cost_input.gather("tenant-1", day_start, day_end, uow))
-        assert items == []
+        with pytest.raises(MetricsQueryError, match=metric_name):
+            list(cost_input.gather("tenant-1", day_start, day_end, uow))
 
     def test_multi_day_range_generates_lines_per_day(self, sample_config, mock_metrics_source):
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
@@ -389,8 +558,7 @@ class TestEdgeCases:
         items = list(cost_input.gather("tenant-1", start, end, uow))
         # 4 product types × 3 days = 12 items
         assert len(items) == 12
-        # NEW: Prometheus queried ONCE for the full range (batch query), not once per day
-        assert mock_metrics_source.query.call_count == 1
+        assert mock_metrics_source.query.call_count == 3
 
     def test_region_override_applied_to_costs(self, mock_metrics_source, day_start, day_end):
         from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
@@ -463,13 +631,11 @@ def _make_single_day_metrics(ts: datetime) -> dict:
     }
 
 
-class TestBatchPrometheusQuery:
-    """task-039: gather() issues ONE batch query; falls back to per-day on MetricsQueryError."""
+class TestDailyPrometheusQuery:
+    """Daily cost pools use one query per fixed UTC calendar window."""
 
-    def test_gather_calls_query_exactly_once_for_multi_day_range(
-        self, sample_config: object, mock_metrics_source: MagicMock
-    ) -> None:
-        """Happy path: single batch query covers full range, billing lines split by day."""
+    def test_gather_calls_query_for_each_utc_day(self, sample_config: object, mock_metrics_source: MagicMock) -> None:
+        """Happy path: each calendar day has its own broker-wide instant query."""
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 
         start = datetime(2026, 2, 1, tzinfo=UTC)
@@ -481,8 +647,7 @@ class TestBatchPrometheusQuery:
 
         items = list(cost_input.gather("tenant-1", start, end, uow))
 
-        # Exactly ONE query for the full 3-day range
-        assert mock_metrics_source.query.call_count == 1
+        assert mock_metrics_source.query.call_count == 3
         # 4 product types × 3 days = 12 billing lines
         assert len(items) == 12
         # Timestamps must cover each of the 3 days
@@ -491,10 +656,10 @@ class TestBatchPrometheusQuery:
         assert datetime(2026, 2, 2, tzinfo=UTC) in timestamps
         assert datetime(2026, 2, 3, tzinfo=UTC) in timestamps
 
-    def test_day_with_no_data_in_batch_logs_warning_and_skips(
+    def test_day_with_missing_storage_omits_only_that_day(
         self, sample_config: object, mock_metrics_source: MagicMock, caplog: object
     ) -> None:
-        """Day 2 slice is empty → warning logged; days 1 and 3 produce billing lines."""
+        """A missing storage family leaves only that day pending; complete days persist."""
         import logging
 
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
@@ -503,23 +668,66 @@ class TestBatchPrometheusQuery:
         end = datetime(2026, 2, 4, tzinfo=UTC)
 
         gb = 1073741824
-        # Only rows for Feb 1 and Feb 3 — no rows in the Feb 2 window
-        days_with_data = [
-            datetime(2026, 2, 1, 12, tzinfo=UTC),
-            datetime(2026, 2, 3, 12, tzinfo=UTC),
-        ]
-        mock_metrics_source.query.return_value = {
+        first_day = {
             "cluster_bytes_in": [
-                MetricRow(timestamp=d, metric_key="cluster_bytes_in", value=gb * 10, labels={}) for d in days_with_data
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, 12, tzinfo=UTC),
+                    metric_key="cluster_bytes_in",
+                    value=gb * 10,
+                    labels={},
+                )
             ],
             "cluster_bytes_out": [
-                MetricRow(timestamp=d, metric_key="cluster_bytes_out", value=gb * 20, labels={}) for d in days_with_data
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, 12, tzinfo=UTC),
+                    metric_key="cluster_bytes_out",
+                    value=gb * 20,
+                    labels={},
+                )
             ],
             "cluster_storage_bytes": [
-                MetricRow(timestamp=d, metric_key="cluster_storage_bytes", value=gb * 100, labels={})
-                for d in days_with_data
+                MetricRow(
+                    timestamp=datetime(2026, 2, 1, 12, tzinfo=UTC),
+                    metric_key="cluster_storage_bytes",
+                    value=gb * 100,
+                    labels={},
+                )
             ],
         }
+        third_day = {
+            key: [
+                MetricRow(
+                    timestamp=datetime(2026, 2, 3, 12, tzinfo=UTC),
+                    metric_key=key,
+                    value=gb * (10 if key == "cluster_bytes_in" else 20 if key == "cluster_bytes_out" else 100),
+                    labels={},
+                )
+            ]
+            for key in ("cluster_bytes_in", "cluster_bytes_out", "cluster_storage_bytes")
+        }
+        mock_metrics_source.query.side_effect = [
+            first_day,
+            {
+                "cluster_bytes_in": [
+                    MetricRow(
+                        timestamp=datetime(2026, 2, 2, 12, tzinfo=UTC),
+                        metric_key="cluster_bytes_in",
+                        value=gb * 10,
+                        labels={},
+                    )
+                ],
+                "cluster_bytes_out": [
+                    MetricRow(
+                        timestamp=datetime(2026, 2, 2, 12, tzinfo=UTC),
+                        metric_key="cluster_bytes_out",
+                        value=gb * 20,
+                        labels={},
+                    )
+                ],
+                "cluster_storage_bytes": [],
+            },
+            third_day,
+        ]
         cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
         uow = MagicMock()
 
@@ -528,40 +736,31 @@ class TestBatchPrometheusQuery:
 
         # 8 items: days 1 and 3 produce 4 each; day 2 skipped
         assert len(items) == 8
-        # Warning logged for the empty day (Feb 2)
-        assert "2026-02-02" in caplog.text
+        assert "date=2026-02-02" in caplog.text
 
-    def test_batch_query_error_triggers_per_day_fallback(
-        self, sample_config: object, mock_metrics_source: MagicMock
-    ) -> None:
-        """MetricsQueryError on batch → fallback to per-day queries; all days succeed."""
+    def test_daily_queries_cover_every_window(self, sample_config: object, mock_metrics_source: MagicMock) -> None:
+        """Three complete UTC days each yield a complete cost-line set."""
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 
         start = datetime(2026, 2, 1, tzinfo=UTC)
         end = datetime(2026, 2, 4, tzinfo=UTC)  # 3 days
 
-        day_data = _make_single_day_metrics(datetime(2026, 2, 1, 12, tzinfo=UTC))
-        # First call (batch) raises; next 3 (per-day) succeed
         mock_metrics_source.query.side_effect = [
-            MetricsQueryError("batch unavailable"),
-            day_data,
-            day_data,
-            day_data,
+            _make_single_day_metrics(datetime(2026, 2, day, 12, tzinfo=UTC)) for day in (1, 2, 3)
         ]
         cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
         uow = MagicMock()
 
         items = list(cost_input.gather("tenant-1", start, end, uow))
 
-        # 1 failed batch attempt + 3 per-day fallback calls = 4 total
-        assert mock_metrics_source.query.call_count == 1 + 3
+        assert mock_metrics_source.query.call_count == 3
         # All 3 days produced billing lines
         assert len(items) == 12
 
-    def test_fallback_partial_day_failure_skips_only_errored_day(
+    def test_partial_daily_query_failure_skips_only_errored_day(
         self, sample_config: object, mock_metrics_source: MagicMock
     ) -> None:
-        """During per-day fallback, one day's query raises → only that day skipped."""
+        """One transient daily query failure leaves other UTC days complete."""
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 
         start = datetime(2026, 2, 1, tzinfo=UTC)
@@ -570,9 +769,7 @@ class TestBatchPrometheusQuery:
         day1_data = _make_single_day_metrics(datetime(2026, 2, 1, 12, tzinfo=UTC))
         day3_data = _make_single_day_metrics(datetime(2026, 2, 3, 12, tzinfo=UTC))
 
-        # Batch fails, day 1 succeeds, day 2 fails, day 3 succeeds
         mock_metrics_source.query.side_effect = [
-            MetricsQueryError("batch unavailable"),
             day1_data,
             MetricsQueryError("day 2 prometheus down"),
             day3_data,
@@ -584,34 +781,7 @@ class TestBatchPrometheusQuery:
 
         # 8 items: days 1 and 3 succeed (4 each), day 2 skipped
         assert len(items) == 8
-        assert mock_metrics_source.query.call_count == 4
-
-
-class TestSliceMetricsForDay:
-    """task-039: _slice_metrics_for_day uses half-open interval [day_start, day_end)."""
-
-    def test_row_at_day_end_boundary_excluded_from_current_day(self) -> None:
-        """A row timestamped exactly at day_end belongs to the next day, not this one."""
-        from datetime import timedelta
-
-        from plugins.self_managed_kafka.cost_input import _slice_metrics_for_day  # noqa: PLC0415
-
-        day_start = datetime(2026, 2, 1, tzinfo=UTC)
-        day_end = datetime(2026, 2, 2, tzinfo=UTC)
-
-        row_at_boundary = MetricRow(timestamp=day_end, metric_key="cluster_bytes_in", value=1.0, labels={})
-        row_before_boundary = MetricRow(
-            timestamp=day_end - timedelta(seconds=1),
-            metric_key="cluster_bytes_in",
-            value=2.0,
-            labels={},
-        )
-
-        metrics = {"cluster_bytes_in": [row_at_boundary, row_before_boundary]}
-        sliced = _slice_metrics_for_day(metrics, day_start, day_end)
-
-        assert row_before_boundary in sliced["cluster_bytes_in"]
-        assert row_at_boundary not in sliced["cluster_bytes_in"]
+        assert mock_metrics_source.query.call_count == 3
 
 
 class TestDayStarts:

@@ -138,7 +138,8 @@ window if the billing data changed.
 date too early, you get partial costs. The cutoff gives the vendor time to
 settle. For self-managed Kafka, this is less critical since you control the
 metrics, but a small cutoff (1–2 days) still avoids processing incomplete
-Prometheus scrapes.
+Prometheus scrapes. Self-managed Kafka uses closed UTC billing days, so this
+also gives the final `[00:00, 00:00)` window time to close.
 
 **`retention_days`** (default: 250) — Delete data older than this. Runs
 automatically after each pipeline cycle. Set this higher than `lookback_days`
@@ -221,9 +222,12 @@ Topic attribution is an optional overlay that breaks Kafka cluster costs down to
 
 **Should you enable it?**
 
-- **Confluent Cloud + Prometheus metrics configured** → yes, add `topic_attribution.enabled: true` under `plugin_settings`
+- **Confluent Cloud + Prometheus metrics configured** → supported with the
+  existing CCloud configuration and behavior
 - **Confluent Cloud without Prometheus** → no — config validation rejects `enabled: true` without a `metrics` source
-- **Self-managed Kafka or Generic metrics** → not supported
+- **Self-managed Kafka** → supported as an opt-in overlay with the
+  self-managed policy and telemetry requirements below
+- **Generic metrics** → not supported
 
 The minimal config:
 
@@ -236,9 +240,13 @@ plugin_settings:
     enabled: true
 ```
 
-This uses all defaults: `even_split` fallback when metrics are missing, 90-day retention, no exclusion overrides beyond the built-in internal topics.
+For CCloud, this uses its existing defaults, including its `even_split` fallback
+when metrics are missing and 90-day retention. See the
+[CCloud configuration reference](ccloud-reference.md#topic-attribution) for its
+separate exclusion and metric behavior.
 
-For the full field reference (exclusion patterns, cost mapping overrides, custom metric names, retry behavior), see the [CCloud configuration reference](ccloud-reference.md#topic-attribution).
+For self-managed Kafka, see [Optional topic attribution](#optional-topic-attribution)
+and the [self-managed reference](self-managed-reference.md#optional-topic-attribution).
 
 ---
 
@@ -294,12 +302,47 @@ your rates. Here is the exact math (from `ConstructedCostInput`):
 | Network ingress | `total_bytes_in ÷ 1,073,741,824 × network_ingress_per_gib` | 50 GiB × $0.01 = **$0.50** |
 | Network egress | `total_bytes_out ÷ 1,073,741,824 × network_egress_per_gib` | 50 GiB × $0.05 = **$2.50** |
 
-Storage uses the **average** of all Prometheus samples in the day (because storage
-is a point-in-time measurement, not a cumulative counter). Network uses the **sum**
-of all hourly increases (because bytes are a cumulative counter).
+Storage uses the **average** of all Prometheus samples in the closed UTC day
+(because storage is a point-in-time measurement, not a cumulative counter).
+Network uses the broker-wide client `alltopics` counter for each direction:
+`sum(increase(...alltopics_bytesin_total[86400s]))` or
+`sum(increase(...alltopics_bytesout_total[86400s]))`, evaluated for that day.
+Those pool counters have no `topic` label and exclude replication traffic.
+Topic-labelled counters are attribution evidence only; they never construct the
+network cost pool.
 
 See [How Costs Work](../architecture/cost-model.md) for the complete mathematical
 model including allocation.
+
+### Optional topic attribution
+
+The cluster chargeback and principal allocation remain unchanged. To add a
+self-managed topic-level analytical view, opt in under `plugin_settings`:
+
+```yaml
+topic_attribution:
+  enabled: true
+  compute_policy: shared_even_v1
+  # Omit this key, or use [], when no topics should be excluded.
+  # exclude_topic_patterns:
+  #   - "internal-*"
+```
+
+Omitting `topic_attribution` keeps the overlay disabled. `shared_even_v1` assigns
+the full fixed compute cost evenly across active topics; it is a declared shared
+policy, not usage measurement. Its behavior is versioned by name. Ingress, egress,
+and storage use their own topic evidence and leave any unsupported remainder as
+`__UNATTRIBUTED__`, so the topic view reconciles to the cluster costs.
+
+Exclusion patterns do not change allocation. Actual topic names remain stored;
+the currently loaded YAML configuration classifies them when they are read.
+After a normal reload or restart, changed patterns affect current and historical
+views without recalculating costs. Analytics group matching topics as `Excluded topics`,
+while detailed rows and CSV retain the name and expose exclusion status.
+
+Self-managed pool construction and topic evidence use the same closed UTC
+`[00:00, 00:00)` window. Use a 1–2 day cutoff to avoid a day whose scrapes have
+not yet completed.
 
 ### Choosing a resource source
 
@@ -307,7 +350,7 @@ How does the engine discover your brokers and topics?
 
 | Source | How it works | Tradeoffs |
 |---|---|---|
-| `prometheus` (default) | Extracts broker and topic labels from `kafka_server_brokertopicmetrics_bytesin_total` | Zero additional credentials. Only discovers resources that have traffic. A topic with zero bytes in the discovery window won't appear. |
+| `prometheus` (default) | Extracts broker and topic labels from the available topic-labelled bytes-in, bytes-out, and log-size metrics | Zero additional credentials. Only discovers resources observed by those metrics. A topic with no evidence in the discovery window won't appear. |
 | `admin_api` | Queries the Kafka AdminClient for cluster metadata | Discovers *all* topics including idle ones. Requires bootstrap server credentials. |
 
 **When to use `admin_api`:** If you need a complete inventory of topics regardless
@@ -331,6 +374,10 @@ resource_source:
 `metrics_identifier_label` names that label and defaults to `kafka_cluster_id`.
 Every scraped broker target, including separately exposed JMX exporter endpoints,
 must carry the exact configured label/value.
+
+The same selector is applied to target health, discovery, broker-wide cost pools,
+and topic evidence. Do not rely on a shared Prometheus endpoint's default labels
+to isolate clusters.
 
 For each billing window, Chitragupta validates the exact target selector, for
 example `up{kafka_cluster_id="kafka-dc1"}`. A missing, mismatched, incomplete, or

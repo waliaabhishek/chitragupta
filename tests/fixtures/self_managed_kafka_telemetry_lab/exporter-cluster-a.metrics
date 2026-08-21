@@ -1,3 +1,7 @@
+# TYPE kafka_server_brokertopicmetrics_alltopics_bytesin_total counter
+kafka_server_brokertopicmetrics_alltopics_bytesin_total{lab_cluster="cluster-a",kafka_cluster_id="kraft-a-001",broker="1"} 8192
+# TYPE kafka_server_brokertopicmetrics_alltopics_bytesout_total counter
+kafka_server_brokertopicmetrics_alltopics_bytesout_total{lab_cluster="cluster-a",kafka_cluster_id="kraft-a-001",broker="1"} 4096
 # TYPE kafka_server_brokertopicmetrics_bytesin_total counter
 kafka_server_brokertopicmetrics_bytesin_total{lab_cluster="cluster-a",kafka_cluster_id="kraft-a-001",broker="1",topic="shared-topic"} 4096
 # TYPE kafka_server_brokertopicmetrics_bytesout_total counter

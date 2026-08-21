@@ -316,6 +316,8 @@ def capture(label: str | None, window: str) -> Path:
         raise ValueError("workload contract must define exactly one over-quota profile")
     over_quota_scope = over_quota_profiles[0]["scope"]
     instant_queries = {
+        "alltopics_bytes_in": "kafka_server_brokertopicmetrics_alltopics_bytesin_total",
+        "alltopics_bytes_out": "kafka_server_brokertopicmetrics_alltopics_bytesout_total",
         "topic_bytes_in": "kafka_server_brokertopicmetrics_bytesin_total",
         "topic_bytes_out": "kafka_server_brokertopicmetrics_bytesout_total",
         "partition_log_size": "kafka_log_log_size",

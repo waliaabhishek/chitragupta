@@ -17,6 +17,22 @@ rate_thresholds:
   minimum_high_to_low_ratio: 4
   minimum_throttle_time_ms: 0
 metrics:
+  - logical_name: alltopics_bytes_in
+    workload_profile: steady_low
+    raw_object_name: kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec
+    raw_attribute: Count
+    prometheus_series: kafka_server_brokertopicmetrics_alltopics_bytesin_total
+    type: counter
+    required_labels: [lab_cluster, kafka_cluster_id, broker]
+    forbidden_labels: [topic]
+  - logical_name: alltopics_bytes_out
+    workload_profile: steady_low
+    raw_object_name: kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec
+    raw_attribute: Count
+    prometheus_series: kafka_server_brokertopicmetrics_alltopics_bytesout_total
+    type: counter
+    required_labels: [lab_cluster, kafka_cluster_id, broker]
+    forbidden_labels: [topic]
   - logical_name: topic_bytes_in
     workload_profile: steady_low
     raw_object_name: kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec,topic={topic}

@@ -69,7 +69,7 @@ tenants:
     # Self-managed clusters typically have shorter Prometheus retention. Range: 1–364.
     lookback_days: 30
     # cutoff_days: skip the most recent N days (data may still be accumulating). Range: 1–30.
-    cutoff_days: 3
+    cutoff_days: 2
     # retention_days: how long to keep chargeback records in the database.
     # Records older than this are purged automatically. Range: 1–730.
     # retention_days: 180
@@ -141,7 +141,7 @@ tenants:
         # Network ingress cost per GiB (data entering the cluster from producers).
         network_ingress_per_gib: "0.01"
 
-        # Network egress cost per GiB (data leaving the cluster to consumers + replication).
+        # Network egress cost per GiB (data read by clients; replication is excluded).
         network_egress_per_gib: "0.09"
 
         # region_overrides: per-region rate overrides (optional).
@@ -200,6 +200,17 @@ tenants:
         # sasl_mechanism: PLAIN                             # options: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
         # sasl_username: "${KAFKA_USERNAME}"
         # sasl_password: "${KAFKA_PASSWORD}"
+
+      # ── Topic attribution (optional) ─────────────────────────────────────
+      # Omit this section (the default) to keep topic-level attribution disabled.
+      # It is independent of the principal policy configured above.
+      # topic_attribution:
+      #   enabled: true
+      #   # shared_even_v1 allocates fixed compute evenly across active topics.
+      #   compute_policy: shared_even_v1
+      #   # Omit this key, or use [], to keep every topic visible in analytics.
+      #   # exclude_topic_patterns:
+      #   #   - "internal-*"
 
       # ── Discovery window ───────────────────────────────────────────────────
       # How many hours of Prometheus data to scan when discovering brokers and topics.

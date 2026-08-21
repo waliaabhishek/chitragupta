@@ -117,6 +117,7 @@ export function TopicAttributionPage(): React.JSX.Element {
           ref={gridRef}
           tenantName={currentTenant.tenant_name}
           filters={queryParams}
+          showExcluded={currentTenant.ecosystem === "self_managed_kafka"}
         />
       )}
       {activeTab === "analytics" && (

@@ -3,6 +3,8 @@ hostPort: __JMX_HOST__:9999
 ssl: false
 excludeJvmMetrics: true
 includeObjectNames:
+  - "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"
+  - "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec"
   - "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec,topic=*"
   - "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec,topic=*"
   - "kafka.log:type=Log,name=Size,topic=*,partition=*"
@@ -14,6 +16,12 @@ includeObjectNames:
   - "kafka.server:type=Fetch,user=*,client-id=*"
 includeObjectNameAttributes: {}
 rules:
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=BytesInPerSec><>Count: .*'
+    name: kafka_server_brokertopicmetrics_alltopics_bytesin_total
+    type: COUNTER
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=BytesOutPerSec><>Count: .*'
+    name: kafka_server_brokertopicmetrics_alltopics_bytesout_total
+    type: COUNTER
   - pattern: 'kafka.server<type=BrokerTopicMetrics, name=BytesInPerSec, topic=(.+)><>Count: .*'
     name: kafka_server_brokertopicmetrics_bytesin_total
     labels:

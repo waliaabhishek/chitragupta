@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from core.metrics.protocol import MetricsQueryError
 from core.models import MetricRow
 
 
@@ -76,14 +77,90 @@ class TestGatherClusterResource:
 
 
 class TestBrokerTopicDiscovery:
+    def test_enabled_discovery_requires_all_three_result_families(self) -> None:
+        from plugins.self_managed_kafka.gathering.prometheus import run_broker_topic_discovery
+
+        metrics_source = MagicMock()
+        metrics_source.query.return_value = {
+            "broker_topic_discovery_bytes_in": [],
+            "broker_topic_discovery_bytes_out": [],
+        }
+
+        with pytest.raises(MetricsQueryError, match="broker_topic_discovery_log_size"):
+            run_broker_topic_discovery(
+                metrics_source,
+                metrics_identifier_label="kafka_cluster_id",
+                metrics_identifier="kraft-a-001",
+                step=timedelta(hours=1),
+            )
+
+    def test_disabled_overlay_uses_the_legacy_single_discovery_query(self) -> None:
+        from plugins.self_managed_kafka.gathering.prometheus import run_broker_topic_discovery
+
+        metrics_source = MagicMock()
+        metrics_source.query.return_value = {"broker_topic_discovery": []}
+
+        run_broker_topic_discovery(
+            metrics_source,
+            metrics_identifier_label="kafka_cluster_id",
+            metrics_identifier="kraft-a-001",
+            step=timedelta(hours=1),
+            include_topic_evidence=False,
+        )
+
+        queries = metrics_source.query.call_args.kwargs["queries"]
+        assert [query.key for query in queries] == ["broker_topic_discovery"]
+
+    def test_discovery_unions_independently_lazy_bytes_and_storage_families(self) -> None:
+        from plugins.self_managed_kafka.gathering.prometheus import run_broker_topic_discovery
+
+        metrics_source = MagicMock()
+        metrics_source.query.return_value = {
+            "broker_topic_discovery_bytes_in": [
+                make_row(
+                    "broker_topic_discovery_bytes_in",
+                    {"kafka_cluster_id": "kraft-a-001", "broker": "1", "topic": "orders"},
+                )
+            ],
+            "broker_topic_discovery_bytes_out": [
+                make_row(
+                    "broker_topic_discovery_bytes_out",
+                    {"kafka_cluster_id": "kraft-a-001", "broker": "2", "topic": "payments"},
+                )
+            ],
+            "broker_topic_discovery_log_size": [
+                make_row(
+                    "broker_topic_discovery_log_size",
+                    {"kafka_cluster_id": "kraft-a-001", "broker": "3", "topic": "idle-topic"},
+                )
+            ],
+        }
+
+        brokers, topics = run_broker_topic_discovery(
+            metrics_source,
+            metrics_identifier_label="kafka_cluster_id",
+            metrics_identifier="kraft-a-001",
+            step=timedelta(hours=1),
+        )
+
+        assert brokers == frozenset({"1", "2", "3"})
+        assert topics == frozenset({"orders", "payments", "idle-topic"})
+        queries = metrics_source.query.call_args.kwargs["queries"]
+        assert {query.resource_label for query in queries} == {"kafka_cluster_id"}
+        assert {query.key for query in queries} == {
+            "broker_topic_discovery_bytes_in",
+            "broker_topic_discovery_bytes_out",
+            "broker_topic_discovery_log_size",
+        }
+
     def test_discovery_is_cluster_scoped_and_does_not_interpret_principal_labels(self) -> None:
         from plugins.self_managed_kafka.gathering.prometheus import run_broker_topic_discovery
 
         metrics_source = MagicMock()
         metrics_source.query.return_value = {
-            "broker_topic_discovery": [
+            "broker_topic_discovery_bytes_in": [
                 make_row(
-                    "broker_topic_discovery",
+                    "broker_topic_discovery_bytes_in",
                     {
                         "kafka_cluster_id": "kraft-a-001",
                         "broker": "1",
@@ -91,7 +168,9 @@ class TestBrokerTopicDiscovery:
                         "principal": "accidental-label",
                     },
                 )
-            ]
+            ],
+            "broker_topic_discovery_bytes_out": [],
+            "broker_topic_discovery_log_size": [],
         }
 
         brokers, topics = run_broker_topic_discovery(
