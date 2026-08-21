@@ -1,6 +1,6 @@
 # Self-managed Kafka telemetry lab
 
-This local-only lab proves the raw Kafka JMX to JMX Exporter to Prometheus telemetry path under authenticated traffic. It runs two independent single-node Kafka 4.3.1 KRaft clusters with deliberately overlapping names and explicit cluster identity labels. It does not define identity or cost-allocation policy and is not a production deployment template.
+This local-only lab proves the raw Kafka JMX to JMX Exporter to Prometheus telemetry path under authenticated traffic. It runs two independent single-node Kafka 4.3.1 KRaft clusters with deliberately overlapping names and explicit cluster identity labels. Its opt-in principal demonstrator records a bounded policy contract; it is not a production deployment template.
 
 ## Prerequisites
 
@@ -22,6 +22,8 @@ Run commands from this directory:
 ./scripts/lab.sh ready
 ./scripts/lab.sh workload status
 ./scripts/lab.sh validate --window 5m
+./scripts/lab.sh validate --window 5m --principal-contract
+./scripts/lab.sh evidence --window 5m
 ./scripts/lab.sh stop
 ./scripts/lab.sh cleanup
 ```
@@ -38,7 +40,32 @@ Workloads can be controlled independently:
 
 Wait at least five minutes after `ready` before validating a five-minute rate window. Validation is fail-closed: missing metrics or labels, wrong metric types, absent quota scopes, non-positive Produce or Fetch throttling, insufficient low/high rate separation, unhealthy targets, missing cluster selectors, unexpected high-cardinality families, or stale evidence produce exit code 7 and a JSON result path.
 
-`validate` is the canonical complete evidence-producing command. It captures the live artifacts, validates that same bundle, writes `validator-result.json` into it, and leaves `evidence/latest` pointing to the validated bundle.
+Ordinary telemetry `validate` is the canonical complete evidence-producing command. It captures the live telemetry artifacts, validates that same bundle, writes `validator-result.json` into it, and leaves `evidence/latest` pointing to the validated bundle.
+
+## Principal-allocation demonstration
+
+`validate --principal-contract` adds an opt-in, telemetry-only demonstration of the principal-allocation contract. It does not configure or enable production attribution.
+
+The demonstrator uses authenticated Kafka user identity as `User:` plus the exported case-sensitive user label. Produce quota rate supplies ingress evidence and Fetch quota rate supplies egress evidence. Client-only evidence remains an explicit residual; it is never assigned to a user. Principal and topic results are independent marginals, so this command does not infer principal-by-topic or topic-owner allocations.
+
+The logical billing interval remains `[start,end)`. Raw quota inputs use `(start,end]` membership with an actual leading guard bounded by the configured maximum gap. The lab declares its actual 5-second scrape cadence and 10-second maximum gap; production cadence and gaps remain operator/configuration/evidence inputs. Sparse but complete production samples are monitoring-resolution estimates, not byte-exact totals. The capture first proves the exact Prometheus target scope with bounded actual `up` samples. If scope cannot be proven, it writes only `principal-scope-evidence.json` and suppresses quota queries. After a scope pass, it captures only raw Produce and Fetch quota matrices; no lookback value, synthetic timestamp, interpolation, or unbounded hold contributes evidence.
+
+An affected principal direction/cluster-day terminalizes independently; later principal days and the independent topic lane continue. An explicit reprocess replaces that cluster-day from retained corrected evidence using the current mapping.
+
+For each direction, `q_i` is a valid user or user-client quota weight, `c` is a valid client-only weight, and `W=sum(q_i)+c`. The configured monetary pool `M` is allocated independently as `M*q_i/W`; the client-only share `M*c/W` remains unallocated. Invalid, incomplete, or absent evidence is unavailable. Complete `W=0` is zero usage; complete positive `W` is ready without client-only weight and degraded with it. Amounts are Decimal values rounded down to four decimal places, with the remaining fractional currency retained as an explicit rounding residual so users plus unallocated amount balance exactly.
+
+The versioned contract contains a bounded demonstration ownership mapping: `User:user-only` maps to `team-data`, and other users map to `UNASSIGNED`. A successful live demonstration requires complete ingress and egress evidence plus the configured mapped user, unmapped user, and client-only label in each direction. Retries, repeat consumption, Kafka-recorded failed Produce requests, non-throttled empty/error Fetch responses, and protocol envelope contribute when Kafka records them in the applicable quota rate. After a scope pass, the complete validated and finalized principal bundle contains:
+
+- `principal-window.json`
+- `principal-scope-evidence.json`
+- `principal-raw-query-results.json`
+- `principal-allocation-demonstration.json`
+- `validator-result.json`
+- `cleanup-result.json` after `cleanup` finalizes it
+
+If contract or scope capture is blocked, the capture writes only `principal-scope-evidence.json` and suppresses the principal window, raw query, and demonstration artifacts; `validate` still records its `validator-result.json`.
+
+Prometheus must retain the requested window, leading guard, calculation delay, and any intended explicit reprocessing horizon; the lab baseline is 14 days. Principal validation failure returns exit 7 and leaves ordinary telemetry validation behavior unchanged.
 
 ## Clean restart proof
 
@@ -65,7 +92,7 @@ The evidence footprint is measured from running containers. Image-layer storage 
 
 ## Evidence bundle
 
-Each validation creates a timestamped directory under `evidence/` and updates the ignored `evidence/latest` symlink. A complete validated bundle contains:
+Each ordinary telemetry validation creates a timestamped directory under `evidence/` and updates the ignored `evidence/latest` symlink. A complete validated bundle contains:
 
 - `raw-jmx-cluster-a.jsonl`
 - `raw-jmx-cluster-b.jsonl`

@@ -18,13 +18,39 @@ fail() {
 validation_preflight_fail() {
   local category=$1
   local message=$2
+  local artifact=${3:-null}
   local result_dir="$LAB_DIR/evidence/validation-preflight-$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$result_dir"
-  printf '{"status":"fail","failures":[{"category":"%s","message":"%s","artifact":null}]}\n' \
-    "$category" "$message" >"$result_dir/validator-result.json"
+  printf '{"status":"fail","failures":[{"category":"%s","message":"%s","artifact":%s}]}\n' \
+    "$category" "$message" "$artifact" >"$result_dir/validator-result.json"
   rm -f -- "$LAB_DIR/evidence/latest"
   ln -s "$(basename "$result_dir")" "$LAB_DIR/evidence/latest"
   fail 7 'validation_failed:' "$message; details=$VALIDATION_DETAILS"
+}
+
+principal_contract_preflight() {
+  local status
+  uv run python -c '
+import sys
+sys.path.insert(0, "scripts")
+import validate_evidence
+contract, failure = validate_evidence._principal_contract()
+if failure is not None:
+    raise SystemExit(10 if failure.message.endswith("absent") else 11)
+raise SystemExit(0 if validate_evidence._principal_contract_failure(contract) is None else 11)
+' >/dev/null 2>&1
+  status=$?
+  case $status in
+    0)
+      return
+      ;;
+    10)
+      validation_preflight_fail principal_contract 'principal allocation contract is absent' '"principal-allocation-contract.yaml"'
+      ;;
+    *)
+      validation_preflight_fail principal_contract 'principal allocation contract is invalid' '"principal-allocation-contract.yaml"'
+      ;;
+  esac
 }
 
 run_validation_preflight() {
@@ -136,6 +162,7 @@ run_evidence() {
 run_validate() {
   local window=5m
   local require_recreated=false
+  local principal_contract=false
   while (($#)); do
     case "$1" in
       --window)
@@ -147,17 +174,31 @@ run_validate() {
         require_recreated=true
         shift
         ;;
+      --principal-contract)
+        principal_contract=true
+        shift
+        ;;
       *)
         fail 7 'validation_failed:' "unknown validation argument: $1; details=$VALIDATION_DETAILS"
         ;;
     esac
   done
 
+  if [[ $principal_contract == true ]]; then
+    principal_contract_preflight
+  fi
   run_validation_preflight
-  run_evidence --window "$window"
+  local capture_args=(--window "$window")
+  if [[ $principal_contract == true ]]; then
+    capture_args+=(--principal-contract)
+  fi
+  run_evidence "${capture_args[@]}"
   local args=(--evidence-dir "$LAB_DIR/evidence/latest")
   if [[ $require_recreated == true ]]; then
     args+=(--require-recreated-state)
+  fi
+  if [[ $principal_contract == true ]]; then
+    args+=(--principal-contract)
   fi
   uv run python scripts/validate_evidence.py "${args[@]}" || \
     fail 7 'validation_failed:' "evidence did not satisfy the contract; details=$VALIDATION_DETAILS"
