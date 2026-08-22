@@ -130,7 +130,7 @@ class QuotaPrincipalAllocationModel:
                     allocation_method=method,
                     allocation_detail=AllocationDetail.USAGE_RATIO_ALLOCATION,
                 )
-                row.principal_team = weight.team
+                row.metadata["team"] = weight.team
                 rows.append(row)
             if evaluation.state is PrincipalAttributionState.DEGRADED and evaluation.client_only_weight > Decimal("0"):
                 rows.append(

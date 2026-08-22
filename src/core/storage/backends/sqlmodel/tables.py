@@ -54,7 +54,6 @@ class ChargebackFactTable(SQLModel, table=True):
     dimension_id: int = Field(primary_key=True, foreign_key="chargeback_dimensions.dimension_id")
     amount: str = ""
     tags_json: str = Field(default="[]")
-    principal_team: str | None = Field(default=None)
 
 
 class PipelineStateTable(SQLModel, table=True):

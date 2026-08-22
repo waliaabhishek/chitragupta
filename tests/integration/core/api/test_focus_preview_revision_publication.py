@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -870,6 +871,7 @@ def test_periodic_publication_lifecycle_is_visible_through_real_current_api(
 
     engine.dispose()
     migration = _alembic_config(connection_string)
+    migration.cmd_opts = SimpleNamespace(x=["plugin_storage=disabled"])
     command.downgrade(migration, "028")
     revision_028_engine = create_engine(connection_string)
     with revision_028_engine.connect() as connection:

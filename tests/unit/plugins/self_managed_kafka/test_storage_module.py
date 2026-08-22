@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 from unittest.mock import MagicMock
 
+from sqlalchemy import create_engine, inspect
+
 from core.plugin.protocols import StorageModule
-from core.storage.interface import BillingRepository, IdentityRepository, ResourceRepository
+from core.storage.interface import BillingRepository, ChargebackRepository, IdentityRepository, ResourceRepository
 from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
 from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
 
@@ -49,3 +51,27 @@ class TestSMKPluginGetStorageModule:
         session = MagicMock()
         repo = module.create_identity_repository(session)
         assert isinstance(repo, IdentityRepository)
+
+    def test_create_chargeback_repository_returns_the_plugin_owned_repository(self) -> None:
+        module = SelfManagedKafkaStorageModule()
+        repository = module.create_chargeback_repository(MagicMock())
+
+        assert isinstance(repository, ChargebackRepository)
+        assert type(repository).__name__ == "SelfManagedKafkaChargebackRepository"
+
+    def test_storage_module_exposes_plugin_migration_capability(self) -> None:
+        module = SelfManagedKafkaStorageModule()
+
+        assert callable(getattr(module, "prepare_plugin_storage_migration", None))
+        assert callable(getattr(module, "downgrade_plugin_storage_migration", None))
+
+    def test_direct_registration_creates_both_plugin_owned_tables(self, tmp_path) -> None:
+        url = f"sqlite:///{tmp_path / 'direct-plugin-tables.db'}"
+        engine = create_engine(url)
+        try:
+            SelfManagedKafkaStorageModule().register_tables(engine)
+            assert {"self_managed_kafka_scope_state", "self_managed_kafka_principal_team_snapshots"} <= set(
+                inspect(engine).get_table_names()
+            )
+        finally:
+            engine.dispose()

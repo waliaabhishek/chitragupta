@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 
-from sqlalchemy import Column, PrimaryKeyConstraint
+from sqlalchemy import Column, ForeignKeyConstraint, PrimaryKeyConstraint
 from sqlmodel import Field, SQLModel
 
 from core.storage.backends.sqlmodel.base_tables import BillingTable, IdentityTable, ResourceTable
@@ -47,3 +47,19 @@ class SelfManagedKafkaScopeStateTable(SQLModel, table=True):
     recovery_cursor_date: date | None = None
     retention_gap_start: datetime | None = Field(default=None, sa_column=Column(UTCSecondDateTime(), nullable=True))
     retention_gap_end: datetime | None = Field(default=None, sa_column=Column(UTCSecondDateTime(), nullable=True))
+
+
+class SelfManagedKafkaPrincipalTeamSnapshotTable(SQLModel, table=True):
+    """Calculation-time team snapshot owned by the self-managed plugin."""
+
+    __tablename__ = "self_managed_kafka_principal_team_snapshots"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["timestamp", "dimension_id"],
+            ["chargeback_facts.timestamp", "chargeback_facts.dimension_id"],
+        ),
+    )
+
+    timestamp: datetime = Field(sa_column=Column(UTCSecondDateTime(), primary_key=True))
+    dimension_id: int = Field(primary_key=True)
+    team: str

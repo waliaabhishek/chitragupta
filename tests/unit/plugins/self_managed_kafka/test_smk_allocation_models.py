@@ -121,7 +121,7 @@ def test_static_policy_allocation_is_shared_success_not_measured_usage(product_t
     assert {row.amount for row in result.rows} == {Decimal("50.00")}
     assert {row.cost_type for row in result.rows} == {CostType.SHARED}
     assert {row.allocation_detail for row in result.rows} == {AllocationDetail.EVEN_SPLIT_ALLOCATION}
-    assert {row.principal_team for row in result.rows} == {None}
+    assert {row.metadata.get("team") for row in result.rows} == {None}
     assert {row.metadata["allocation_basis"] for row in result.rows} == {"static_policy"}
     assert {row.metadata["measured_usage"] for row in result.rows} == {False}
 
@@ -237,7 +237,7 @@ def test_quota_allocator_emits_zero_client_only_residual_and_only_user_rows_rece
         _allocation_context("SELF_KAFKA_NETWORK_INGRESS", resolution, Decimal("0.0000"))
     )
 
-    assert [(row.identity_id, row.amount, row.allocation_detail, row.principal_team) for row in result.rows] == [
+    assert [(row.identity_id, row.amount, row.allocation_detail, row.metadata.get("team")) for row in result.rows] == [
         ("User:alice", Decimal("0.0000"), AllocationDetail.USAGE_RATIO_ALLOCATION, "UNASSIGNED"),
         ("UNALLOCATED", Decimal("0.0000"), "principal_client_only_residual", None),
     ]
@@ -285,7 +285,7 @@ def test_enabled_fixed_policy_uses_sorted_configured_identities_even_when_discov
         )
     )
 
-    assert [(row.identity_id, row.amount, row.allocation_method, row.principal_team) for row in result.rows] == [
+    assert [(row.identity_id, row.amount, row.allocation_method, row.metadata.get("team")) for row in result.rows] == [
         ("Team:alpha", Decimal("0.3333"), "static_even_v1", None),
         ("Team:beta", Decimal("0.3333"), "static_even_v1", None),
         ("Team:zeta", Decimal("0.3333"), "static_even_v1", None),
@@ -306,7 +306,7 @@ def test_enabled_fixed_policy_with_no_configured_recipients_is_explicitly_unattr
     )
 
     assert [
-        (row.identity_id, row.amount, row.allocation_method, row.allocation_detail, row.principal_team)
+        (row.identity_id, row.amount, row.allocation_method, row.allocation_detail, row.metadata.get("team"))
         for row in result.rows
     ] == [("UNALLOCATED", Decimal("1.0000"), "principal_unattributed_v1", "principal_policy_unattributed", None)]
 
@@ -404,7 +404,7 @@ def test_quota_allocator_preserves_unavailable_and_zero_usage_as_unassigned_rows
     )
 
     assert [
-        (row.identity_id, row.amount, row.allocation_method, row.allocation_detail, row.principal_team)
+        (row.identity_id, row.amount, row.allocation_method, row.allocation_detail, row.metadata.get("team"))
         for row in result.rows
     ] == [("UNALLOCATED", Decimal("1.0000"), expected_method, expected_detail, None)]
 
@@ -441,7 +441,7 @@ def test_quota_allocator_preserves_positive_pool_rounding_residual_without_a_tea
         _allocation_context("SELF_KAFKA_NETWORK_INGRESS", resolution, Decimal("1.0000"))
     )
 
-    assert [(row.identity_id, row.amount, row.allocation_detail, row.principal_team) for row in result.rows] == [
+    assert [(row.identity_id, row.amount, row.allocation_detail, row.metadata.get("team")) for row in result.rows] == [
         ("User:alice", Decimal("0.3333"), AllocationDetail.USAGE_RATIO_ALLOCATION, "team-data"),
         ("User:bob", Decimal("0.6666"), AllocationDetail.USAGE_RATIO_ALLOCATION, "team-platform"),
         ("UNALLOCATED", Decimal("0.0001"), "principal_rounding_residual", None),

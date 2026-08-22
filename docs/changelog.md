@@ -3,7 +3,8 @@
 ### Added
 
 - Add opt-in quota-backed principal attribution for self-managed Kafka network
-  pools, including fail-closed evidence handling, team snapshots, and operator
-  configuration guidance.
+  pools, including fail-closed evidence handling, self-managed-plugin-owned
+  scope state and historical team snapshots, and operator configuration
+  guidance.
 
 --8<-- "CHANGELOG.md"

@@ -320,9 +320,12 @@ are separate `UNALLOCATED` rows, so every direction reconciles exactly to its po
 `principal_to_team` is an exact, case-sensitive canonical-ID map. A measured user
 without an entry receives `default_team`; client-only and rounding-residual rows do
 not acquire a team. Team values are retained with each completed chargeback row.
+They are not re-resolved from the current configuration when a row is read.
 Changing the map does not rewrite history. Recalculate a date explicitly to replace
 that date with the then-current mapping, and retain the source data required for
-every date that may be recalculated.
+every date that may be recalculated. For manual preparation or downgrade of the
+self-managed storage, follow the [self-managed Kafka storage migration
+procedure](../operations/upgrading.md#self-managed-kafka-storage-migrations).
 
 ### Fixed pools, topic independence, and operations
 

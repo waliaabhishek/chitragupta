@@ -120,10 +120,10 @@ class TestUpsertBatch:
         assert len(found) == 2
         assert {r.identity_id for r in found} == {"user-A", "user-B"}
 
-    def test_batch_round_trips_principal_team_without_making_unrelated_metadata_durable(self, session: Session) -> None:
+    def test_batch_does_not_make_generic_metadata_durable(self, session: Session) -> None:
         repo = SQLModelChargebackRepository(session)
         measured = _make_row(identity_id="User:alice")
-        measured.principal_team = "team-data"
+        measured.metadata = {"team": "transient"}
         unrelated = _make_row(identity_id="unrelated")
         unrelated.metadata = {"transient": "value"}
 
@@ -131,28 +131,24 @@ class TestUpsertBatch:
         session.commit()
         found = {row.identity_id: row for row in repo.find_by_date("eco", "t1", _DATE)}
 
-        assert found["User:alice"].principal_team == "team-data"
-        assert found["unrelated"].principal_team is None
+        assert found["User:alice"].metadata == {}
         assert found["unrelated"].metadata == {}
 
-    def test_date_replacement_changes_only_the_recalculated_principal_team_snapshot(self, session: Session) -> None:
+    def test_date_replacement_preserves_generic_core_fact_behavior(self, session: Session) -> None:
         repo = SQLModelChargebackRepository(session)
         first_day = _make_row(identity_id="User:alice")
-        first_day.principal_team = "team-data"
         second_day = _make_row(identity_id="User:alice")
         second_day.timestamp = _TS + timedelta(days=1)
-        second_day.principal_team = "team-platform"
 
         repo.upsert_batch([first_day, second_day])
         session.commit()
         repo.delete_by_date("eco", "t1", _DATE)
         replacement = _make_row(identity_id="User:alice")
-        replacement.principal_team = "team-finance"
         repo.upsert_batch([replacement])
         session.commit()
 
         first_rows = repo.find_by_date("eco", "t1", _DATE)
         second_rows = repo.find_by_date("eco", "t1", _DATE + timedelta(days=1))
 
-        assert [row.principal_team for row in first_rows] == ["team-finance"]
-        assert [row.principal_team for row in second_rows] == ["team-platform"]
+        assert [row.amount for row in first_rows] == [Decimal("10.00")]
+        assert [row.amount for row in second_rows] == [Decimal("10.00")]

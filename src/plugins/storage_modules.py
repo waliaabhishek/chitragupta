@@ -29,7 +29,12 @@ def get_storage_module_for_ecosystem(ecosystem: str) -> StorageModule:
 
         return CCloudStorageModule()
 
-    # Generic ecosystems (self_managed_kafka, generic_metrics_only, etc.) use core
+    if ecosystem == "self_managed_kafka":
+        from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
+
+        return SelfManagedKafkaStorageModule()
+
+    # Generic ecosystems use core storage.
     from core.storage.backends.sqlmodel.module import CoreStorageModule
 
     return CoreStorageModule()

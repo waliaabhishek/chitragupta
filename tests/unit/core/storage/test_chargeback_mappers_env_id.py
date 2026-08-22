@@ -32,7 +32,6 @@ def _make_fact(dimension_id: int = 1) -> ChargebackFactTable:
         dimension_id=dimension_id,
         amount="10.00",
         tags_json="[]",
-        principal_team=None,
     )
 
 
@@ -91,17 +90,11 @@ class TestChargebackToDomainEnvId:
 
         assert result.metadata["env_id"] == "env-rt"
 
-    def test_principal_team_does_not_replace_the_existing_env_id_metadata(self) -> None:
+    def test_generic_fact_schema_has_no_self_managed_team_snapshot(self) -> None:
         dim = _make_dim(env_id="env-xyz")
-        fact = ChargebackFactTable(
-            timestamp=_NOW,
-            dimension_id=1,
-            amount="10.00",
-            tags_json="[]",
-            principal_team="team-data",
-        )
+        fact = _make_fact()
 
         result = chargeback_to_domain(dim, fact)
 
         assert result.metadata == {"env_id": "env-xyz"}
-        assert result.principal_team == "team-data"
+        assert "principal_team" not in fact.__table__.columns

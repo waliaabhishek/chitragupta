@@ -85,9 +85,8 @@ class TestChargebackRow:
         assert row.allocation_detail is None
         assert row.tags == {}
         assert row.metadata == {}
-        assert row.principal_team is None
 
-    def test_principal_team_is_an_optional_fact_snapshot_after_existing_positional_fields(self) -> None:
+    def test_metadata_remains_the_only_generic_extension_after_existing_positional_fields(self) -> None:
         row = ChargebackRow(
             "self_managed_kafka",
             "tenant-1",
@@ -98,11 +97,11 @@ class TestChargebackRow:
             "User:alice",
             CostType.USAGE,
             dimension_id=17,
-            principal_team="team-data",
+            metadata={"team": "transient"},
         )
 
         assert row.dimension_id == 17
-        assert row.principal_team == "team-data"
+        assert row.metadata == {"team": "transient"}
 
     def test_tags_mutation(self) -> None:
         row = ChargebackRow(

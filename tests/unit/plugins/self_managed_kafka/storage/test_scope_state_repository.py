@@ -17,7 +17,7 @@ def backend(tmp_path: Path) -> SQLModelBackend:
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'scope-state.db'}",
         SelfManagedKafkaStorageModule(),
-        use_migrations=False,
+        use_migrations=True,
     )
     backend.create_tables()
     yield backend

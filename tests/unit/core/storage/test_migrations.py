@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -112,6 +113,7 @@ class TestBaselineMigration:
         assert set(inspector.get_table_names()) >= EXPECTED_TABLES
 
         # Downgrade
+        cfg.cmd_opts = SimpleNamespace(x=["plugin_storage=disabled"])
         command.downgrade(cfg, "base")
         inspector = sa_inspect(engine)
         remaining = set(inspector.get_table_names()) - {"alembic_version"}

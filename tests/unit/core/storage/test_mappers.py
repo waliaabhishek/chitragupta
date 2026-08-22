@@ -211,13 +211,13 @@ class TestChargebackMapper:
         assert dim.cost_type == "usage"
         assert dim.dimension_id is None  # not saved yet
 
-    def test_to_fact(self):
-        row = self._make_row(principal_team="team-data")
+    def test_to_fact_does_not_persist_transient_metadata(self):
+        row = self._make_row(metadata={"team": "transient"})
         fact = chargeback_to_fact(row, dimension_id=42)
         assert fact.dimension_id == 42
         assert fact.amount == "50.25"
         assert '"team"' in fact.tags_json
-        assert fact.principal_team == "team-data"
+        assert "principal_team" not in fact.__table__.columns
 
     def test_to_domain(self):
         dim = ChargebackDimensionTable(
@@ -243,23 +243,7 @@ class TestChargebackMapper:
         assert domain.tags == {}
         assert domain.metadata == {}  # metadata is transient
         assert domain.cost_type == CostType.USAGE
-        assert domain.principal_team is None
-
-    def test_principal_team_round_trip_is_mechanical_for_non_plugin_values(self):
-        row = self._make_row(
-            ecosystem="arbitrary-provider",
-            identity_id="not-a-principal",
-            allocation_method="arbitrary-method",
-            allocation_detail="arbitrary-detail",
-            principal_team="snapshot-team",
-        )
-        dimension = chargeback_to_dimension(row)
-        dimension.dimension_id = 17
-
-        restored = chargeback_to_domain(dimension, chargeback_to_fact(row, dimension_id=17))
-
-        assert restored.principal_team == "snapshot-team"
-        assert restored.metadata == {}
+        assert not hasattr(domain, "principal_team")
 
     def test_chargeback_mapper_has_no_plugin_specific_principal_knowledge(self):
         from pathlib import Path

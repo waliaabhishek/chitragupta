@@ -3,14 +3,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self
 
-from sqlalchemy import inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
 from core.logging_context import safe_exception_context, safe_log_context
 from core.storage.backends.sqlmodel.engine import get_or_create_engine, get_or_create_read_only_engine
 from core.storage.backends.sqlmodel.repositories import (
-    SQLModelChargebackRepository,
     SQLModelEmissionRepository,
     SQLModelEntityTagRepository,
     SQLModelGraphRepository,
@@ -57,13 +55,11 @@ class SQLModelUnitOfWork:
         storage_module: StorageModule,
         *,
         preview_evidence_enabled: bool = False,
-        principal_team_column_available: bool = True,
     ) -> None:
         self._engine = get_or_create_engine(connection_string)
         self._storage_module = storage_module
         self._session: Session | None = None
         self.preview_evidence_enabled = preview_evidence_enabled
-        self._principal_team_column_available = principal_team_column_available
         from core.plugin.protocols import PreviewSourceAttemptFallbackStorageModule
 
         self._preview_source_fallback_module = (
@@ -93,8 +89,6 @@ class SQLModelUnitOfWork:
         self.identities = self._storage_module.create_identity_repository(self._session)
         self.billing = self._storage_module.create_billing_repository(self._session)
         self.chargebacks = self._storage_module.create_chargeback_repository(self._session)  # plugin-extensible
-        if isinstance(self.chargebacks, SQLModelChargebackRepository):
-            self.chargebacks.set_principal_team_column_available(self._principal_team_column_available)
         self.pipeline_state = SQLModelPipelineStateRepository(self._session)
         self.pipeline_runs = SQLModelPipelineRunRepository(self._session)
         self.tags = SQLModelEntityTagRepository(self._session)
@@ -161,14 +155,11 @@ class ReadOnlySQLModelUnitOfWork(SQLModelUnitOfWork):
         self,
         connection_string: str,
         storage_module: StorageModule,
-        *,
-        principal_team_column_available: bool = True,
     ) -> None:
         super().__init__(
             connection_string,
             storage_module,
             preview_evidence_enabled=False,
-            principal_team_column_available=principal_team_column_available,
         )
         self._engine = get_or_create_read_only_engine(connection_string)
 
@@ -268,7 +259,6 @@ class SQLModelBackend:
         self._engine = get_or_create_engine(connection_string)
         self._ro_engine = get_or_create_read_only_engine(connection_string)
         self._tables_created = False
-        self._principal_team_column_available = use_migrations
         from core.preview.storage_availability import (
             PreviewEvidenceAvailability,
             PreviewEvidenceAvailabilityState,
@@ -281,14 +271,12 @@ class SQLModelBackend:
             self._connection_string,
             self._storage_module,
             preview_evidence_enabled=self._focus_preview_enabled,
-            principal_team_column_available=self._principal_team_column_available,
         )
 
     def create_read_only_unit_of_work(self) -> ReadOnlySQLModelUnitOfWork:
         return ReadOnlySQLModelUnitOfWork(
             self._connection_string,
             self._storage_module,
-            principal_team_column_available=self._principal_team_column_available,
         )
 
     def create_preview_write_unit_of_work(self) -> PreviewWriteSQLModelUnitOfWork:
@@ -374,8 +362,6 @@ class SQLModelBackend:
                     retryable=False,
                 ),
             )
-            columns = inspect(self._engine).get_columns("chargeback_facts")
-            self._principal_team_column_available = any(column["name"] == "principal_team" for column in columns)
         self._prepare_preview_evidence(issues)
         self._tables_created = True
 
@@ -385,7 +371,7 @@ class SQLModelBackend:
         from alembic import command
         from alembic.config import Config
 
-        from core.plugin.protocols import PreviewEvidenceStorageModule
+        from core.plugin.protocols import PluginStorageMigrationModule, PreviewEvidenceStorageModule
         from core.preview.storage_availability import (
             CFG_PREVIEW_EVIDENCE_ENABLED,
             CFG_PREVIEW_EVIDENCE_ISSUES,
@@ -404,6 +390,12 @@ class SQLModelBackend:
         cfg.set_main_option("script_location", str(migrations_dir))
         set_alembic_database_url(cfg, self._connection_string)
         collector = PreviewEvidenceIssueCollector()
+        plugin_storage_module = (
+            self._storage_module if isinstance(self._storage_module, PluginStorageMigrationModule) else None
+        )
+        cfg.attributes["plugin_storage_module"] = plugin_storage_module
+        cfg.attributes["plugin_storage_selection_explicit"] = True
+
         module = None
         if self._focus_preview_enabled:
             if isinstance(self._storage_module, PreviewEvidenceStorageModule):
@@ -411,7 +403,7 @@ class SQLModelBackend:
             else:
                 collector.record(
                     PreviewEvidenceIssue(
-                        revision="034",
+                        revision="032",
                         kind=PreviewEvidenceIssueKind.CAPABILITY_MISSING,
                         error_type="PreviewEvidenceStorageModule",
                     )
@@ -475,7 +467,7 @@ class SQLModelBackend:
             return
         if not isinstance(self._storage_module, PreviewEvidenceStorageModule):
             issue = PreviewEvidenceIssue(
-                revision="034",
+                revision="032",
                 kind=PreviewEvidenceIssueKind.CAPABILITY_MISSING,
                 error_type="PreviewEvidenceStorageModule",
             )
@@ -491,7 +483,7 @@ class SQLModelBackend:
             with self._engine.begin() as connection:
                 self._storage_module.prepare_preview_evidence_migration(
                     connection,
-                    target_revision="034",
+                    target_revision="032",
                 )
         except (PreviewEvidenceSchemaError, SQLAlchemyError) as exc:
             issue_kind = (
@@ -501,13 +493,13 @@ class SQLModelBackend:
             )
             issues.append(
                 PreviewEvidenceIssue(
-                    revision="034",
+                    revision="032",
                     kind=issue_kind,
                     error_type=type(exc).__name__,
                 )
             )
             logger.warning(
-                "preview_evidence_prepare_unavailable revision=034 issue_kind=%s%s",
+                "preview_evidence_prepare_unavailable revision=032 issue_kind=%s%s",
                 issue_kind.value,
                 safe_log_context(
                     stage="preview_evidence_prepare",

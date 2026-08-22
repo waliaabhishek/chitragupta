@@ -119,6 +119,50 @@ uv run alembic -c src/core/storage/migrations/alembic.ini \
   upgrade head
 ```
 
+### Self-managed Kafka storage migrations
+
+Startup selects storage preparation independently for each tenant. A
+self-managed Kafka tenant prepares and verifies its plugin-owned storage before
+the tenant backend is published. This also applies when the database is already
+at the current core head, so selecting self-managed Kafka after a prior generic
+upgrade prepares the missing plugin tables before they are used.
+
+All tenants use the same migration history. To prepare a self-managed Kafka
+database manually, use an online connection and select the ecosystem:
+
+```bash
+uv run alembic -c src/core/storage/migrations/alembic.ini \
+  -x sqlalchemy.url="${CHITRAGUPTA_DATABASE_URL}" \
+  -x plugin_storage=self_managed_kafka \
+  upgrade head
+```
+
+The command is safe to rerun when the plugin tables already exist. To downgrade
+a self-managed database across the plugin storage revision, select the same
+ecosystem so its tables are removed before the shared migration state changes:
+
+```bash
+uv run alembic -c src/core/storage/migrations/alembic.ini \
+  -x sqlalchemy.url="${CHITRAGUPTA_DATABASE_URL}" \
+  -x plugin_storage=self_managed_kafka \
+  downgrade 032
+```
+
+For a core, generic-metrics, or Confluent Cloud database, make the no-plugin
+choice explicit when downgrading:
+
+```bash
+uv run alembic -c src/core/storage/migrations/alembic.ini \
+  -x sqlalchemy.url="${CHITRAGUPTA_DATABASE_URL}" \
+  -x plugin_storage=disabled \
+  downgrade 032
+```
+
+When a downgrade crosses the plugin storage revision, omitting
+`plugin_storage` stops before any schema or migration-state change. Retry with
+the self-managed ecosystem selector or with `plugin_storage=disabled`, as
+appropriate for the tenant.
+
 The override uses normal SQLAlchemy URL syntax. Percent-encode reserved
 characters in credentials and query values once, using standard single-percent
 URL encoding; do not double percent signs. A blank or invalid override stops

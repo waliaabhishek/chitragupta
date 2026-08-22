@@ -80,7 +80,7 @@ def test_direct_disabled_offline_upgrade_through_head_requires_online_preflight(
 ) -> None:
     output = io.StringIO()
     config = _config("sqlite:///offline.db", selection=selection, output=output)
-    assert ScriptDirectory.from_config(config).get_current_head() == "034"
+    assert ScriptDirectory.from_config(config).get_current_head() == "033"
     with pytest.raises(
         RuntimeError,
         match=r"migration 029 requires an online database connection.*without --sql",
@@ -194,7 +194,9 @@ def test_online_downgrade_removes_dormant_preview_objects_even_when_selection_is
     command.upgrade(_config(url, selection="confluent_cloud"), "head")
     assert _table_names(url) >= EVIDENCE_NAMES
 
-    command.downgrade(_config(url, selection="disabled"), "017")
+    downgrade_config = _config(url, selection="disabled")
+    downgrade_config.cmd_opts.x.append("plugin_storage=disabled")
+    command.downgrade(downgrade_config, "017")
 
     assert not (_table_names(url) & EVIDENCE_NAMES)
 
@@ -327,7 +329,7 @@ def test_incompatible_preview_schema_does_not_block_all_core_revisions_through_h
     version_engine = create_engine(url)
     try:
         with version_engine.connect() as connection:
-            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "034"
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "033"
     finally:
         version_engine.dispose()
     assert backend.preview_evidence_availability.state.value == "unavailable"

@@ -222,7 +222,7 @@ def test_initialized_plugin_calculate_phase_persists_quota_backed_principal_rows
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'principal-attribution.db'}",
         SelfManagedKafkaStorageModule(),
-        use_migrations=False,
+        use_migrations=True,
     )
     backend.create_tables()
     tenant = TenantConfig(
@@ -256,8 +256,8 @@ def test_initialized_plugin_calculate_phase_persists_quota_backed_principal_rows
     }
     assert {row.allocation_method for row in principal_rows} == {"principal_quota_ready_v1"}
     assert {row.allocation_detail for row in principal_rows} == {"usage_ratio_allocation"}
-    assert {row.principal_team for row in principal_rows} == {"team-default"}
-    assert all(row.principal_team is None for row in rows if row.identity_id != "User:alice")
+    assert {row.metadata.get("team") for row in principal_rows} == {"team-default"}
+    assert all("team" not in row.metadata for row in rows if row.identity_id != "User:alice")
     quota_calls = [
         (definitions, end)
         for definitions, _, end, _, _ in source.calls
@@ -357,7 +357,7 @@ def test_principal_team_snapshots_change_only_when_a_date_is_recalculated(tmp_pa
     backend = SQLModelBackend(
         f"sqlite:///{tmp_path / 'principal-team-snapshots.db'}",
         SelfManagedKafkaStorageModule(),
-        use_migrations=False,
+        use_migrations=True,
     )
     backend.create_tables()
     first_plugin, first_source, settings = plugin_for_team("team-first")
@@ -386,13 +386,15 @@ def test_principal_team_snapshots_change_only_when_a_date_is_recalculated(tmp_pa
             first_snapshot = uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", first_date)
             second_snapshot = uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", second_date)
 
-        assert {row.principal_team for row in first_snapshot if row.identity_id == "User:alice"} == {"team-first"}
-        assert {row.principal_team for row in second_snapshot if row.identity_id == "User:alice"} == {"team-second"}
+        assert {row.metadata.get("team") for row in first_snapshot if row.identity_id == "User:alice"} == {"team-first"}
+        assert {row.metadata.get("team") for row in second_snapshot if row.identity_id == "User:alice"} == {
+            "team-second"
+        }
 
         third_plugin, third_source, _ = plugin_for_team("team-third")
         with backend.create_read_only_unit_of_work() as uow:
             unchanged = uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", second_date)
-        assert {row.principal_team for row in unchanged if row.identity_id == "User:alice"} == {"team-second"}
+        assert {row.metadata.get("team") for row in unchanged if row.identity_id == "User:alice"} == {"team-second"}
 
         with backend.create_unit_of_work() as uow:
             uow.chargebacks.delete_by_date("self_managed_kafka", "tenant-1", second_date)
@@ -405,8 +407,8 @@ def test_principal_team_snapshots_change_only_when_a_date_is_recalculated(tmp_pa
     finally:
         backend.dispose()
 
-    assert {row.principal_team for row in preserved if row.identity_id == "User:alice"} == {"team-first"}
-    assert {row.principal_team for row in replaced if row.identity_id == "User:alice"} == {"team-third"}
+    assert {row.metadata.get("team") for row in preserved if row.identity_id == "User:alice"} == {"team-first"}
+    assert {row.metadata.get("team") for row in replaced if row.identity_id == "User:alice"} == {"team-third"}
 
 
 def test_principal_enablement_does_not_change_constructed_costs_or_topic_attribution_output() -> None:

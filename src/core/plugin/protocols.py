@@ -110,6 +110,25 @@ class PreviewEvidenceStorageModule(Protocol):
 
 
 @runtime_checkable
+class PluginStorageMigrationModule(Protocol):
+    """Optional owner of plugin-specific DDL inside the core migration chain."""
+
+    def prepare_plugin_storage_migration(
+        self,
+        connection: Connection,
+        *,
+        target_revision: str,
+    ) -> None: ...
+
+    def downgrade_plugin_storage_migration(
+        self,
+        connection: Connection,
+        *,
+        target_revision: str,
+    ) -> None: ...
+
+
+@runtime_checkable
 class PreviewSourceAttemptFallbackStorageModule(Protocol):
     def create_preview_source_attempt_fallback_repository(
         self, session: Session
