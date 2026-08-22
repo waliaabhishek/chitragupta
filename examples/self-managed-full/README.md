@@ -63,16 +63,24 @@ Every scraped broker target must carry the exact configured label/value, even wh
 brokers or JMX exporters use separate endpoints. For the supplied configuration,
 the target health selector is `up{kafka_cluster_id="kafka-dc1"}`.
 
-### Quota evidence and static policy allocation
+### Quota-backed principal attribution
 
 BrokerTopicMetrics supplies cluster cost and broker/topic discovery data; it does
-not supply principal identity for allocation. Quota telemetry records principal
-evidence for each billing window. Static identities are the visible allocation
-policy and produce chargeback rows with `measured_usage=false`.
+not supply principal ownership. Principal attribution is optional and disabled by
+default. To allocate the network pools from Kafka quota telemetry, configure:
 
 ```yaml
+principal_attribution:
+  enabled: true
+  scrape_interval_seconds: 30
+  max_gap_seconds: 90
+  compute_policy: unattributed
+  storage_policy: unattributed
 identity_source:
   source: both
+  principal_to_team:
+    "User:service-account": data-platform
+  default_team: UNASSIGNED
   static_identities:
     - identity_id: platform-team
       identity_type: team
@@ -80,9 +88,25 @@ identity_source:
       identity_type: team
 ```
 
-If quota byte-rate telemetry is absent, its status is `not_observed`; allocation
-does not infer an owner from topic traffic. Structurally valid non-finite throttle
-samples mean no positive throttling was observed, not measured usage.
+The feature requires `identity_source.source: prometheus` or `both`. Produce quota
+rates allocate ingress, Fetch quota rates allocate egress, and the two directions
+remain independent. The Kafka-authenticated user label is represented as
+`User:<user>` with case preserved; client-only weight remains `UNALLOCATED`.
+After target scope is valid, missing, invalid, or incomplete quota evidence fails
+closed and leaves the affected network pool unallocated. A target-scope failure
+stops calculation before quota queries or allocation and creates no business rows.
+`static_even_v1` is available only for the fixed compute/storage policies and is
+not measured usage. Its empty `static_identities` list is valid at startup and
+preserves the entire fixed pool as `UNALLOCATED`.
+
+When the `principal_attribution` block is omitted or disabled, `prometheus` and
+`both` retain their byte-rate/throttle readiness probes (`observed`, `not_observed`,
+`invalid`, or `transient_failure`) without measured allocation. `static` remains
+policy-only and makes no quota calls.
+
+See the [configuration reference](../../docs/configuration/self-managed-reference.md#quota-backed-principal-attribution)
+for the exporter labels, state model, exact reconciliation, retention, and
+recalculation contract.
 
 ### Optional topic attribution
 
@@ -112,6 +136,12 @@ CSV retain each topic name and show its derived exclusion status.
 ### Using Admin API for resource discovery
 
 Change `resource_source.source` to `admin_api` in `config.yaml` and set `KAFKA_BOOTSTRAP_SERVERS` in `.env` to query Kafka directly instead of deriving resources from Prometheus labels.
+
+For an authenticated cluster, set the matching `security_protocol`,
+`sasl_mechanism`, `sasl_username`, and `sasl_password` in `resource_source`. These
+credentials are for Kafka resource discovery only; they are separate from the
+Kafka-authenticated users represented by quota telemetry and from Prometheus
+credentials.
 
 ### Multi-cluster setup
 
@@ -152,9 +182,13 @@ The `alltopics` counters need a `broker` label and no `topic` label; topic count
 need `broker` and `topic`; for topic attribution `kafka_log_log_size` needs
 `broker`, `topic`, and `partition`.
 
-When `identity_source.source` is `prometheus` or `both`, it also evaluates
-`kafka_server_quota_byte_rate` and `kafka_server_quota_throttle_time_ms` as quota
-evidence.
+When `principal_attribution.enabled` is `true`, also export
+`kafka_server_quota_byte_rate` as a gauge. It must carry `broker`, the configured
+cluster label, `quota_type` (`Produce` or `Fetch`), `quota_scope` (`user`,
+`user-client`, or `client-id`), `user`, and `client_id`. Export the corresponding
+Kafka JMX quota MBeans for user, client-ID, and user/client scopes. Configure Kafka
+quotas for the authenticated users and client IDs you intend to observe;
+Chitragupta reads those metrics and does not configure broker quotas.
 
 Ensure every target carries the configured `metrics_identifier_label` and
 `metrics_identifier` value. Chitragupta applies that selector to `up`, resource
@@ -185,9 +219,12 @@ remain visible as a retention gap rather than receiving fabricated billing.
 - Verify the Grafana time range covers dates with data
 
 **No quota evidence**
-- Confirm quota telemetry is available with the configured target label/value
-- Use `identity_source.source: static` or `both` and list the policy identities
-  that should receive the static split
+- Confirm `principal_attribution.enabled` is set and the identity source is
+  `prometheus` or `both`
+- Confirm `kafka_server_quota_byte_rate` has the configured target label, broker,
+  quota type/scope, user, and client-ID labels for both Produce and Fetch
+- Check that the declared scrape interval and maximum gap match Prometheus, then
+  explicitly recalculate retained affected dates after correcting the source
 
 **Scope blocked**
 - Query the exact `up{<metrics_identifier_label>="<metrics_identifier>"}` selector

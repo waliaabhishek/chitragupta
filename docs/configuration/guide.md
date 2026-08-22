@@ -387,42 +387,44 @@ recovery proceeds chronologically within the available lookback range and record
 older unavailable portion as a retention gap. Topic and quota series can appear only
 when active, so neither proves this target scope.
 
-### Choosing principal evidence and allocation policy
+### Choosing principal attribution
 
-BrokerTopicMetrics does not provide principal identity for allocation. How should
-the engine report quota evidence and choose visible policy identities?
-
-| Source | How it works | Tradeoffs |
-|---|---|---|
-| `prometheus` (default) | Records quota-telemetry evidence for each billing window | Requires exported quota telemetry. It does not create policy identities or usage-weighted allocation. |
-| `static` | You list identities in YAML | Uses those visible identities for a policy split with `measured_usage=false`. |
-| `both` | Keeps static policy identities and records quota evidence | Useful when operators want a stable policy allocation plus evidence status. |
-
-**Which one should you use?**
-
-- Use `prometheus` when quota telemetry is available and you need its evidence status.
-- Use `static` when operators define the allocation policy directly.
-- Use `both` when the static policy must remain visible while quota evidence is also recorded.
-
-Missing quota byte-rate telemetry is `not_observed`. Structurally valid non-finite
-throttle samples indicate no positive throttling was observed; they are not
-measured usage. In all cases, quota evidence does not replace the static policy
-split.
+BrokerTopicMetrics supplies a cluster-wide cost pool, not principal ownership.
+Quota-backed principal attribution is optional and off by default. Enable it only
+after Kafka quota telemetry is exported with the required labels:
 
 ```yaml
-# Static identities example
+principal_attribution:
+  enabled: true
+  scrape_interval_seconds: 30
+  max_gap_seconds: 90
+  compute_policy: unattributed
+  storage_policy: unattributed
 identity_source:
-  source: static
-  static_identities:
-    - identity_id: "User:alice"
-      identity_type: principal
-      display_name: Alice
-      team: data-eng
-    - identity_id: "User:bob"
-      identity_type: service_account
-      display_name: Bob (ETL service)
-      team: platform
+  source: prometheus  # or `both` when using static identities for a fixed pool
+  principal_to_team:
+    "User:service-account": data-platform
+  default_team: UNASSIGNED
 ```
+
+Produce quota rates allocate ingress and Fetch quota rates allocate egress. Kafka's
+authenticated user label becomes `User:<user>` without changing its case. User-only
+and user/client rates contribute to that user; a client-only rate stays
+`UNALLOCATED`. After target scope is valid, missing, invalid, or incomplete quota
+evidence leaves the affected direction unallocated. A target-scope failure instead
+stops calculation before quota queries or allocation and creates no business rows.
+Compute and storage remain fixed pools under their configured policies.
+
+The Prometheus target selector is checked before quota evidence. Retain the billing
+window, leading guard sample, calculation delay, and planned recalculation horizon.
+When `principal_attribution` is omitted or disabled, `prometheus` and `both` retain
+their byte-rate/throttle readiness probes (`observed`, `not_observed`, `invalid`, or
+`transient_failure`) without measured allocation; `static` is policy-only and makes
+no quota calls.
+
+For the full metric contract, state behavior, exact reconciliation, fixed-pool
+policies, and troubleshooting, see the
+[Self-Managed Kafka Configuration Reference](self-managed-reference.md#quota-backed-principal-attribution).
 
 ---
 

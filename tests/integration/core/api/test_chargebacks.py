@@ -32,6 +32,41 @@ class TestListChargebacks:
         assert data["items"][0]["identity_id"] == "user-1"
         assert data["items"][0]["amount"] == "10.00"
 
+    def test_list_chargebacks_projects_persisted_principal_team_as_existing_metadata(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.chargebacks.upsert(
+                ChargebackRow(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    timestamp=datetime(2026, 2, 15, tzinfo=UTC),
+                    resource_id="cluster-1",
+                    product_category="kafka",
+                    product_type="SELF_KAFKA_NETWORK_INGRESS",
+                    identity_id="User:alice",
+                    cost_type=CostType.USAGE,
+                    amount=Decimal("10.0000"),
+                    allocation_method="principal_quota_ready_v1",
+                    allocation_detail="usage_ratio_allocation",
+                    tags={},
+                    metadata={"transient": "value"},
+                    principal_team="team-data",
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.get(
+            "/api/v1/tenants/test-tenant/chargebacks",
+            params={"start_date": "2026-02-01", "end_date": "2026-02-28"},
+        )
+
+        assert response.status_code == 200
+        item = response.json()["items"][0]
+        assert item["metadata"] == {"team": "team-data"}
+        assert item["allocation_method"] == "principal_quota_ready_v1"
+        assert item["allocation_detail"] == "usage_ratio_allocation"
+
     def test_list_chargebacks_filter_by_identity(
         self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
     ) -> None:

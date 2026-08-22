@@ -207,6 +207,7 @@ def chargeback_to_fact(row: ChargebackRow, dimension_id: int) -> ChargebackFactT
         dimension_id=dimension_id,
         amount=str(row.amount),
         tags_json=json.dumps(row.tags),
+        principal_team=row.principal_team,
     )
 
 
@@ -226,6 +227,7 @@ def chargeback_to_domain(dim: ChargebackDimensionTable, fact: ChargebackFactTabl
         tags={},
         metadata={"env_id": dim.env_id} if dim.env_id else {},
         dimension_id=dim.dimension_id,
+        principal_team=fact.principal_team,
     )
 
 

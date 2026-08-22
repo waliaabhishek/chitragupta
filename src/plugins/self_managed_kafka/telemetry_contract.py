@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from plugins.self_managed_kafka.principal_attribution import PrincipalDirectionEvaluation
 
 
 class MetricsScopeStatus(StrEnum):
@@ -22,6 +26,7 @@ class PrincipalTelemetryStatus(StrEnum):
     INVALID = "invalid"
     TRANSIENT_FAILURE = "transient_failure"
     POLICY_ONLY_CONFIGURED = "policy_only_configured"
+    UNAVAILABLE = "unavailable"
 
 
 SMK_DETAIL_PRINCIPAL_TELEMETRY_NOT_OBSERVED = "principal_telemetry_not_observed"
@@ -47,3 +52,5 @@ class PrincipalTelemetryEvidence:
     status: PrincipalTelemetryStatus
     detail: str
     quota_scopes: frozenset[str] = frozenset()
+    ingress: PrincipalDirectionEvaluation | None = None
+    egress: PrincipalDirectionEvaluation | None = None

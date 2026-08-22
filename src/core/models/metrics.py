@@ -28,3 +28,5 @@ class MetricRow:
     metric_key: str
     value: float
     labels: dict[str, str] = field(default_factory=dict)
+    source_value: str | None = None
+    source_series: tuple[tuple[str, str], ...] | None = None

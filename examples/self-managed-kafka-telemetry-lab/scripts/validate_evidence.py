@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 import argparse
+import datetime as datetime_module
 import json
 import math
 import re
 import sys
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
-from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import yaml
+
+from core.models import MetricRow
+from plugins.self_managed_kafka.principal_attribution import (
+    PrincipalAttributionState,
+    PrincipalDirectionEvaluation,
+    allocate_principal_money,
+    allocate_static_even,
+    evaluate_quota_direction,
+)
 
 LAB_DIR = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = LAB_DIR / "contracts" / "metric-contract.yaml"
@@ -821,86 +831,73 @@ def _valid_quota_labels(metric: dict[str, str], selector: dict[str, str], quota_
     return False
 
 
-def _direction_state(
-    complete: bool,
-    total_weight: Decimal,
-    client_only_weight: Decimal,
-    structural_invalid: bool,
-) -> str:
-    if structural_invalid or not complete:
-        return "unavailable"
-    if total_weight == 0:
-        return "zero_usage"
-    return "degraded" if client_only_weight > 0 else "ready"
-
-
-def _quantized_amount(value: Decimal, quantum: Decimal) -> Decimal:
-    return value.quantize(quantum, rounding=ROUND_DOWN)
-
-
-def _direction_money(
-    state: str,
+def _principal_money_artifact(
+    evaluation: PrincipalDirectionEvaluation,
     pool: Decimal,
-    weights_by_user: dict[str, Decimal],
-    client_only_weight: Decimal,
-    total_weight: Decimal,
-    owners: dict[str, str],
-    default_owner: str,
     quantum: Decimal,
 ) -> dict[str, Any]:
-    if state == "unavailable" or state == "zero_usage":
+    """Project the shared production money result into the lab artifact schema."""
+    allocation = allocate_principal_money(evaluation, pool=pool, quantum=quantum)
+    if evaluation.state not in {PrincipalAttributionState.READY, PrincipalAttributionState.DEGRADED}:
         return {
             "users": [],
             "client_only": {
-                "weight": _source_number(client_only_weight),
+                "weight": _source_number(evaluation.client_only_weight),
                 "raw_amount": "0.0000",
                 "amount": "0.0000",
             },
             "rounding_residual": "0.0000",
-            "unallocated": _source_number(pool),
-            "balance": _source_number(pool),
+            "unallocated": _source_number(allocation.client_only_amount),
+            "balance": _source_number(allocation.balance),
         }
-
-    raw_users = {identity: pool * weight / total_weight for identity, weight in weights_by_user.items()}
     users = [
         {
-            "identity": identity,
-            "owner": owners.get(identity, default_owner),
-            "weight": _source_number(weight),
-            "raw_amount": _source_number(raw_users[identity]),
-            "amount": _source_number(_quantized_amount(raw_users[identity], quantum)),
+            "identity": weight.identity_id,
+            "owner": weight.team,
+            "weight": _source_number(weight.weight),
+            "raw_amount": _source_number(pool * weight.weight / evaluation.total_weight),
+            "amount": _source_number(amount),
         }
-        for identity, weight in sorted(weights_by_user.items())
+        for weight, amount in allocation.user_amounts
     ]
-    raw_client_only = pool * client_only_weight / total_weight
-    client_amount = _quantized_amount(raw_client_only, quantum)
-    user_amount = sum((Decimal(row["amount"]) for row in users), Decimal(0))
-    rounding_residual = pool - user_amount - client_amount
-    if rounding_residual < 0:
-        return {
-            "users": [],
-            "client_only": {
-                "weight": _source_number(client_only_weight),
-                "raw_amount": "0.0000",
-                "amount": "0.0000",
-            },
-            "rounding_residual": _source_number(pool),
-            "unallocated": _source_number(pool),
-            "balance": _source_number(pool),
-            "structural_invalid": True,
-        }
-    unallocated = client_amount + rounding_residual
+    raw_client_only = pool * evaluation.client_only_weight / evaluation.total_weight
+    unallocated = allocation.client_only_amount + allocation.rounding_residual
     return {
         "users": users,
         "client_only": {
-            "weight": _source_number(client_only_weight),
+            "weight": _source_number(evaluation.client_only_weight),
             "raw_amount": _source_number(raw_client_only),
-            "amount": _source_number(client_amount),
+            "amount": _source_number(allocation.client_only_amount),
         },
-        "rounding_residual": _source_number(rounding_residual),
+        "rounding_residual": _source_number(allocation.rounding_residual),
         "unallocated": _source_number(unallocated),
-        "balance": _source_number(user_amount + unallocated),
+        "balance": _source_number(allocation.balance),
     }
+
+
+def _quota_metric_rows(results: list[dict[str, Any]], quota_type: str) -> list[MetricRow]:
+    """Adapt raw Prometheus matrix samples for the shared production evaluator."""
+    rows: list[MetricRow] = []
+    for result in results:
+        metric = result["metric"]
+        assert isinstance(metric, dict)
+        labels = {str(key): str(value) for key, value in metric.items()}
+        source_series = tuple(sorted(labels.items()))
+        for raw_timestamp, raw_value in result["values"]:
+            timestamp = _decimal_from_source(raw_timestamp)
+            value = _decimal_from_source(raw_value)
+            assert timestamp is not None and value is not None
+            rows.append(
+                MetricRow(
+                    timestamp=datetime_module.datetime.fromtimestamp(float(timestamp), tz=UTC),
+                    metric_key="quota_byte_rate",
+                    value=float(value),
+                    labels=labels,
+                    source_value=str(raw_value),
+                    source_series=source_series,
+                )
+            )
+    return rows
 
 
 def _sampling_resolution(queries: dict[str, Any], window: dict[str, Any], contract: dict[str, Any]) -> dict[str, Any]:
@@ -969,16 +966,17 @@ def _unavailable_direction(
     pool = _decimal_from_source(contract["demonstration_pools"][direction])
     assert pool is not None
     ownership = contract["identity"]["ownership"]
-    rows = _direction_money(
-        "unavailable",
-        pool,
-        {},
-        Decimal(0),
-        Decimal(0),
-        {str(key): str(value) for key, value in ownership["mappings"].items()},
-        str(ownership["default_owner"]),
-        Decimal(contract["money"]["quantum"]),
+    evaluation = evaluate_quota_direction(
+        (),
+        direction=cast("Literal['ingress', 'egress']", direction),
+        start=datetime_module.datetime.fromtimestamp(int(window["start_timestamp"]), tz=UTC),
+        end=datetime_module.datetime.fromtimestamp(int(window["end_timestamp"]), tz=UTC),
+        scrape_interval=timedelta(seconds=int(window["scrape_interval_seconds"])),
+        max_gap=timedelta(seconds=int(window["max_gap_seconds"])),
+        principal_to_team={str(key): str(value) for key, value in ownership["mappings"].items()},
+        default_team=str(ownership["default_owner"]),
     )
+    rows = _principal_money_artifact(evaluation, pool, Decimal(contract["money"]["quantum"]))
     return {
         "logical_billing_interval": contract["logical_billing_interval"],
         "source_membership": contract["provider_source_membership"],
@@ -1046,10 +1044,6 @@ def _principal_direction(
     max_gap = int(window["max_gap_seconds"])
     selector = {str(key): str(value) for key, value in window["selector"].items()}
     quota_analyses: list[dict[str, Any]] = []
-    weights_by_user: dict[str, Decimal] = {}
-    client_only_weight = Decimal(0)
-    structural_invalid = False
-    quota_identities: set[tuple[str, str, str, str]] = set()
 
     for result in quota_results:
         metric = result.get("metric")
@@ -1090,30 +1084,7 @@ def _principal_direction(
                 configuration_complete=configuration_complete,
                 target_complete=target_complete,
             ), failure
-        identity_key = (
-            labels["quota_scope"],
-            labels["user"],
-            labels["client_id"],
-            labels.get("broker", ""),
-        )
-        if identity_key in quota_identities:
-            structural_invalid = True
-        quota_identities.add(identity_key)
-        weight = analysis["integrated_quantity"]
-        if labels["quota_scope"] == "client-id":
-            client_only_weight += weight
-        elif weight > 0:
-            identity = f"{contract['identity']['canonical_prefix']}{labels['user']}"
-            weights_by_user[identity] = weights_by_user.get(identity, Decimal(0)) + weight
-
     quota_summary = _source_summary(quota_analyses)
-    samples_complete = bool(quota_analyses) and quota_summary["complete"]
-    identity_complete = not structural_invalid
-    complete = configuration_complete and target_complete and samples_complete and identity_complete
-    user_weight = sum(weights_by_user.values(), Decimal(0))
-    total_weight = user_weight + client_only_weight
-    state = _direction_state(complete, total_weight, client_only_weight, structural_invalid)
-
     money = contract["money"]
     quantum = _decimal_from_source(money.get("quantum"))
     if quantum is None or quantum <= 0:
@@ -1131,22 +1102,24 @@ def _principal_direction(
         )
     ownership = contract["identity"]["ownership"]
     owners = {str(key): str(value) for key, value in ownership["mappings"].items()}
-    rows = _direction_money(
-        state,
-        pool_amount,
-        weights_by_user,
-        client_only_weight,
-        total_weight,
-        owners,
-        str(ownership["default_owner"]),
-        quantum,
+    evaluation = evaluate_quota_direction(
+        _quota_metric_rows(quota_results, quota_type),
+        direction=cast("Literal['ingress', 'egress']", direction),
+        start=datetime_module.datetime.fromtimestamp(start, tz=UTC),
+        end=datetime_module.datetime.fromtimestamp(end, tz=UTC),
+        scrape_interval=timedelta(seconds=int(window["scrape_interval_seconds"])),
+        max_gap=timedelta(seconds=max_gap),
+        principal_to_team=owners,
+        default_team=str(ownership["default_owner"]),
     )
-    if rows.pop("structural_invalid", False):
-        return None, Failure(
-            "principal_reconciliation",
-            "principal money reconciliation produced a negative rounding residual",
-            "principal-allocation-demonstration.json",
-        )
+    samples_complete = evaluation.coverage_complete
+    identity_complete = evaluation.coverage_complete
+    complete = configuration_complete and target_complete and samples_complete and identity_complete
+    state = evaluation.state.value
+    rows = _principal_money_artifact(evaluation, pool_amount, quantum)
+    user_weight = sum((weight.weight for weight in evaluation.user_weights), Decimal(0))
+    client_only_weight = evaluation.client_only_weight
+    total_weight = evaluation.total_weight
     return {
         "logical_billing_interval": contract["logical_billing_interval"],
         "source_membership": contract["provider_source_membership"],
@@ -1187,14 +1160,15 @@ def _fixed_category_results(contract: dict[str, Any]) -> dict[str, dict[str, Any
             and identities
             and all(isinstance(identity, str) and identity for identity in identities)
         ):
-            sorted_identities = sorted(str(identity) for identity in identities)
-            raw_amount = pool / Decimal(len(sorted_identities))
+            allocation = allocate_static_even(
+                identities=[str(identity) for identity in identities],
+                pool=pool,
+                quantum=quantum,
+            )
             users = [
-                {"identity": identity, "amount": _source_number(_quantized_amount(raw_amount, quantum))}
-                for identity in sorted_identities
+                {"identity": weight.identity_id, "amount": _source_number(amount)}
+                for weight, amount in allocation.user_amounts
             ]
-            allocated = sum((Decimal(user["amount"]) for user in users), Decimal(0))
-            rounding_residual = pool - allocated
             results[category] = {
                 "state": "policy_only",
                 "policy": policy,
@@ -1202,9 +1176,9 @@ def _fixed_category_results(contract: dict[str, Any]) -> dict[str, dict[str, Any
                 "measured_usage": False,
                 "users": users,
                 "pool": _source_number(pool),
-                "rounding_residual": _source_number(rounding_residual),
-                "unallocated": _source_number(rounding_residual),
-                "balance": _source_number(allocated + rounding_residual),
+                "rounding_residual": _source_number(allocation.rounding_residual),
+                "unallocated": _source_number(allocation.rounding_residual),
+                "balance": _source_number(allocation.balance),
             }
             continue
         results[category] = {

@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
+from core.api.chargeback_serialization import chargeback_public_metadata
 from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import (
     AllocationIssueResponse,
@@ -88,7 +89,7 @@ async def list_chargebacks(
                 allocation_method=c.allocation_method,
                 allocation_detail=c.allocation_detail,
                 tags=c.tags,
-                metadata=c.metadata,
+                metadata=chargeback_public_metadata(c),
             )
             for c in items
         ],

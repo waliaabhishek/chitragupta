@@ -169,16 +169,32 @@ tenants:
         # auth_type: bearer
         # bearer_token: "${PROMETHEUS_TOKEN}"
 
+      # ── Quota-backed principal attribution (optional) ───────────────────────
+      # Off by default. When enabled, Produce and Fetch quota gauges allocate the
+      # network pools separately. Scrape interval and maximum gap must match your
+      # Prometheus operation. Compute and storage remain fixed-policy pools.
+      # principal_attribution:
+      #   enabled: true
+      #   scrape_interval_seconds: 30
+      #   max_gap_seconds: 90
+      #   compute_policy: unattributed  # or static_even_v1
+      #   storage_policy: unattributed  # or static_even_v1
+
       # ── Identity source ────────────────────────────────────────────────────
-      # Quota telemetry is evidence about principal identity; it does not derive
-      # usage-weighted allocations. Static identities are the visible policy set.
-      # 'prometheus': record quota-telemetry evidence only.
-      # 'static': allocate across static_identities with measured_usage=false.
-      # 'both': retain static policy allocation and record quota evidence.
+      # Static identities are used by static allocation and, when attribution is
+      # enabled, by the optional static_even_v1 compute/storage policy.
+      # Use prometheus or both when enabling principal_attribution.
       identity_source:
         source: static
 
-        # static_identities: visible policy identities used by static and both.
+        # Maps quota-derived canonical IDs, such as User:service-account, to a
+        # team snapshot. Unmapped measured users use default_team (UNASSIGNED).
+        # principal_to_team:
+        #   "User:service-account": data-platform
+        # default_team: UNASSIGNED
+
+        # static_identities: policy identities used by static and both, and by
+        # static_even_v1 when principal attribution is enabled.
         static_identities:
           - identity_id: platform-team
             identity_type: team

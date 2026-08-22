@@ -59,6 +59,42 @@ class TestExportChargebacks:
         assert "timestamp" in header
         assert "identity_id" in header
 
+    def test_export_requested_metadata_projects_persisted_principal_team_only(
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+    ) -> None:
+        with in_memory_backend.create_unit_of_work() as uow:
+            uow.chargebacks.upsert(
+                ChargebackRow(
+                    ecosystem="test-eco",
+                    tenant_id="test-tenant",
+                    timestamp=datetime(2026, 2, 15, tzinfo=UTC),
+                    resource_id="cluster-1",
+                    product_category="kafka",
+                    product_type="SELF_KAFKA_NETWORK_EGRESS",
+                    identity_id="User:alice",
+                    cost_type=CostType.USAGE,
+                    amount=Decimal("10.0000"),
+                    allocation_method="principal_quota_degraded_v1",
+                    allocation_detail="usage_ratio_allocation",
+                    tags={},
+                    metadata={"transient": "value"},
+                    principal_team="team-data",
+                )
+            )
+            uow.commit()
+
+        response = app_with_backend.post(
+            "/api/v1/tenants/test-tenant/export",
+            json={
+                "start_date": "2026-02-01",
+                "end_date": "2026-02-28",
+                "columns": ["identity_id", "metadata"],
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.text.strip().splitlines() == ["identity_id,metadata", "User:alice,{'team': 'team-data'}"]
+
     def test_export_with_data_never_leaks_focus_preview_financial_columns(
         self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
     ) -> None:

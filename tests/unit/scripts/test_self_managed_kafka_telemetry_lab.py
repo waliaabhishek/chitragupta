@@ -566,6 +566,15 @@ def _load_validator_module(lab_dir: Path = LAB_DIR) -> Any:
     return module
 
 
+def test_principal_validator_imports_the_production_quota_evaluator_instead_of_owning_parallel_math() -> None:
+    source = _read_text(LAB_DIR / "scripts" / "validate_evidence.py")
+
+    assert "plugins.self_managed_kafka.principal_attribution" in source
+    assert "evaluate_quota_direction" in source
+    assert "allocate_principal_money" in source
+    assert "allocate_static_even" in source
+
+
 def test_lab_shell_has_valid_bash_syntax() -> None:
     lab_shell = _assert_exists(LAB_DIR / "scripts" / "lab.sh")
     result = subprocess.run(["bash", "-n", str(lab_shell)], capture_output=True, text=True)
@@ -2399,6 +2408,21 @@ def test_principal_direction_marks_duplicate_quota_identity_evidence_unavailable
     assert ingress["unallocated"] == ingress["pool"]
 
 
+def test_quota_matrix_adapter_reuses_one_source_series_per_prometheus_series() -> None:
+    validator = _load_validator_module()
+    results = [
+        {
+            "metric": _quota_labels("cluster-a", "Produce", "user"),
+            "values": [[1787097600, "1.0"], [1787097660, "1.0"]],
+        }
+    ]
+
+    rows = validator._quota_metric_rows(results, "Produce")
+
+    assert len(rows) == 2
+    assert rows[0].source_series is rows[1].source_series
+
+
 @pytest.mark.parametrize(
     ("failure", "category", "message"),
     [
@@ -3040,28 +3064,12 @@ def test_principal_validator_rejects_invalid_monetary_pool_values(tmp_path: Path
     assert not (evidence / "principal-allocation-demonstration.json").exists()
 
 
-def test_principal_direction_money_marks_a_negative_residual_as_structurally_invalid() -> None:
+def test_principal_validator_uses_no_duplicate_direction_or_money_helpers() -> None:
     validator = _load_validator_module()
 
-    rows = validator._direction_money(
-        "degraded",
-        Decimal("12.0000"),
-        {"User:one": Decimal("12")},
-        Decimal("12"),
-        Decimal("12"),
-        {},
-        "UNASSIGNED",
-        Decimal("0.0001"),
-    )
-
-    assert rows == {
-        "users": [],
-        "client_only": {"weight": "12", "raw_amount": "0.0000", "amount": "0.0000"},
-        "rounding_residual": "12.0000",
-        "unallocated": "12.0000",
-        "balance": "12.0000",
-        "structural_invalid": True,
-    }
+    assert not hasattr(validator, "_direction_state")
+    assert not hasattr(validator, "_quantized_amount")
+    assert not hasattr(validator, "_direction_money")
 
 
 def test_principal_validator_reports_directions_independently_and_uses_worst_cluster_day_state(tmp_path: Path) -> None:

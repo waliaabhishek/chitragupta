@@ -6,9 +6,13 @@ from collections.abc import Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal
+from typing import cast as type_cast
 
 from cachetools import TTLCache
-from sqlalchemy import case, cast, delete, func, literal, or_, update
+from sqlalchemy import Table, case, cast, delete, func, literal, or_, update
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import QueryableAttribute, defer
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.types import String
 from sqlmodel import Session, col, select
 
@@ -782,9 +786,28 @@ _ALLOCATION_SUCCESS_CODES = frozenset(
 
 
 class SQLModelChargebackRepository:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, *, principal_team_column_available: bool = True) -> None:
         self._session = session
         self._dimension_cache: dict[tuple[str | None, ...], ChargebackDimensionTable] = {}
+        self._principal_team_column_available = principal_team_column_available
+
+    def set_principal_team_column_available(self, available: bool) -> None:
+        """Set the backend-resolved chargeback fact schema capability."""
+        self._principal_team_column_available = available
+
+    @staticmethod
+    def _legacy_fact_table() -> Table:
+        """Return the mapped fact table without reflecting database metadata."""
+        return type_cast("Table", sa_inspect(ChargebackFactTable).local_table)
+
+    @staticmethod
+    def _legacy_fact_values(fact: ChargebackFactTable) -> dict[str, object]:
+        return {
+            "timestamp": fact.timestamp,
+            "dimension_id": fact.dimension_id,
+            "amount": fact.amount,
+            "tags_json": fact.tags_json,
+        }
 
     def _make_dimension_key(self, row: ChargebackRow) -> tuple[str | None, ...]:
         return (
@@ -835,6 +858,17 @@ class SQLModelChargebackRepository:
         dim = self._get_or_create_dimension(row)
         assert dim.dimension_id is not None
         fact = chargeback_to_fact(row, dim.dimension_id)
+        if not self._principal_team_column_available:
+            table = self._legacy_fact_table()
+            self._session.execute(
+                delete(table).where(
+                    table.c.timestamp == fact.timestamp,
+                    table.c.dimension_id == fact.dimension_id,
+                )
+            )
+            self._session.execute(table.insert().values(self._legacy_fact_values(fact)))
+            fact.principal_team = None
+            return chargeback_to_domain(dim, fact)
         merged = self._session.merge(fact)
         return chargeback_to_domain(dim, merged)
 
@@ -847,8 +881,28 @@ class SQLModelChargebackRepository:
             fact = chargeback_to_fact(row, dim.dimension_id)
             unique_facts[(fact.timestamp, fact.dimension_id)] = fact
         if unique_facts:
-            self._session.add_all(unique_facts.values())
+            if self._principal_team_column_available:
+                self._session.add_all(unique_facts.values())
+            else:
+                table = self._legacy_fact_table()
+                values = [self._legacy_fact_values(fact) for fact in unique_facts.values()]
+                self._session.execute(table.insert(), values)
         return len(unique_facts)
+
+    def _legacy_safe_fact_query(self, statement: Any) -> Any:
+        if self._principal_team_column_available:
+            return statement
+        principal_team_attribute = type_cast(
+            "QueryableAttribute[Any]",
+            ChargebackFactTable.__dict__["principal_team"],
+        )
+        return statement.options(defer(principal_team_attribute))
+
+    def _to_domain_rows(self, results: Sequence[Any]) -> list[ChargebackRow]:
+        if not self._principal_team_column_available:
+            for _, fact in results:
+                set_committed_value(fact, "principal_team", None)
+        return [chargeback_to_domain(dim, fact) for dim, fact in results]
 
     def _query_joined(self, *where_clauses: Any) -> list[ChargebackRow]:
         """Execute a joined query on dimensions+facts. where_clauses are SQLAlchemy column elements."""
@@ -860,8 +914,9 @@ class SQLModelChargebackRepository:
             )
             .where(*where_clauses)
         )
+        stmt = self._legacy_safe_fact_query(stmt)
         results = self._session.execute(stmt).all()
-        return [chargeback_to_domain(dim, fact) for dim, fact in results]
+        return self._to_domain_rows(results)
 
     def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> list[ChargebackRow]:
         start, end = exact_utc_half_open_bounds(
@@ -1218,8 +1273,8 @@ class SQLModelChargebackRepository:
             .offset(offset)
             .limit(limit)
         )
-        results = self._session.execute(stmt).all()
-        items = [chargeback_to_domain(dim, fact) for dim, fact in results]
+        results = self._session.execute(self._legacy_safe_fact_query(stmt)).all()
+        items = self._to_domain_rows(results)
         if tags_repo is not None:
             _overlay_tags(items, tags_repo)
         return items, total
@@ -1258,8 +1313,8 @@ class SQLModelChargebackRepository:
             .where(*where)
             .execution_options(yield_per=batch_size)
         )
-        for partition in self._session.execute(stmt).partitions(batch_size):
-            batch = [chargeback_to_domain(dim, fact) for dim, fact in partition]
+        for partition in self._session.execute(self._legacy_safe_fact_query(stmt)).partitions(batch_size):
+            batch = self._to_domain_rows(partition)
             if tags_repo is not None:
                 _overlay_tags(batch, tags_repo)
             yield from batch

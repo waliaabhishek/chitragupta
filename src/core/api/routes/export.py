@@ -10,6 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
+from core.api.chargeback_serialization import chargeback_public_metadata
 from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import ExportRequest  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
@@ -93,7 +94,7 @@ def _stream_csv(
             elif col_name == "tags":
                 values.append(";".join(f"{k}={v}" for k, v in row.tags.items()))
             elif col_name == "metadata":
-                values.append(str(row.metadata))
+                values.append(str(chargeback_public_metadata(row)))
             else:
                 values.append(str(getattr(row, col_name, "")))
         writer.writerow(values)

@@ -3,12 +3,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self
 
+from sqlalchemy import inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
 from core.logging_context import safe_exception_context, safe_log_context
 from core.storage.backends.sqlmodel.engine import get_or_create_engine, get_or_create_read_only_engine
 from core.storage.backends.sqlmodel.repositories import (
+    SQLModelChargebackRepository,
     SQLModelEmissionRepository,
     SQLModelEntityTagRepository,
     SQLModelGraphRepository,
@@ -55,11 +57,13 @@ class SQLModelUnitOfWork:
         storage_module: StorageModule,
         *,
         preview_evidence_enabled: bool = False,
+        principal_team_column_available: bool = True,
     ) -> None:
         self._engine = get_or_create_engine(connection_string)
         self._storage_module = storage_module
         self._session: Session | None = None
         self.preview_evidence_enabled = preview_evidence_enabled
+        self._principal_team_column_available = principal_team_column_available
         from core.plugin.protocols import PreviewSourceAttemptFallbackStorageModule
 
         self._preview_source_fallback_module = (
@@ -89,6 +93,8 @@ class SQLModelUnitOfWork:
         self.identities = self._storage_module.create_identity_repository(self._session)
         self.billing = self._storage_module.create_billing_repository(self._session)
         self.chargebacks = self._storage_module.create_chargeback_repository(self._session)  # plugin-extensible
+        if isinstance(self.chargebacks, SQLModelChargebackRepository):
+            self.chargebacks.set_principal_team_column_available(self._principal_team_column_available)
         self.pipeline_state = SQLModelPipelineStateRepository(self._session)
         self.pipeline_runs = SQLModelPipelineRunRepository(self._session)
         self.tags = SQLModelEntityTagRepository(self._session)
@@ -151,8 +157,19 @@ class ReadOnlySQLModelUnitOfWork(SQLModelUnitOfWork):
     rather than silently acquiring a write lock at runtime.
     """
 
-    def __init__(self, connection_string: str, storage_module: StorageModule) -> None:
-        super().__init__(connection_string, storage_module, preview_evidence_enabled=False)
+    def __init__(
+        self,
+        connection_string: str,
+        storage_module: StorageModule,
+        *,
+        principal_team_column_available: bool = True,
+    ) -> None:
+        super().__init__(
+            connection_string,
+            storage_module,
+            preview_evidence_enabled=False,
+            principal_team_column_available=principal_team_column_available,
+        )
         self._engine = get_or_create_read_only_engine(connection_string)
 
     def commit(self) -> None:
@@ -251,6 +268,7 @@ class SQLModelBackend:
         self._engine = get_or_create_engine(connection_string)
         self._ro_engine = get_or_create_read_only_engine(connection_string)
         self._tables_created = False
+        self._principal_team_column_available = use_migrations
         from core.preview.storage_availability import (
             PreviewEvidenceAvailability,
             PreviewEvidenceAvailabilityState,
@@ -263,10 +281,15 @@ class SQLModelBackend:
             self._connection_string,
             self._storage_module,
             preview_evidence_enabled=self._focus_preview_enabled,
+            principal_team_column_available=self._principal_team_column_available,
         )
 
     def create_read_only_unit_of_work(self) -> ReadOnlySQLModelUnitOfWork:
-        return ReadOnlySQLModelUnitOfWork(self._connection_string, self._storage_module)
+        return ReadOnlySQLModelUnitOfWork(
+            self._connection_string,
+            self._storage_module,
+            principal_team_column_available=self._principal_team_column_available,
+        )
 
     def create_preview_write_unit_of_work(self) -> PreviewWriteSQLModelUnitOfWork:
         return PreviewWriteSQLModelUnitOfWork(self._connection_string)
@@ -351,6 +374,8 @@ class SQLModelBackend:
                     retryable=False,
                 ),
             )
+            columns = inspect(self._engine).get_columns("chargeback_facts")
+            self._principal_team_column_available = any(column["name"] == "principal_team" for column in columns)
         self._prepare_preview_evidence(issues)
         self._tables_created = True
 
@@ -386,7 +411,7 @@ class SQLModelBackend:
             else:
                 collector.record(
                     PreviewEvidenceIssue(
-                        revision="033",
+                        revision="034",
                         kind=PreviewEvidenceIssueKind.CAPABILITY_MISSING,
                         error_type="PreviewEvidenceStorageModule",
                     )
@@ -450,7 +475,7 @@ class SQLModelBackend:
             return
         if not isinstance(self._storage_module, PreviewEvidenceStorageModule):
             issue = PreviewEvidenceIssue(
-                revision="033",
+                revision="034",
                 kind=PreviewEvidenceIssueKind.CAPABILITY_MISSING,
                 error_type="PreviewEvidenceStorageModule",
             )
@@ -466,7 +491,7 @@ class SQLModelBackend:
             with self._engine.begin() as connection:
                 self._storage_module.prepare_preview_evidence_migration(
                     connection,
-                    target_revision="033",
+                    target_revision="034",
                 )
         except (PreviewEvidenceSchemaError, SQLAlchemyError) as exc:
             issue_kind = (
@@ -476,13 +501,13 @@ class SQLModelBackend:
             )
             issues.append(
                 PreviewEvidenceIssue(
-                    revision="033",
+                    revision="034",
                     kind=issue_kind,
                     error_type=type(exc).__name__,
                 )
             )
             logger.warning(
-                "preview_evidence_prepare_unavailable revision=033 issue_kind=%s%s",
+                "preview_evidence_prepare_unavailable revision=034 issue_kind=%s%s",
                 issue_kind.value,
                 safe_log_context(
                     stage="preview_evidence_prepare",

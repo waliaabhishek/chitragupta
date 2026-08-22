@@ -76,6 +76,7 @@ class ChargebackRow:
     tags: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     dimension_id: int | None = None
+    principal_team: str | None = None
 
     __csv_fields__: ClassVar[tuple[str, ...]] = (
         "ecosystem",

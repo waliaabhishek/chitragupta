@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING
 
 from core.engine.allocation import AllocationResult
@@ -24,6 +25,10 @@ if TYPE_CHECKING:
     from core.engine.allocation import AllocationContext
 
 logger = logging.getLogger(__name__)
+
+PRINCIPAL_CLIENT_ONLY_RESIDUAL_DETAIL = "principal_client_only_residual"
+PRINCIPAL_ROUNDING_RESIDUAL_DETAIL = "principal_rounding_residual"
+PRINCIPAL_POLICY_UNATTRIBUTED_DETAIL = "principal_policy_unattributed"
 
 
 @dataclass(frozen=True)
@@ -77,3 +82,154 @@ class StaticPolicyAllocationModel:
 SMK_INGRESS_MODEL = StaticPolicyAllocationModel()
 SMK_EGRESS_MODEL = StaticPolicyAllocationModel()
 SMK_INFRA_MODEL = StaticPolicyAllocationModel()
+
+
+@dataclass(frozen=True)
+class QuotaPrincipalAllocationModel:
+    """Allocate one network pool from already-evaluated quota evidence."""
+
+    direction: str
+
+    def __call__(self, ctx: AllocationContext) -> AllocationResult:
+        from plugins.self_managed_kafka.principal_attribution import (
+            PrincipalAttributionState,
+            allocate_principal_money,
+        )
+
+        evidence = ctx.identities.context.get("principal_telemetry_evidence")
+        evaluation = getattr(evidence, self.direction, None)
+        pool = ctx.split_amount.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        if evaluation is None:
+            return AllocationResult(
+                rows=[
+                    make_row(
+                        ctx,
+                        identity_id="UNALLOCATED",
+                        cost_type=CostType.SHARED,
+                        amount=pool,
+                        allocation_method="principal_quota_unavailable_v1",
+                        allocation_detail=AllocationDetail.METRICS_FETCH_FAILED,
+                    )
+                ]
+            )
+        allocation = allocate_principal_money(evaluation, pool=pool)
+        method = {
+            PrincipalAttributionState.READY: "principal_quota_ready_v1",
+            PrincipalAttributionState.DEGRADED: "principal_quota_degraded_v1",
+            PrincipalAttributionState.UNAVAILABLE: "principal_quota_unavailable_v1",
+            PrincipalAttributionState.ZERO_USAGE: "principal_quota_zero_usage_v1",
+        }[evaluation.state]
+        if evaluation.state in {PrincipalAttributionState.READY, PrincipalAttributionState.DEGRADED}:
+            rows = []
+            for weight, amount in allocation.user_amounts:
+                row = make_row(
+                    ctx,
+                    identity_id=weight.identity_id,
+                    cost_type=CostType.USAGE,
+                    amount=amount,
+                    allocation_method=method,
+                    allocation_detail=AllocationDetail.USAGE_RATIO_ALLOCATION,
+                )
+                row.principal_team = weight.team
+                rows.append(row)
+            if evaluation.state is PrincipalAttributionState.DEGRADED and evaluation.client_only_weight > Decimal("0"):
+                rows.append(
+                    make_row(
+                        ctx,
+                        identity_id="UNALLOCATED",
+                        cost_type=CostType.SHARED,
+                        amount=allocation.client_only_amount,
+                        allocation_method=method,
+                        allocation_detail=PRINCIPAL_CLIENT_ONLY_RESIDUAL_DETAIL,
+                    )
+                )
+            if allocation.rounding_residual > Decimal("0"):
+                rows.append(
+                    make_row(
+                        ctx,
+                        identity_id="UNALLOCATED",
+                        cost_type=CostType.SHARED,
+                        amount=allocation.rounding_residual,
+                        allocation_method=method,
+                        allocation_detail=PRINCIPAL_ROUNDING_RESIDUAL_DETAIL,
+                    )
+                )
+            return AllocationResult(rows=rows)
+        detail = (
+            "principal_zero_usage" if evaluation.state is PrincipalAttributionState.ZERO_USAGE else evaluation.detail
+        )
+        return AllocationResult(
+            rows=[
+                make_row(
+                    ctx,
+                    identity_id="UNALLOCATED",
+                    cost_type=CostType.SHARED,
+                    amount=allocation.client_only_amount,
+                    allocation_method=method,
+                    allocation_detail=detail,
+                )
+            ]
+        )
+
+
+@dataclass(frozen=True)
+class FixedPrincipalPolicyAllocationModel:
+    """Apply one explicitly configured fixed policy without measured ownership."""
+
+    policy: str
+    identities: tuple[str, ...] = ()
+
+    def __call__(self, ctx: AllocationContext) -> AllocationResult:
+        from plugins.self_managed_kafka.principal_attribution import allocate_static_even
+
+        pool = ctx.split_amount.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        if self.policy != "static_even_v1":
+            return AllocationResult(
+                rows=[
+                    make_row(
+                        ctx,
+                        identity_id="UNALLOCATED",
+                        cost_type=CostType.SHARED,
+                        amount=pool,
+                        allocation_method="principal_unattributed_v1",
+                        allocation_detail=PRINCIPAL_POLICY_UNATTRIBUTED_DETAIL,
+                    )
+                ]
+            )
+        allocation = allocate_static_even(identities=self.identities, pool=pool)
+        if not allocation.user_amounts:
+            return AllocationResult(
+                rows=[
+                    make_row(
+                        ctx,
+                        identity_id="UNALLOCATED",
+                        cost_type=CostType.SHARED,
+                        amount=allocation.client_only_amount,
+                        allocation_method="principal_unattributed_v1",
+                        allocation_detail=PRINCIPAL_POLICY_UNATTRIBUTED_DETAIL,
+                    )
+                ]
+            )
+        rows = [
+            make_row(
+                ctx,
+                identity_id=weight.identity_id,
+                cost_type=CostType.SHARED,
+                amount=amount,
+                allocation_method="static_even_v1",
+                allocation_detail=AllocationDetail.EVEN_SPLIT_ALLOCATION,
+            )
+            for weight, amount in allocation.user_amounts
+        ]
+        if allocation.rounding_residual > Decimal("0"):
+            rows.append(
+                make_row(
+                    ctx,
+                    identity_id="UNALLOCATED",
+                    cost_type=CostType.SHARED,
+                    amount=allocation.rounding_residual,
+                    allocation_method="static_even_v1",
+                    allocation_detail=PRINCIPAL_ROUNDING_RESIDUAL_DETAIL,
+                )
+            )
+        return AllocationResult(rows=rows)

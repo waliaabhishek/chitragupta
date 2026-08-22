@@ -3,19 +3,28 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from math import nan
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from core.metrics.protocol import MetricsQueryError
-from core.models import MetricRow
+from core.models import MetricQuery, MetricRow
+
+if TYPE_CHECKING:
+    from core.storage.interface import UnitOfWork
 
 
-def _settings(*, identity_source: dict[str, object] | None = None) -> dict[str, object]:
-    return {
+def _settings(
+    *,
+    identity_source: dict[str, object] | None = None,
+    principal_attribution: dict[str, object] | None = None,
+) -> dict[str, object]:
+    settings: dict[str, object] = {
         "cluster_id": "billing-cluster-a",
         "metrics_identifier": "kraft-a-001",
         "broker_count": 3,
@@ -28,6 +37,9 @@ def _settings(*, identity_source: dict[str, object] | None = None) -> dict[str, 
         "identity_source": identity_source or {"source": "prometheus"},
         "metrics": {"url": "http://prometheus:9090"},
     }
+    if principal_attribution is not None:
+        settings["principal_attribution"] = principal_attribution
+    return settings
 
 
 def _quota_row(
@@ -63,6 +75,59 @@ def _handler(*, identity_source: dict[str, object] | None = None) -> tuple[objec
     return SelfManagedKafkaHandler(config, source), source
 
 
+def _complete_direction_rows(start: datetime, quota_type: str) -> list[MetricRow]:
+    return [
+        MetricRow(
+            timestamp=start + timedelta(hours=offset),
+            metric_key="quota_byte_rate",
+            value=1.0,
+            labels={
+                "kafka_cluster_id": "kraft-a-001",
+                "broker": "1",
+                "quota_type": quota_type,
+                "quota_scope": "user",
+                "user": "alice",
+                "client_id": "not_applicable",
+            },
+        )
+        for offset in range(25)
+    ]
+
+
+class _MetricsSource:
+    def __init__(
+        self,
+        response: Callable[
+            [Sequence[MetricQuery], datetime, datetime, timedelta, str | None],
+            dict[str, list[MetricRow]],
+        ],
+    ) -> None:
+        self._response = response
+        self.calls: list[tuple[tuple[MetricQuery, ...], datetime, datetime, timedelta, str | None]] = []
+
+    def close(self) -> None:
+        pass
+
+    def query(
+        self,
+        queries: Sequence[MetricQuery],
+        start: datetime,
+        end: datetime,
+        step: timedelta = timedelta(hours=1),
+        resource_id_filter: str | None = None,
+    ) -> dict[str, list[MetricRow]]:
+        definitions = tuple(queries)
+        self.calls.append((definitions, start, end, step, resource_id_filter))
+        return self._response(definitions, start, end, step, resource_id_filter)
+
+
+def _unit_of_work() -> UnitOfWork:
+    from core.storage.backends.sqlmodel.unit_of_work import SQLModelUnitOfWork
+    from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
+
+    return SQLModelUnitOfWork("sqlite://", SelfManagedKafkaStorageModule())
+
+
 def _healthy_target_rows(query: object, query_kwargs: dict[str, object]) -> list[MetricRow]:
     start = query_kwargs["start"]
     end = query_kwargs["end"]
@@ -94,6 +159,147 @@ def _healthy_target_rows(query: object, query_kwargs: dict[str, object]) -> list
 
 
 class TestPrincipalTelemetryEvidence:
+    @pytest.mark.parametrize("identity_source", [{"source": "prometheus"}, {"source": "both"}])
+    @pytest.mark.parametrize("principal_attribution", [None, {"enabled": False}])
+    def test_disabled_and_omitted_preserve_readiness_probe(
+        self,
+        identity_source: dict[str, object],
+        principal_attribution: dict[str, object] | None,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+
+        source = _MetricsSource(
+            lambda *_: {
+                "quota_byte_rate": [_quota_row("quota_byte_rate", 8192.0)],
+                "quota_throttle_time_ms": [_quota_row("quota_throttle_time_ms", 0.0)],
+            }
+        )
+        config = SelfManagedKafkaConfig.from_plugin_settings(
+            _settings(
+                identity_source=identity_source,
+                principal_attribution=principal_attribution,
+            )
+        )
+        handler = SelfManagedKafkaHandler(config, source)
+
+        resolution = handler.resolve_identities(
+            "tenant-1",
+            "billing-cluster-a",
+            datetime(2026, 8, 1, tzinfo=UTC),
+            timedelta(days=1),
+            None,
+            _unit_of_work(),
+        )
+
+        queries = source.calls[0][0]
+        assert [query.key for query in queries] == ["quota_byte_rate", "quota_throttle_time_ms"]
+        assert resolution.context["principal_attribution_status"] == "observed"
+        assert resolution.context["principal_attribution_detail"] == "quota_identity_observed"
+        assert resolution.context["measured_usage"] is False
+
+    def test_enabled_scope_block_suppresses_quota_acquisition_before_any_metrics_query(self) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+        from plugins.self_managed_kafka.telemetry_contract import MetricsScopeEvidence, MetricsScopeStatus
+
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        scope = MetricsScopeEvidence(
+            label="kafka_cluster_id",
+            identifier="kraft-a-001",
+            window_start=start,
+            window_end=start + timedelta(days=1),
+            status=MetricsScopeStatus.TARGET_DOWN,
+            detail="target down",
+        )
+        source = _MetricsSource(lambda *_: (_ for _ in ()).throw(AssertionError("scope block queried Prometheus")))
+        config = SelfManagedKafkaConfig.from_plugin_settings(
+            _settings(
+                identity_source={"source": "both"},
+                principal_attribution={"enabled": True, "scrape_interval_seconds": 5, "max_gap_seconds": 10},
+            )
+        )
+        handler = SelfManagedKafkaHandler(config, source, metrics_scope_evidence=lambda *_: scope)
+
+        resolution = handler.resolve_identities(
+            "tenant-1",
+            "billing-cluster-a",
+            start,
+            timedelta(days=1),
+            None,
+            _unit_of_work(),
+        )
+
+        assert resolution.context["principal_attribution_status"] == "unavailable"
+        assert resolution.context["principal_attribution_detail"] == "target_scope_blocked"
+        assert source.calls == []
+
+    @pytest.mark.parametrize(
+        ("failed_quota_type", "surviving_quota_type", "expected_direction"),
+        [
+            ("Produce", "Fetch", "egress"),
+            ("Fetch", "Produce", "ingress"),
+        ],
+    )
+    def test_one_direction_query_failure_does_not_discard_the_other_direction(
+        self,
+        failed_quota_type: str,
+        surviving_quota_type: str,
+        expected_direction: str,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+        from plugins.self_managed_kafka.telemetry_contract import MetricsScopeEvidence, MetricsScopeStatus
+
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+
+        def query(
+            queries: Sequence[MetricQuery],
+            _start: datetime,
+            _end: datetime,
+            _step: timedelta,
+            _resource_id_filter: str | None,
+        ) -> dict[str, list[MetricRow]]:
+            assert len(queries) == 1
+            definition = queries[0]
+            if f'quota_type="{failed_quota_type}"' in definition.query_expression:
+                raise MetricsQueryError(f"{failed_quota_type} unavailable")
+            if f'quota_type="{surviving_quota_type}"' in definition.query_expression:
+                return {definition.key: _complete_direction_rows(start, surviving_quota_type)}
+            raise AssertionError(f"unexpected query {definition.query_expression}")
+
+        source = _MetricsSource(query)
+        config = SelfManagedKafkaConfig.from_plugin_settings(
+            _settings(
+                identity_source={"source": "both"},
+                principal_attribution={"enabled": True, "scrape_interval_seconds": 3600, "max_gap_seconds": 7200},
+            )
+        )
+        scope = MetricsScopeEvidence(
+            "kafka_cluster_id",
+            "kraft-a-001",
+            start,
+            start + timedelta(days=1),
+            MetricsScopeStatus.VALID,
+            "target healthy",
+        )
+        handler = SelfManagedKafkaHandler(config, source, metrics_scope_evidence=lambda *_: scope)
+
+        resolution = handler.resolve_identities(
+            "tenant-1",
+            "billing-cluster-a",
+            start,
+            timedelta(days=1),
+            None,
+            _unit_of_work(),
+        )
+
+        assert resolution.metrics_derived.ids() == frozenset({"User:alice"})
+        assert resolution.context["principal_attribution_status"] == "unavailable"
+        evidence = resolution.context["principal_telemetry_evidence"]
+        assert getattr(evidence, expected_direction).state.value == "ready"
+        assert len(source.calls) == 2
+
     @pytest.mark.parametrize(
         ("quota_scope", "user", "client_id"),
         [

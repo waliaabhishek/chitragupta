@@ -1,6 +1,6 @@
 # Self-managed Kafka telemetry lab
 
-This local-only lab proves the raw Kafka JMX to JMX Exporter to Prometheus telemetry path under authenticated traffic. It runs two independent single-node Kafka 4.3.1 KRaft clusters with deliberately overlapping names and explicit cluster identity labels. Its opt-in principal demonstrator records a bounded policy contract; it is not a production deployment template.
+This local-only lab proves the raw Kafka JMX to JMX Exporter to Prometheus telemetry path under authenticated traffic. It runs two independent single-node Kafka 4.3.1 KRaft clusters with deliberately overlapping names and explicit cluster identity labels. Its opt-in principal demonstrator validates a bounded contract; it is not a production deployment template.
 
 ## Prerequisites
 
@@ -36,7 +36,7 @@ Workloads can be controlled independently:
 ./scripts/lab.sh workload status
 ```
 
-`start` is idempotent for a running generation: it renders local configuration, starts both clusters and telemetry services, creates topics and quotas with idempotent Kafka commands, and starts continuous producers and consumers. The workload runs 8 KiB/s and 64 KiB/s steady profiles; their user-only and client-only quotas are 16 KiB/s and 128 KiB/s respectively. Only the bounded 128 KiB/s profile targets the 16 KiB/s combined user/client quota. Both clusters use the same topic, user, client ID, and consumer group names.
+`start` is idempotent for a running generation: it renders local configuration, starts both clusters and telemetry services, creates topics and quotas with idempotent Kafka commands, and starts continuous producers and consumers. The workload includes distinct user, client-only, and combined user/client quota scopes at low and high steady rates. Both clusters deliberately overlap their generated fixture names to prove that explicit cluster target labels, not names, define scope.
 
 Wait at least five minutes after `ready` before validating a five-minute rate window. Validation is fail-closed: missing metrics or labels, wrong metric types, absent quota scopes, non-positive Produce or Fetch throttling, insufficient low/high rate separation, unhealthy targets, missing cluster selectors, unexpected high-cardinality families, or stale evidence produce exit code 7 and a JSON result path.
 
@@ -54,7 +54,14 @@ An affected principal direction/cluster-day terminalizes independently; later pr
 
 For each direction, `q_i` is a valid user or user-client quota weight, `c` is a valid client-only weight, and `W=sum(q_i)+c`. The configured monetary pool `M` is allocated independently as `M*q_i/W`; the client-only share `M*c/W` remains unallocated. Invalid, incomplete, or absent evidence is unavailable. Complete `W=0` is zero usage; complete positive `W` is ready without client-only weight and degraded with it. Amounts are Decimal values rounded down to four decimal places, with the remaining fractional currency retained as an explicit rounding residual so users plus unallocated amount balance exactly.
 
-The versioned contract contains a bounded demonstration ownership mapping: `User:user-only` maps to `team-data`, and other users map to `UNASSIGNED`. A successful live demonstration requires complete ingress and egress evidence plus the configured mapped user, unmapped user, and client-only label in each direction. Retries, repeat consumption, Kafka-recorded failed Produce requests, non-throttled empty/error Fetch responses, and protocol envelope contribute when Kafka records them in the applicable quota rate. After a scope pass, the complete validated and finalized principal bundle contains:
+The versioned contract includes one mapped user, one unmapped user, and one
+client-only identity in each direction. A successful live demonstration requires
+complete ingress and egress evidence for all three. Retries, repeat consumption,
+Kafka-recorded failed Produce requests, non-throttled empty/error Fetch responses,
+and protocol envelope contribute when Kafka records them in the applicable quota
+rate. For production configuration, see the
+[Self-Managed Kafka Configuration Reference](../../docs/configuration/self-managed-reference.md#quota-backed-principal-attribution).
+After a scope pass, the complete validated and finalized principal bundle contains:
 
 - `principal-window.json`
 - `principal-scope-evidence.json`

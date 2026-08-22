@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs
 
-from core.models import CostType, MetricRow
+import pytest
+
+from core.metrics.prometheus import PrometheusConfig, PrometheusMetricsSource
+from core.metrics.protocol import MetricsQueryError
+from core.models import CostType, MetricQuery, MetricRow
 
 if TYPE_CHECKING:
-    import pytest
+    from core.storage.interface import UnitOfWork
 
 
 def _settings() -> dict[str, object]:
@@ -45,6 +52,120 @@ def _cost_metrics() -> dict[str, list[MetricRow]]:
     }
 
 
+class _QuotaBackedMetricsSource:
+    """Complete metrics-source double for the normal plugin/orchestrator path."""
+
+    def __init__(self, *, fail_first_quota_type: str | None = None) -> None:
+        self.calls: list[tuple[tuple[MetricQuery, ...], datetime, datetime, timedelta, str | None]] = []
+        self._fail_first_quota_type = fail_first_quota_type
+        self._parser = PrometheusMetricsSource(PrometheusConfig(url="http://prometheus:9090"))
+        self.parsed_quota_rows: list[MetricRow] = []
+
+    def close(self) -> None:
+        self._parser.close()
+
+    def query(
+        self,
+        queries: Sequence[MetricQuery],
+        start: datetime,
+        end: datetime,
+        step: timedelta = timedelta(hours=1),
+        resource_id_filter: str | None = None,
+    ) -> dict[str, list[MetricRow]]:
+        definitions = tuple(queries)
+        self.calls.append((definitions, start, end, step, resource_id_filter))
+        rows: dict[str, list[MetricRow]] = {}
+        for definition in definitions:
+            if definition.key == "target_up":
+                timestamps: list[datetime] = []
+                current = start
+                while current < end:
+                    timestamps.append(current)
+                    current += step
+                timestamps.append(end)
+                rows[definition.key] = [
+                    MetricRow(timestamp, definition.key, 1.0, {"kafka_cluster_id": "kraft-a-001"})
+                    for timestamp in timestamps
+                ]
+            elif definition.key in {"cluster_bytes_in", "cluster_bytes_out"}:
+                rows[definition.key] = [
+                    MetricRow(end, definition.key, 1073741824.0, {"kafka_cluster_id": "kraft-a-001"})
+                ]
+            elif definition.key == "cluster_storage_bytes":
+                rows[definition.key] = [
+                    MetricRow(
+                        start + (end - start) / 2,
+                        definition.key,
+                        1073741824.0,
+                        {"kafka_cluster_id": "kraft-a-001"},
+                    )
+                ]
+            elif definition.key in {"topic_bytes_in", "topic_bytes_out"}:
+                rows[definition.key] = [
+                    MetricRow(
+                        end,
+                        definition.key,
+                        1073741824.0,
+                        {"kafka_cluster_id": "kraft-a-001", "broker": "1", "topic": "orders"},
+                    )
+                ]
+            elif definition.key == "topic_storage_bytes":
+                rows[definition.key] = [
+                    MetricRow(
+                        start + (end - start) / 2,
+                        definition.key,
+                        1073741824.0,
+                        {"kafka_cluster_id": "kraft-a-001", "broker": "1", "topic": "orders", "partition": "0"},
+                    )
+                ]
+            elif "kafka_server_quota_byte_rate" in definition.query_expression:
+                quota_type = "Produce" if 'quota_type="Produce"' in definition.query_expression else "Fetch"
+                if self._fail_first_quota_type == quota_type:
+                    self._fail_first_quota_type = None
+                    raise MetricsQueryError(f"{quota_type} metrics unavailable")
+                logical_start = end - timedelta(days=1)
+                response = json.dumps(
+                    {
+                        "status": "success",
+                        "data": {
+                            "resultType": "matrix",
+                            "result": [
+                                {
+                                    "metric": {
+                                        "kafka_cluster_id": "kraft-a-001",
+                                        "broker": "1",
+                                        "instance": "broker-1:9404",
+                                        "quota_type": quota_type,
+                                        "quota_scope": "user",
+                                        "user": "alice",
+                                        "client_id": "not_applicable",
+                                    },
+                                    "values": [
+                                        [
+                                            (logical_start + timedelta(hours=offset)).timestamp(),
+                                            "1.0000",
+                                        ]
+                                        for offset in range(25)
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                )
+                rows[definition.key] = self._parser._parse_response(response, definition)
+                self.parsed_quota_rows.extend(rows[definition.key])
+            else:
+                rows[definition.key] = []
+        return rows
+
+
+def _unit_of_work() -> UnitOfWork:
+    from core.storage.backends.sqlmodel.unit_of_work import SQLModelUnitOfWork
+    from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
+
+    return SQLModelUnitOfWork("sqlite://", SelfManagedKafkaStorageModule())
+
+
 def test_plugin_initialization_produces_cluster_scoped_cost_construction() -> None:
     from core.plugin.protocols import ScopeGatePlugin
     from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
@@ -70,6 +191,377 @@ def test_plugin_initialization_produces_cluster_scoped_cost_construction() -> No
     assert kwargs["resource_id_filter"] == "kraft-a-001"
     assert all(query.resource_label == "kafka_cluster_id" for query in kwargs["queries"])
     assert isinstance(plugin, ScopeGatePlugin)
+
+
+def test_initialized_plugin_calculate_phase_persists_quota_backed_principal_rows_with_team_snapshot(
+    tmp_path: Path,
+) -> None:
+    from core.config.models import PluginSettingsBase, TenantConfig
+    from core.engine.orchestrator import ChargebackOrchestrator
+    from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+    from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+    from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
+
+    settings = _settings()
+    settings["identity_source"] = {
+        "source": "both",
+        "static_identities": [{"identity_id": "Team:fixed", "identity_type": "team"}],
+        "default_team": "team-default",
+    }
+    settings["principal_attribution"] = {
+        "enabled": True,
+        "scrape_interval_seconds": 3600,
+        "max_gap_seconds": 7200,
+        "compute_policy": "static_even_v1",
+        "storage_policy": "unattributed",
+    }
+    source = _QuotaBackedMetricsSource()
+    plugin = SelfManagedKafkaPlugin()
+    with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+        plugin.initialize(settings)
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'principal-attribution.db'}",
+        SelfManagedKafkaStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    tenant = TenantConfig(
+        ecosystem="self_managed_kafka",
+        tenant_id="tenant-1",
+        lookback_days=2,
+        cutoff_days=1,
+        plugin_settings=PluginSettingsBase.model_validate(settings),
+    )
+    orchestrator = ChargebackOrchestrator("tenant", tenant, plugin, backend, source)
+
+    with patch("core.engine.orchestrator.datetime") as patched_datetime:
+        patched_datetime.now.return_value = datetime(2026, 8, 20, tzinfo=UTC)
+        patched_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+        result = orchestrator.run()
+
+    assert result.errors == []
+    assert result.dates_calculated == 1
+    with backend.create_read_only_unit_of_work() as uow:
+        dates = uow.chargebacks.get_distinct_dates("self_managed_kafka", "tenant-1")
+        rows = [
+            row
+            for tracking_date in dates
+            for row in uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", tracking_date)
+        ]
+
+    principal_rows = [row for row in rows if row.identity_id == "User:alice"]
+    assert {(row.product_type, row.amount) for row in principal_rows} == {
+        ("SELF_KAFKA_NETWORK_INGRESS", Decimal("0.0100")),
+        ("SELF_KAFKA_NETWORK_EGRESS", Decimal("0.0200")),
+    }
+    assert {row.allocation_method for row in principal_rows} == {"principal_quota_ready_v1"}
+    assert {row.allocation_detail for row in principal_rows} == {"usage_ratio_allocation"}
+    assert {row.principal_team for row in principal_rows} == {"team-default"}
+    assert all(row.principal_team is None for row in rows if row.identity_id != "User:alice")
+    quota_calls = [
+        (definitions, end)
+        for definitions, _, end, _, _ in source.calls
+        if any("kafka_server_quota_byte_rate" in definition.query_expression for definition in definitions)
+    ]
+    assert len(quota_calls) == 2
+    assert [len(definitions) for definitions, _ in quota_calls] == [1, 1]
+    assert {definition.query_expression for definitions, _ in quota_calls for definition in definitions} == {
+        'kafka_server_quota_byte_rate{kafka_cluster_id="kraft-a-001",quota_type="Produce"}[93600s]',
+        'kafka_server_quota_byte_rate{kafka_cluster_id="kraft-a-001",quota_type="Fetch"}[93600s]',
+    }
+    expected_end = principal_rows[0].timestamp + timedelta(days=1)
+    assert {end for _, end in quota_calls} == {expected_end}
+    assert all(definition.query_mode == "instant" for definitions, _ in quota_calls for definition in definitions)
+    assert {row.source_value for row in source.parsed_quota_rows} == {"1.0000"}
+    assert all(
+        row.labels
+        == {
+            "broker": "1",
+            "kafka_cluster_id": "kraft-a-001",
+            "quota_type": row.labels["quota_type"],
+            "quota_scope": "user",
+            "user": "alice",
+            "client_id": "not_applicable",
+        }
+        for row in source.parsed_quota_rows
+    )
+    assert all(("instance", "broker-1:9404") in (row.source_series or ()) for row in source.parsed_quota_rows)
+
+    from fastapi.testclient import TestClient
+
+    from core.api.app import create_app
+    from core.config.models import ApiConfig, AppSettings, LoggingConfig, StorageConfig
+    from tests.integration.core.api.backend_provider import install_backend
+
+    api_settings = AppSettings(
+        api=ApiConfig(host="127.0.0.1", port=8080),
+        logging=LoggingConfig(),
+        tenants={
+            "tenant": TenantConfig(
+                ecosystem="self_managed_kafka",
+                tenant_id="tenant-1",
+                storage=StorageConfig(connection_string=f"sqlite:///{tmp_path / 'principal-attribution.db'}"),
+            )
+        },
+    )
+    app = create_app(api_settings)
+    date_text = principal_rows[0].timestamp.date().isoformat()
+    try:
+        with TestClient(app) as client:
+            install_backend(app, "tenant", backend)
+            list_response = client.get(
+                "/api/v1/tenants/tenant/chargebacks",
+                params={"start_date": date_text, "end_date": date_text, "identity_id": "User:alice"},
+            )
+            export_response = client.post(
+                "/api/v1/tenants/tenant/export",
+                json={"start_date": date_text, "end_date": date_text, "columns": ["identity_id", "metadata"]},
+            )
+    finally:
+        backend.dispose()
+
+    assert list_response.status_code == 200
+    assert list_response.json()["items"]
+    assert all(item["metadata"] == {"team": "team-default"} for item in list_response.json()["items"])
+    assert export_response.status_code == 200
+    assert "'team': 'team-default'" in export_response.text
+
+
+def test_principal_team_snapshots_change_only_when_a_date_is_recalculated(tmp_path: Path) -> None:
+    from core.config.models import PluginSettingsBase, TenantConfig
+    from core.engine.orchestrator import ChargebackOrchestrator
+    from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+    from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+    from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
+
+    def plugin_for_team(team: str) -> tuple[SelfManagedKafkaPlugin, _QuotaBackedMetricsSource, dict[str, object]]:
+        settings = _settings()
+        settings["identity_source"] = {
+            "source": "both",
+            "static_identities": [],
+            "principal_to_team": {"User:alice": team},
+        }
+        settings["principal_attribution"] = {
+            "enabled": True,
+            "scrape_interval_seconds": 3600,
+            "max_gap_seconds": 7200,
+            "compute_policy": "unattributed",
+            "storage_policy": "unattributed",
+        }
+        source = _QuotaBackedMetricsSource()
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+            plugin.initialize(settings)
+        return plugin, source, settings
+
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'principal-team-snapshots.db'}",
+        SelfManagedKafkaStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    first_plugin, first_source, settings = plugin_for_team("team-first")
+    tenant = TenantConfig(
+        ecosystem="self_managed_kafka",
+        tenant_id="tenant-1",
+        lookback_days=2,
+        cutoff_days=1,
+        plugin_settings=PluginSettingsBase.model_validate(settings),
+    )
+
+    def run_at(plugin: SelfManagedKafkaPlugin, source: _QuotaBackedMetricsSource, now: datetime) -> int:
+        orchestrator = ChargebackOrchestrator("tenant", tenant, plugin, backend, source)
+        with patch("core.engine.orchestrator.datetime") as patched_datetime:
+            patched_datetime.now.return_value = now
+            patched_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            return orchestrator.run().dates_calculated
+
+    try:
+        assert run_at(first_plugin, first_source, datetime(2026, 8, 20, tzinfo=UTC)) == 1
+        second_plugin, second_source, _ = plugin_for_team("team-second")
+        assert run_at(second_plugin, second_source, datetime(2026, 8, 21, tzinfo=UTC)) == 1
+        with backend.create_read_only_unit_of_work() as uow:
+            dates = uow.chargebacks.get_distinct_dates("self_managed_kafka", "tenant-1")
+            first_date, second_date = dates
+            first_snapshot = uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", first_date)
+            second_snapshot = uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", second_date)
+
+        assert {row.principal_team for row in first_snapshot if row.identity_id == "User:alice"} == {"team-first"}
+        assert {row.principal_team for row in second_snapshot if row.identity_id == "User:alice"} == {"team-second"}
+
+        third_plugin, third_source, _ = plugin_for_team("team-third")
+        with backend.create_read_only_unit_of_work() as uow:
+            unchanged = uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", second_date)
+        assert {row.principal_team for row in unchanged if row.identity_id == "User:alice"} == {"team-second"}
+
+        with backend.create_unit_of_work() as uow:
+            uow.chargebacks.delete_by_date("self_managed_kafka", "tenant-1", second_date)
+            uow.pipeline_state.mark_needs_recalculation("self_managed_kafka", "tenant-1", second_date)
+            uow.commit()
+        assert run_at(third_plugin, third_source, datetime(2026, 8, 21, tzinfo=UTC)) == 1
+        with backend.create_read_only_unit_of_work() as uow:
+            preserved = uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", first_date)
+            replaced = uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", second_date)
+    finally:
+        backend.dispose()
+
+    assert {row.principal_team for row in preserved if row.identity_id == "User:alice"} == {"team-first"}
+    assert {row.principal_team for row in replaced if row.identity_id == "User:alice"} == {"team-third"}
+
+
+def test_principal_enablement_does_not_change_constructed_costs_or_topic_attribution_output() -> None:
+    from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+    def initialize(settings: dict[str, object]) -> tuple[SelfManagedKafkaPlugin, _QuotaBackedMetricsSource]:
+        source = _QuotaBackedMetricsSource()
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+            plugin.initialize(settings)
+        return plugin, source
+
+    disabled_settings = _settings()
+    disabled_settings["topic_attribution"] = {"enabled": True, "compute_policy": "shared_even_v1"}
+    enabled_settings = {**disabled_settings}
+    enabled_settings["identity_source"] = {"source": "both", "static_identities": []}
+    enabled_settings["principal_attribution"] = {
+        "enabled": True,
+        "scrape_interval_seconds": 3600,
+        "max_gap_seconds": 7200,
+        "compute_policy": "unattributed",
+        "storage_policy": "unattributed",
+    }
+    disabled_plugin, disabled_source = initialize(disabled_settings)
+    enabled_plugin, enabled_source = initialize(enabled_settings)
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    end = start + timedelta(days=1)
+
+    disabled_lines = list(disabled_plugin.get_cost_input().gather("tenant-1", start, end, _unit_of_work()))
+    enabled_lines = list(enabled_plugin.get_cost_input().gather("tenant-1", start, end, _unit_of_work()))
+
+    assert [(line.product_type, line.quantity, line.unit_price, line.total_cost) for line in disabled_lines] == [
+        (line.product_type, line.quantity, line.unit_price, line.total_cost) for line in enabled_lines
+    ]
+    disabled_topic = disabled_plugin.get_topic_attribution_provider()
+    enabled_topic = enabled_plugin.get_topic_attribution_provider()
+    assert disabled_topic is not None
+    assert enabled_topic is not None
+    disabled_result = disabled_topic.attribute_cluster(
+        tenant_id="tenant-1",
+        cluster_resource_id="billing-cluster-a",
+        env_id="cluster-a",
+        billing_lines=disabled_lines,
+        resource_topics=frozenset({"orders"}),
+        metrics_step=timedelta(hours=1),
+    )
+    enabled_result = enabled_topic.attribute_cluster(
+        tenant_id="tenant-1",
+        cluster_resource_id="billing-cluster-a",
+        env_id="cluster-a",
+        billing_lines=enabled_lines,
+        resource_topics=frozenset({"orders"}),
+        metrics_step=timedelta(hours=1),
+    )
+
+    assert [
+        (row.topic_name, row.product_type, row.amount, row.attribution_method, row.metadata)
+        for row in disabled_result.rows
+    ] == [
+        (row.topic_name, row.product_type, row.amount, row.attribution_method, row.metadata)
+        for row in enabled_result.rows
+    ]
+    assert disabled_source.calls
+    assert enabled_source.calls
+
+
+@pytest.mark.parametrize(
+    ("failed_quota_type", "unavailable_product_type", "measured_product_type"),
+    [
+        ("Produce", "SELF_KAFKA_NETWORK_INGRESS", "SELF_KAFKA_NETWORK_EGRESS"),
+        ("Fetch", "SELF_KAFKA_NETWORK_EGRESS", "SELF_KAFKA_NETWORK_INGRESS"),
+    ],
+)
+def test_principal_failure_is_terminal_per_day_while_later_days_and_topic_attribution_continue(
+    tmp_path: Path,
+    failed_quota_type: str,
+    unavailable_product_type: str,
+    measured_product_type: str,
+) -> None:
+    from core.config.models import PluginSettingsBase, TenantConfig
+    from core.engine.orchestrator import ChargebackOrchestrator
+    from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+    from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+    from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
+
+    settings = _settings()
+    settings["identity_source"] = {"source": "both", "static_identities": []}
+    settings["principal_attribution"] = {
+        "enabled": True,
+        "scrape_interval_seconds": 3600,
+        "max_gap_seconds": 7200,
+        "compute_policy": "unattributed",
+        "storage_policy": "unattributed",
+    }
+    settings["topic_attribution"] = {"enabled": True, "compute_policy": "shared_even_v1"}
+    source = _QuotaBackedMetricsSource(fail_first_quota_type=failed_quota_type)
+    plugin = SelfManagedKafkaPlugin()
+    with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+        plugin.initialize(settings)
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'principal-lane-continuation.db'}",
+        SelfManagedKafkaStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    tenant = TenantConfig(
+        ecosystem="self_managed_kafka",
+        tenant_id="tenant-1",
+        lookback_days=3,
+        cutoff_days=1,
+        plugin_settings=PluginSettingsBase.model_validate(settings),
+    )
+    orchestrator = ChargebackOrchestrator("tenant", tenant, plugin, backend, source)
+
+    with patch("core.engine.orchestrator.datetime") as patched_datetime:
+        patched_datetime.now.return_value = datetime(2026, 8, 20, tzinfo=UTC)
+        patched_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+        result = orchestrator.run()
+
+    assert result.errors == []
+    assert result.dates_calculated == 2
+    with backend.create_read_only_unit_of_work() as uow:
+        dates = uow.chargebacks.get_distinct_dates("self_managed_kafka", "tenant-1")
+        by_date = {
+            tracking_date: uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", tracking_date)
+            for tracking_date in dates
+        }
+        topic_dates = uow.topic_attributions.get_distinct_dates("self_managed_kafka", "tenant-1")
+
+    unavailable_dates = [
+        tracking_date
+        for tracking_date, rows in by_date.items()
+        if any(
+            row.product_type == unavailable_product_type
+            and row.allocation_method == "principal_quota_unavailable_v1"
+            and row.allocation_detail == "metrics_fetch_failed"
+            and row.identity_id == "UNALLOCATED"
+            for row in rows
+        )
+    ]
+    measured_dates = [
+        tracking_date
+        for tracking_date, rows in by_date.items()
+        if {
+            row.product_type
+            for row in rows
+            if row.identity_id == "User:alice" and row.allocation_method == "principal_quota_ready_v1"
+        }
+        == {measured_product_type}
+    ]
+
+    assert len(unavailable_dates) == 1
+    assert len(measured_dates) == 1
+    assert set(topic_dates) == set(by_date)
+    backend.dispose()
 
 
 def test_orchestrator_persists_open_probe_recovery_and_close_with_real_scope_storage(

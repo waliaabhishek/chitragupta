@@ -337,6 +337,82 @@ class TestSelfManagedKafkaConfig:
         assert config.discovery_window_hours == 1
 
 
+class TestPrincipalAttributionConfig:
+    def test_omitted_or_disabled_principal_attribution_keeps_the_baseline_static_policy(
+        self, base_settings: dict[str, object]
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        omitted = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+        base_settings["principal_attribution"] = {"enabled": False}
+        disabled = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert omitted.principal_attribution.enabled is False
+        assert disabled.principal_attribution.enabled is False
+        assert omitted.principal_attribution.compute_policy == "unattributed"
+        assert disabled.principal_attribution.storage_policy == "unattributed"
+
+    @pytest.mark.parametrize(
+        "principal_attribution",
+        [
+            {"enabled": True, "scrape_interval_seconds": 5, "max_gap_seconds": 10},
+            {"enabled": True, "scrape_interval_seconds": 17, "max_gap_seconds": 23},
+            {"enabled": True, "scrape_interval_seconds": 30, "max_gap_seconds": 60},
+            {"enabled": True, "scrape_interval_seconds": 60, "max_gap_seconds": 120},
+        ],
+    )
+    def test_enabled_principal_attribution_accepts_independent_positive_cadence_and_gap_values(
+        self, base_settings: dict[str, object], principal_attribution: dict[str, object]
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["identity_source"] = {"source": "both"}
+        base_settings["principal_attribution"] = principal_attribution
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.principal_attribution.enabled is True
+        assert config.principal_attribution.scrape_interval_seconds == principal_attribution["scrape_interval_seconds"]
+        assert config.principal_attribution.max_gap_seconds == principal_attribution["max_gap_seconds"]
+
+    @pytest.mark.parametrize(
+        ("identity_source", "principal_attribution", "expected_location"),
+        [
+            ("static", {"enabled": True, "scrape_interval_seconds": 5, "max_gap_seconds": 10}, "identity_source"),
+            ("prometheus", {"enabled": True, "max_gap_seconds": 10}, "principal_attribution"),
+            ("both", {"enabled": True, "scrape_interval_seconds": 5}, "principal_attribution"),
+            ("both", {"enabled": True, "scrape_interval_seconds": 0, "max_gap_seconds": 10}, "principal_attribution"),
+            ("both", {"enabled": True, "scrape_interval_seconds": 5, "max_gap_seconds": 0}, "principal_attribution"),
+            (
+                "both",
+                {
+                    "enabled": True,
+                    "scrape_interval_seconds": 5,
+                    "max_gap_seconds": 10,
+                    "compute_policy": "automatic",
+                },
+                "principal_attribution",
+            ),
+        ],
+    )
+    def test_enabled_principal_attribution_rejects_invalid_identity_source_or_cadence_inputs(
+        self,
+        base_settings: dict[str, object],
+        identity_source: str,
+        principal_attribution: dict[str, object],
+        expected_location: str,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["identity_source"] = {"source": identity_source}
+        base_settings["principal_attribution"] = principal_attribution
+
+        with pytest.raises(ValidationError) as error:
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert any(issue["loc"][0] == expected_location for issue in error.value.errors())
+
+
 class TestSelfManagedTopicAttributionConfig:
     def test_defaults_to_disabled_without_implicit_topic_exclusions(self, base_settings: dict[str, object]) -> None:
         from plugins.self_managed_kafka.config import SelfManagedKafkaConfig

@@ -245,6 +245,16 @@ class TestParseResponse:
         assert rows[0].labels == {"topic": "my-topic", "cluster_id": "lkc-123"}
         assert rows[0].value == 100.5
 
+    def test_parse_response_preserves_the_original_prometheus_sample_string(self) -> None:
+        src = self._source()
+
+        rows = src._parse_response(_RANGE_RESPONSE, _QUERY)
+
+        assert [row.source_value for row in rows] == ["100.5", "200.0", "50"]
+        assert [row.value for row in rows] == [100.5, 200.0, 50.0]
+        assert rows[0].source_series == (("cluster_id", "lkc-123"), ("extra", "ignored"), ("topic", "my-topic"))
+        assert rows[0].source_series is rows[1].source_series
+
     def test_instant_response(self) -> None:
         src = self._source()
         rows = src._parse_response(_INSTANT_RESPONSE, _QUERY)

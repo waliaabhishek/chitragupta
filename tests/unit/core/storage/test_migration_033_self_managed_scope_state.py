@@ -29,7 +29,7 @@ def test_revision_033_is_the_current_head_and_declares_its_predecessor() -> None
     )
     source = migration_path.read_text(encoding="utf-8")
 
-    assert script.get_current_head() == "033"
+    assert script.get_current_head() == "034"
     assert 'revision = "033"' in source
     assert 'down_revision = "032"' in source
 

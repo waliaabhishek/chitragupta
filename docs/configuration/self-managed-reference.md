@@ -74,9 +74,14 @@ tenants:
 | `cost_model.network_ingress_per_gib` | Decimal | required | Per GiB ingress cost |
 | `cost_model.network_egress_per_gib` | Decimal | required | Per GiB egress cost |
 | `cost_model.region_overrides` | dict | `{}` | Override any rate field per region |
-| `identity_source.source` | enum | `prometheus` | `prometheus`, `static`, or `both`; controls quota-evidence collection and static policy identities |
-| `identity_source.principal_to_team` | dict | `{}` | Optional identity metadata; it does not make BrokerTopicMetrics principal evidence |
-| `identity_source.default_team` | string | `UNASSIGNED` | Optional identity metadata; it does not change static-policy allocation |
+| `principal_attribution.enabled` | bool | `false` | Enable quota-backed allocation of the two network pools. |
+| `principal_attribution.scrape_interval_seconds` | int | required when enabled | Declared Prometheus scrape interval; must be greater than zero. |
+| `principal_attribution.max_gap_seconds` | int | required when enabled | Largest permitted gap between quota samples and between the window boundary and its guard sample; must be greater than zero. |
+| `principal_attribution.compute_policy` | enum | `unattributed` | `unattributed` or `static_even_v1` for the fixed compute pool while principal attribution is enabled. |
+| `principal_attribution.storage_policy` | enum | `unattributed` | `unattributed` or `static_even_v1` for the fixed storage pool while principal attribution is enabled. |
+| `identity_source.source` | enum | `prometheus` | `prometheus`, `static`, or `both`. Principal attribution requires `prometheus` or `both`. |
+| `identity_source.principal_to_team` | dict | `{}` | Maps canonical measured principal IDs such as `User:service-account` to a team snapshot. |
+| `identity_source.default_team` | string | `UNASSIGNED` | Team snapshot used for a measured user with no `principal_to_team` entry. |
 | `identity_source.static_identities` | list | `[]` | Visible policy identities for `static` / `both`; allocations are marked `measured_usage=false` |
 | `resource_source.source` | enum | `prometheus` | `prometheus` or `admin_api` |
 | `resource_source.bootstrap_servers` | string | optional | Required for `admin_api` source |
@@ -123,20 +128,29 @@ need `broker` and `topic`. For topic attribution, `kafka_log_log_size` also need
 `broker`, `topic`, and `partition`. `up` must carry the configured selector label
 on every target.
 
-When `identity_source.source` is `prometheus` or `both`, the plugin also evaluates
-these optional quota-evidence series:
+When `principal_attribution.enabled` is `true`, the plugin requires this quota
+metric for measured network allocation:
 
 | Metric | Type | Used for |
 |---|---|---|
-| `kafka_server_quota_byte_rate` | gauge | Principal-attribution evidence when quota telemetry is configured and observed |
-| `kafka_server_quota_throttle_time_ms` | gauge | Supplemental quota-throttling evidence |
+| `kafka_server_quota_byte_rate` | gauge | Quota-backed principal weights for ingress and egress |
 
-Each quota row must include the `quota_type`, `quota_scope`, `user`, and
-`client_id` labels. Accepted `quota_scope` values are `user`, `client-id`, and
-`user-client`; the associated user and/or client ID must be a real identity, not
-an empty or `not_applicable` value. Byte-rate values must be finite. Throttle
-rows use the same label validation, but a non-finite throttle value is reported
-as no finite positive throttling observed rather than as invalid quota evidence.
+Every quota series must carry `broker`, the configured
+`metrics_identifier_label`, `quota_type`, `quota_scope`, `user`, and `client_id`.
+The runtime accepts only finite, non-negative byte-rate samples. `Produce` is
+ingress and `Fetch` is egress. The accepted scope/label combinations are:
+
+| `quota_scope` | `user` | `client_id` |
+|---|---|---|
+| `user` | a real user | `not_applicable` |
+| `user-client` | a real user | a real client ID |
+| `client-id` | `not_applicable` | a real client ID |
+
+The JMX exporter must expose all three Kafka quota MBean forms for both Produce
+and Fetch: `user=*`, `client-id=*`, and `user=*,client-id=*`. Preserve the
+Kafka-authenticated user label exactly; Chitragupta makes a measured user
+identity by prepending `User:` and preserves the suffix case. The telemetry lab's
+exporter rules are a working label contract for these MBean forms.
 
 All Prometheus queries inject the configured
 `metrics_identifier_label=metrics_identifier` selector. That includes target
@@ -229,26 +243,105 @@ not fabricate billing for it.
 
 | Product type | Cost formula | Allocation strategy | Why this strategy |
 |---|---|---|---|
-| `SELF_KAFKA_COMPUTE` | `broker_count × 24h × compute_hourly_rate` | Static policy split | Shared infrastructure is allocated across visible static policy identities. |
-| `SELF_KAFKA_STORAGE` | `avg_gib × 24h × storage_per_gib_hourly` | Static policy split | Storage is cluster-wide and is not inferred from a principal label. |
-| `SELF_KAFKA_NETWORK_INGRESS` | `sum_bytes_in ÷ 2^30 × network_ingress_per_gib` | Static policy split | BrokerTopicMetrics supplies the cluster total, not measured per-principal usage. |
-| `SELF_KAFKA_NETWORK_EGRESS` | `sum_bytes_out ÷ 2^30 × network_egress_per_gib` | Static policy split | BrokerTopicMetrics supplies the cluster total, not measured per-principal usage. |
+| `SELF_KAFKA_COMPUTE` | `broker_count × 24h × compute_hourly_rate` | Existing configured policy, or the opt-in fixed policy | Shared infrastructure has no measured principal signal. |
+| `SELF_KAFKA_STORAGE` | `avg_gib × 24h × storage_per_gib_hourly` | Existing configured policy, or the opt-in fixed policy | Storage has no measured principal signal. |
+| `SELF_KAFKA_NETWORK_INGRESS` | `sum_bytes_in ÷ 2^30 × network_ingress_per_gib` | Existing configured policy, or quota-backed principal allocation | BrokerTopicMetrics supplies the cluster pool. |
+| `SELF_KAFKA_NETWORK_EGRESS` | `sum_bytes_out ÷ 2^30 × network_egress_per_gib` | Existing configured policy, or quota-backed principal allocation | BrokerTopicMetrics supplies the cluster pool. |
 
 See [How Costs Work](../architecture/cost-model.md) for the complete math with
 worked examples.
 
-## Principal evidence and static policy allocation
+## Quota-backed principal attribution
 
-BrokerTopicMetrics is used for cluster costs and broker/topic discovery; it does not
-carry principal identity for allocation. With `identity_source.source: prometheus`
-or `both`, Chitragupta evaluates the configured quota telemetry for each billing
-window. Missing quota byte-rate telemetry is reported as `not_observed`, rather
-than being treated as a principal identity. Structurally valid throttle rows with
-non-finite values report that no positive throttling was observed; they do not turn
-the source into measured usage.
+BrokerTopicMetrics supplies the cluster pools and topic evidence; it never supplies
+principal ownership. Quota-backed attribution is therefore an explicit opt-in. When
+it is disabled, the existing identity-source allocation behavior is unchanged.
 
-Static identities are the allocation policy visible to operators. For `static` and
-`both`, costs are split across those identities and chargeback rows state
-`measured_usage=false`. Quota telemetry supplies evidence status only; it does not
-change that policy split. If no static policy identities are configured, the normal
-unallocated outcome makes the missing policy visible instead of inventing an owner.
+With attribution disabled or omitted, `identity_source.source: prometheus` and
+`both` keep their existing byte-rate and throttle readiness probes. They report
+`observed`, `not_observed`, `invalid`, or `transient_failure`, but do not create
+measured principal allocations. `static` reports `policy_only_configured` and makes
+no quota calls.
+
+```yaml
+plugin_settings:
+  principal_attribution:
+    enabled: true
+    scrape_interval_seconds: 30
+    max_gap_seconds: 90
+    compute_policy: unattributed
+    storage_policy: unattributed
+  identity_source:
+    source: prometheus  # `both` is also valid when fixed-policy identities are needed
+    principal_to_team:
+      "User:service-account": data-platform
+    default_team: UNASSIGNED
+```
+
+The declared scrape interval and maximum gap are independent operational inputs;
+choose values that match the Prometheus scrape configuration and its expected
+delays. The feature rejects `identity_source.source: static`. A target-scope failure
+stops calculation before quota queries or allocation and creates no business rows.
+After target scope is valid, missing, invalid, or incomplete quota evidence fails
+closed for the affected network direction.
+
+### Kafka quota and exporter setup
+
+Configure Kafka quota entities for the authenticated users, client IDs, and/or
+user/client pairs that you want to observe. The exporter must publish the matching
+Kafka JMX quota MBeans with the labels above and apply the same cluster target label
+as the other Kafka metrics. Chitragupta queries Prometheus; it does not create or
+change Kafka quotas.
+
+Kafka Admin API credentials are only for optional resource discovery. If
+`resource_source.source: admin_api`, provide the bootstrap servers and the matching
+SSL or SASL settings (`security_protocol`, `sasl_mechanism`, username, and password)
+for a client permitted to describe the cluster. This client configuration is
+separate from broker quota enforcement and from Prometheus authentication.
+
+### Allocation states and reconciliation
+
+Ingress and egress are evaluated independently after target scope is valid. A
+complete positive user-only matrix is `ready`; a complete positive matrix that also
+contains client-only weight is `degraded`; a complete zero matrix is `zero_usage`.
+Missing, invalid, incomplete, or cadence-mismatched quota evidence is `unavailable`
+and sends that direction's whole network pool to `UNALLOCATED` rather than guessing
+an owner. A target-scope failure occurs before this evaluation and creates no
+business rows.
+
+For a direction, Chitragupta integrates each valid quota gauge over the billing
+window. User and user/client weights are combined per canonical `User:` identity;
+client-only weight is never assigned to a user. If `M` is the network pool, `q_i`
+are user weights, `c` is client-only weight, and `W = sum(q_i) + c`, user amount
+`i` is `M * q_i / W` and the client-only amount is `M * c / W`. Amounts round down
+to four decimal places. The client-only amount and any remaining fractional amount
+are separate `UNALLOCATED` rows, so every direction reconciles exactly to its pool.
+
+`principal_to_team` is an exact, case-sensitive canonical-ID map. A measured user
+without an entry receives `default_team`; client-only and rounding-residual rows do
+not acquire a team. Team values are retained with each completed chargeback row.
+Changing the map does not rewrite history. Recalculate a date explicitly to replace
+that date with the then-current mapping, and retain the source data required for
+every date that may be recalculated.
+
+### Fixed pools, topic independence, and operations
+
+Compute and storage do not gain a measured principal signal. With attribution
+enabled, `unattributed` sends each full fixed pool to `UNALLOCATED`.
+`static_even_v1` divides it evenly across the unique configured
+`identity_source.static_identities`; it remains a fixed policy, not measured usage,
+and any rounding remainder is `UNALLOCATED`. An empty `static_identities` list is
+valid at startup: `static_even_v1` then preserves the entire fixed pool as
+`UNALLOCATED`.
+
+Topic attribution and principal attribution are independent marginals. They can
+each reconcile to the same cluster-level network pool, but the system does not
+derive principal-by-topic ownership or a topic owner from either metric family.
+
+Retain Prometheus data for the billing window, the leading guard sample, normal
+calculation delay, and the complete intended recalculation horizon. Quota gauges
+are monitoring-resolution estimates rather than byte-exact Kafka accounting. For a
+blocked direction, first verify the configured `up` selector on every broker target,
+then verify the `Produce` or `Fetch` quota MBeans and required labels. Correct the
+source and explicitly recalculate affected retained dates; do not fill missing
+evidence with a static owner.

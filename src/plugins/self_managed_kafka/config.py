@@ -80,6 +80,25 @@ class SelfManagedTopicAttributionConfig(BaseModel):
     emitters: list[EmitterSpec] = Field(default_factory=list)
 
 
+class SelfManagedPrincipalAttributionConfig(BaseModel):
+    """Opt-in configuration for quota-backed principal attribution."""
+
+    enabled: bool = False
+    scrape_interval_seconds: int | None = Field(default=None, gt=0)
+    max_gap_seconds: int | None = Field(default=None, gt=0)
+    compute_policy: Literal["unattributed", "static_even_v1"] = "unattributed"
+    storage_policy: Literal["unattributed", "static_even_v1"] = "unattributed"
+
+    @model_validator(mode="after")
+    def validate_enabled_cadence(self) -> SelfManagedPrincipalAttributionConfig:
+        """Require both independent cadence inputs only for measured allocation."""
+        if self.enabled and (self.scrape_interval_seconds is None or self.max_gap_seconds is None):
+            raise ValueError(
+                "scrape_interval_seconds and max_gap_seconds are required when principal_attribution is enabled"
+            )
+        return self
+
+
 class SelfManagedKafkaConfig(PluginSettingsBase):
     """Validates plugin_settings for ecosystem='self_managed_kafka'."""
 
@@ -96,6 +115,9 @@ class SelfManagedKafkaConfig(PluginSettingsBase):
     broker_count: int = Field(gt=0)  # Used for compute cost calculation
     region: str | None = None  # Optional region for cost overrides
     cost_model: CostModelConfig
+    principal_attribution: SelfManagedPrincipalAttributionConfig = Field(
+        default_factory=SelfManagedPrincipalAttributionConfig
+    )
     identity_source: IdentitySourceConfig = Field(default_factory=IdentitySourceConfig)
     resource_source: ResourceSourceConfig = Field(default_factory=ResourceSourceConfig)
     metrics: MetricsConnectionConfig  # Required for cost construction + allocation
@@ -108,6 +130,19 @@ class SelfManagedKafkaConfig(PluginSettingsBase):
         if not value.strip():
             raise ValueError("must not be blank")
         return value
+
+    @field_validator("identity_source")
+    @classmethod
+    def validate_principal_attribution_identity_source(
+        cls,
+        identity_source: IdentitySourceConfig,
+        info: Any,
+    ) -> IdentitySourceConfig:
+        """Measured attribution requires a Prometheus identity source."""
+        attribution = info.data.get("principal_attribution")
+        if attribution is not None and attribution.enabled and identity_source.source not in {"prometheus", "both"}:
+            raise ValueError("identity_source.source must be prometheus or both when principal_attribution is enabled")
+        return identity_source
 
     @classmethod
     def from_plugin_settings(cls, settings: dict[str, Any]) -> SelfManagedKafkaConfig:
