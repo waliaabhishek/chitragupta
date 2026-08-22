@@ -340,7 +340,6 @@ class SelfManagedKafkaHandler:
                     start=start,
                     end=end,
                     step=duration,
-                    resource_id_filter=self._config.metrics_identifier,
                 )
             except MetricsQueryError:
                 evaluations[direction] = self._unavailable_direction(direction, "metrics_fetch_failed", scrape_interval)

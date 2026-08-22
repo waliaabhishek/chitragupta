@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from math import nan
@@ -10,8 +11,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
+from core.metrics.prometheus import PrometheusConfig, PrometheusMetricsSource
 from core.metrics.protocol import MetricsQueryError
 from core.models import MetricQuery, MetricRow
 
@@ -233,6 +236,90 @@ class TestPrincipalTelemetryEvidence:
         assert resolution.context["principal_attribution_status"] == "unavailable"
         assert resolution.context["principal_attribution_detail"] == "target_scope_blocked"
         assert source.calls == []
+
+    def test_enabled_quota_acquisition_keeps_embedded_selectors_without_resource_filter_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+        from plugins.self_managed_kafka.telemetry_contract import MetricsScopeEvidence, MetricsScopeStatus
+
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        end = start + timedelta(days=1)
+        observed_queries: list[str] = []
+
+        def post(_url: str, *, data: dict[str, str], headers: dict[str, str]) -> MagicMock:
+            del headers
+            query = data["query"]
+            observed_queries.append(query)
+            quota_type = "Produce" if 'quota_type="Produce"' in query else "Fetch"
+            return MagicMock(
+                status_code=200,
+                text=json.dumps(
+                    {
+                        "status": "success",
+                        "data": {
+                            "resultType": "matrix",
+                            "result": [
+                                {
+                                    "metric": {
+                                        "broker": "1",
+                                        "kafka_cluster_id": "kraft-a-001",
+                                        "quota_type": quota_type,
+                                        "quota_scope": "user",
+                                        "user": "alice",
+                                        "client_id": "not_applicable",
+                                    },
+                                    "values": [
+                                        [(start + timedelta(hours=offset)).timestamp(), "1"] for offset in range(25)
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                ),
+            )
+
+        client = MagicMock(spec=httpx.Client)
+        client.post.side_effect = post
+        source = PrometheusMetricsSource(
+            PrometheusConfig(url="http://prometheus:9090", max_retries=1, max_workers=1),
+            client=client,
+        )
+        config = SelfManagedKafkaConfig.from_plugin_settings(
+            _settings(
+                identity_source={"source": "both"},
+                principal_attribution={"enabled": True, "scrape_interval_seconds": 3600, "max_gap_seconds": 7200},
+            )
+        )
+        scope = MetricsScopeEvidence(
+            "kafka_cluster_id",
+            "kraft-a-001",
+            start,
+            end,
+            MetricsScopeStatus.VALID,
+            "target healthy",
+        )
+        handler = SelfManagedKafkaHandler(config, source, metrics_scope_evidence=lambda *_: scope)
+
+        with caplog.at_level(logging.WARNING, logger="core.metrics.prometheus"):
+            resolution = handler.resolve_identities(
+                "tenant-1",
+                "billing-cluster-a",
+                start,
+                timedelta(days=1),
+                None,
+                _unit_of_work(),
+            )
+
+        assert observed_queries == [
+            'kafka_server_quota_byte_rate{kafka_cluster_id="kraft-a-001",quota_type="Produce"}[93600s]',
+            'kafka_server_quota_byte_rate{kafka_cluster_id="kraft-a-001",quota_type="Fetch"}[93600s]',
+        ]
+        assert resolution.context["principal_attribution_status"] == "observed"
+        assert resolution.metrics_derived.ids() == frozenset({"User:alice"})
+        assert not any("no {} placeholder" in record.getMessage() for record in caplog.records)
 
     @pytest.mark.parametrize(
         ("failed_quota_type", "surviving_quota_type", "expected_direction"),
