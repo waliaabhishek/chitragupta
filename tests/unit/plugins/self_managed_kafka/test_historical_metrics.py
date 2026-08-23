@@ -86,6 +86,45 @@ def test_counter_rows_are_owned_only_by_exact_day_end_and_keep_zero_distinct_fro
     assert evidence[windows[2]]["counter"] == []
 
 
+def test_historical_range_conversion_preserves_alias_normalization_metadata() -> None:
+    from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+    from plugins.self_managed_kafka.historical_metrics import _range_query
+    from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
+
+    config = SelfManagedKafkaConfig.from_plugin_settings(
+        {
+            "cluster_id": "billing-cluster-a",
+            "metrics_identifier": "kafka-prod",
+            "metrics_identifier_label": "deployment",
+            "broker_count": 3,
+            "cost_model": {
+                "compute_hourly_rate": "0.10",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
+            },
+            "metrics": {"url": "http://prometheus:9090"},
+            "label_name_overrides": {"kafka_log_log_size": {"broker": "node"}},
+        }
+    )
+    query = ResolvedTelemetryCatalog(config).bind_query(
+        canonical_family="kafka_log_log_size",
+        key="cluster_storage_bytes",
+        query_expression="sum(kafka_log_log_size{})",
+        canonical_label_keys=("broker",),
+        passthrough_label_keys=("deployment",),
+        resource_label="deployment",
+        query_mode="instant",
+    )
+
+    ranged = _range_query(query)
+
+    assert ranged.query_mode == "range"
+    assert ranged.label_keys == ("node", "deployment")
+    assert ranged.resource_label == "deployment"
+    assert ranged.metadata == query.metadata
+
+
 @pytest.mark.parametrize("mode", ["instant", "range"])
 def test_each_bounded_response_is_partitioned_in_one_row_pass(mode: Literal["instant", "range"]) -> None:
     windows = _windows(5)

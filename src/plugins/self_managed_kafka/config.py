@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -10,6 +11,11 @@ from pydantic import BaseModel, Field, SecretStr, StrictInt, field_validator, mo
 
 from core.config.models import EmitterSpec, PluginSettingsBase
 from core.metrics.config import MetricsConnectionConfig  # noqa: TC001 — Pydantic evaluates field annotations at runtime
+from plugins.self_managed_kafka.telemetry_aliases import (
+    validate_label_name_overrides,
+    validate_metric_name_overrides,
+    validate_resolved_aliases,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +118,8 @@ class SelfManagedKafkaConfig(PluginSettingsBase):
         min_length=1,
         description="Prometheus target label name that carries metrics_identifier.",
     )
+    metric_name_overrides: dict[str, str] = Field(default_factory=dict)
+    label_name_overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
     broker_count: int = Field(gt=0)  # Used for compute cost calculation
     region: str | None = None  # Optional region for cost overrides
     cost_model: CostModelConfig
@@ -131,6 +139,35 @@ class SelfManagedKafkaConfig(PluginSettingsBase):
         if not value.strip():
             raise ValueError("must not be blank")
         return value
+
+    @field_validator("metrics_identifier_label")
+    @classmethod
+    def validate_metrics_identifier_label_name(cls, value: str) -> str:
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) is None:
+            raise ValueError("metrics_identifier_label is not a valid Prometheus label identifier")
+        return value
+
+    @field_validator("metric_name_overrides", mode="before")
+    @classmethod
+    def validate_metric_name_override_shape(cls, value: object) -> object:
+        validate_metric_name_overrides(value)
+        return value
+
+    @field_validator("label_name_overrides", mode="before")
+    @classmethod
+    def validate_label_name_override_shape(cls, value: object) -> object:
+        validate_label_name_overrides(value)
+        return value
+
+    @model_validator(mode="after")
+    def validate_telemetry_aliases(self) -> SelfManagedKafkaConfig:
+        """Validate aliases after all defaults are resolved."""
+        validate_resolved_aliases(
+            self.metric_name_overrides,
+            self.label_name_overrides,
+            self.metrics_identifier_label,
+        )
+        return self
 
     @field_validator("identity_source")
     @classmethod

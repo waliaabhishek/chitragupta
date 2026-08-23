@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 import pytest
@@ -374,6 +375,164 @@ class TestSelfManagedKafkaConfig:
             SelfManagedKafkaConfig.from_plugin_settings(base_settings)
 
         assert raised.value.errors()[0]["loc"] == ("historical_acquisition_chunk_days",)
+
+    def test_telemetry_aliases_default_to_empty_mappings_and_preserve_the_canonical_selector(
+        self, base_settings: dict[str, object]
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.metric_name_overrides == {}
+        assert config.label_name_overrides == {}
+        assert config.metrics_identifier == "kraft-a-001"
+        assert config.metrics_identifier_label == "kafka_cluster_id"
+
+    def test_telemetry_aliases_accept_partial_metric_and_label_mappings(self, base_settings: dict[str, object]) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["metric_name_overrides"] = {"kafka_log_log_size": "company_kafka_partition_size"}
+        base_settings["label_name_overrides"] = {
+            "kafka_log_log_size": {
+                "broker": "node",
+                "topic": "topic_name",
+            }
+        }
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.metric_name_overrides == {"kafka_log_log_size": "company_kafka_partition_size"}
+        assert config.label_name_overrides == {"kafka_log_log_size": {"broker": "node", "topic": "topic_name"}}
+
+    @pytest.mark.parametrize(
+        ("field", "value", "expected_detail"),
+        [
+            (
+                "metric_name_overrides",
+                [],
+                "metric_name_overrides must be a mapping of canonical metric names to one physical metric name",
+            ),
+            (
+                "metric_name_overrides",
+                {"kafka_log_log_size": ["one", "two"]},
+                "metric_name_overrides[kafka_log_log_size] must resolve to exactly one physical metric name",
+            ),
+            (
+                "metric_name_overrides",
+                {"unknown_metric": "physical_metric"},
+                "metric_name_overrides contains unknown canonical metric family unknown_metric",
+            ),
+            (
+                "metric_name_overrides",
+                {"kafka_log_log_size": "not-a-metric"},
+                "metric_name_overrides[kafka_log_log_size] is not a valid Prometheus metric identifier",
+            ),
+            (
+                "metric_name_overrides",
+                {"kafka_log_log_size": ""},
+                "metric_name_overrides[kafka_log_log_size] is not a valid Prometheus metric identifier",
+            ),
+            (
+                "metric_name_overrides",
+                {"up": "kafka_log_log_size"},
+                (
+                    "physical metric kafka_log_log_size is assigned to multiple canonical metric families: "
+                    "kafka_log_log_size, up"
+                ),
+            ),
+            (
+                "label_name_overrides",
+                [],
+                "label_name_overrides must be a mapping of canonical metric families to label mappings",
+            ),
+            (
+                "label_name_overrides",
+                {"kafka_log_log_size": []},
+                "label_name_overrides[kafka_log_log_size] must be a mapping of canonical labels to physical labels",
+            ),
+            (
+                "label_name_overrides",
+                {"unknown_metric": {}},
+                "label_name_overrides contains unknown canonical metric family unknown_metric",
+            ),
+            (
+                "label_name_overrides",
+                {"up": {"broker": "node"}},
+                "label_name_overrides[up] contains unknown canonical label broker",
+            ),
+            (
+                "label_name_overrides",
+                {"kafka_log_log_size": {"broker": ["node"]}},
+                "label_name_overrides[kafka_log_log_size][broker] must resolve to exactly one physical label name",
+            ),
+            (
+                "label_name_overrides",
+                {"kafka_log_log_size": {"broker": "not-a-label"}},
+                "label_name_overrides[kafka_log_log_size][broker] is not a valid Prometheus label identifier",
+            ),
+            (
+                "label_name_overrides",
+                {"kafka_log_log_size": {"broker": ""}},
+                "label_name_overrides[kafka_log_log_size][broker] is not a valid Prometheus label identifier",
+            ),
+            (
+                "label_name_overrides",
+                {"kafka_log_log_size": {"broker": "topic"}},
+                "physical label topic is assigned to multiple canonical labels in kafka_log_log_size: broker, topic",
+            ),
+        ],
+    )
+    def test_telemetry_alias_validation_rejects_invalid_mapping_shapes_and_resolved_names(
+        self,
+        base_settings: dict[str, object],
+        field: str,
+        value: object,
+        expected_detail: str,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings[field] = value
+
+        with pytest.raises(ValidationError, match=re.escape(expected_detail)):
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+    @pytest.mark.parametrize(
+        ("selector_label", "label_name_overrides", "expected_detail"),
+        [
+            (
+                "not-a-label",
+                {},
+                "metrics_identifier_label is not a valid Prometheus label identifier",
+            ),
+            (
+                "broker",
+                {},
+                (
+                    "physical label broker in kafka_server_brokertopicmetrics_alltopics_bytesin_total "
+                    "conflicts with metrics_identifier_label"
+                ),
+            ),
+            (
+                "deployment",
+                {"kafka_log_log_size": {"broker": "deployment"}},
+                "physical label deployment in kafka_log_log_size conflicts with metrics_identifier_label",
+            ),
+        ],
+    )
+    def test_telemetry_alias_validation_keeps_the_global_selector_separate_from_family_labels(
+        self,
+        base_settings: dict[str, object],
+        selector_label: str,
+        label_name_overrides: dict[str, dict[str, str]],
+        expected_detail: str,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["metrics_identifier_label"] = selector_label
+        base_settings["label_name_overrides"] = label_name_overrides
+
+        with pytest.raises(ValidationError, match=re.escape(expected_detail)):
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
 
 
 class TestPrincipalAttributionConfig:

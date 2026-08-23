@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from core.engine.topic_attribution_models import (
     TopicAttributionRowOutputContext,
@@ -13,7 +13,6 @@ from core.engine.topic_attribution_models import (
 )
 from core.engine.topic_attribution_provider import TopicAttributionClusterOutcome
 from core.metrics.protocol import MetricsQueryError
-from core.models import MetricQuery
 from plugins.self_managed_kafka.historical_metrics import (
     bounded_window_chunks,
     collect_daily_evidence,
@@ -22,10 +21,12 @@ from plugins.self_managed_kafka.historical_metrics import (
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
+    from core.models import MetricQuery
     from core.models.billing import BillingLineItem
     from core.models.metrics import MetricRow
     from core.models.topic_attribution import TopicAttributionRow
     from plugins.self_managed_kafka.config import SelfManagedKafkaConfig, SelfManagedTopicAttributionConfig
+    from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
 
 _BYTES_PER_GIB = Decimal("1073741824")
 _CENT = Decimal("0.0001")
@@ -59,10 +60,16 @@ class SelfManagedKafkaTopicAttributionProvider:
         config: SelfManagedKafkaConfig,
         metrics_source: MetricsSource,
         inventory_is_partitionless: Callable[[], bool],
+        telemetry_catalog: ResolvedTelemetryCatalog | None = None,
     ) -> None:
         self._config = config
         self._metrics_source = metrics_source
         self._inventory_is_partitionless = inventory_is_partitionless
+        if telemetry_catalog is None:
+            from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
+
+            telemetry_catalog = ResolvedTelemetryCatalog(config)
+        self._telemetry_catalog = telemetry_catalog
         self._prepared_evidence: dict[tuple[datetime, datetime], dict[str, list[MetricRow]]] = {}
 
     @property
@@ -98,21 +105,25 @@ class SelfManagedKafkaTopicAttributionProvider:
         try:
             validate_utc_day_windows(windows)
             queries = [
-                MetricQuery(
+                self._topic_query(
+                    canonical_family=metric_name,
                     key=key,
-                    query_expression=f"sum by (topic) (increase({metric_name}{{}}[86400s]))",
-                    label_keys=("topic",),
-                    resource_label=self._config.metrics_identifier_label,
+                    query_expression=(
+                        f"sum by ({self._telemetry_catalog.label_name(metric_name, 'topic')}) "
+                        f"(increase({self._telemetry_catalog.metric_name(metric_name)}{{}}[86400s]))"
+                    ),
                     query_mode="instant",
                 )
                 for key, metric_name in _NETWORK_PRODUCT_QUERIES.values()
             ]
             queries.append(
-                MetricQuery(
+                self._topic_query(
+                    canonical_family="kafka_log_log_size",
                     key="topic_storage_bytes",
-                    query_expression="sum by (topic) (kafka_log_log_size{})",
-                    label_keys=("topic",),
-                    resource_label=self._config.metrics_identifier_label,
+                    query_expression=(
+                        f"sum by ({self._telemetry_catalog.label_name('kafka_log_log_size', 'topic')}) "
+                        f"({self._telemetry_catalog.metric_name('kafka_log_log_size')}{{}})"
+                    ),
                 )
             )
             self._prepared_evidence = collect_daily_evidence(
@@ -206,11 +217,13 @@ class SelfManagedKafkaTopicAttributionProvider:
         metric_name: str,
     ) -> dict[str, Decimal]:
         day_start, day_end = _day_bounds(line.timestamp)
-        query = MetricQuery(
+        query = self._topic_query(
+            canonical_family=metric_name,
             key=key,
-            query_expression=f"sum by (topic) (increase({metric_name}{{}}[86400s]))",
-            label_keys=("topic",),
-            resource_label=self._config.metrics_identifier_label,
+            query_expression=(
+                f"sum by ({self._telemetry_catalog.label_name(metric_name, 'topic')}) "
+                f"(increase({self._telemetry_catalog.metric_name(metric_name)}{{}}[86400s]))"
+            ),
             query_mode="instant",
         )
         prepared = self._prepared_evidence.get((day_start, day_end))
@@ -227,11 +240,13 @@ class SelfManagedKafkaTopicAttributionProvider:
 
     def _storage_usage(self, line: BillingLineItem, metrics_step: timedelta) -> dict[str, Decimal]:
         day_start, day_end = _day_bounds(line.timestamp)
-        query = MetricQuery(
+        query = self._topic_query(
+            canonical_family="kafka_log_log_size",
             key="topic_storage_bytes",
-            query_expression="sum by (topic) (kafka_log_log_size{})",
-            label_keys=("topic",),
-            resource_label=self._config.metrics_identifier_label,
+            query_expression=(
+                f"sum by ({self._telemetry_catalog.label_name('kafka_log_log_size', 'topic')}) "
+                f"({self._telemetry_catalog.metric_name('kafka_log_log_size')}{{}})"
+            ),
         )
         prepared = self._prepared_evidence.get((day_start, day_end))
         if prepared is not None and query.key in prepared:
@@ -250,6 +265,25 @@ class SelfManagedKafkaTopicAttributionProvider:
         if not rows and not self._inventory_is_partitionless():
             raise MetricsQueryError("Missing required storage metric family: kafka_log_log_size")
         return _average_partition_storage(rows)
+
+    def _topic_query(
+        self,
+        *,
+        canonical_family: str,
+        key: str,
+        query_expression: str,
+        query_mode: Literal["instant", "range"] = "range",
+    ) -> MetricQuery:
+        """Bind one topic query's canonical topic dimension to physical PromQL."""
+        return self._telemetry_catalog.bind_query(
+            canonical_family=canonical_family,
+            key=key,
+            query_expression=query_expression,
+            canonical_label_keys=("topic",),
+            passthrough_label_keys=(self._config.metrics_identifier_label,),
+            resource_label=self._config.metrics_identifier_label,
+            query_mode=query_mode,
+        )
 
     def _compute_rows(
         self,

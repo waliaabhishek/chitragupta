@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
+
+if TYPE_CHECKING:
+    from core.models import MetricQuery, MetricRow
 
 
 @pytest.fixture
@@ -24,6 +30,28 @@ def base_settings() -> dict:
         "identity_source": {"source": "static"},
         "metrics": {"url": "http://prom:9090"},
     }
+
+
+class _MetricsSourceFake:
+    """Typed MetricsSource double for plugin factory wiring tests."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.query_calls: list[tuple[Sequence[MetricQuery], datetime, datetime, timedelta, str | None]] = []
+
+    def query(
+        self,
+        queries: Sequence[MetricQuery],
+        start: datetime,
+        end: datetime,
+        step: timedelta = timedelta(hours=1),
+        resource_id_filter: str | None = None,
+    ) -> dict[str, list[MetricRow]]:
+        self.query_calls.append((queries, start, end, step, resource_id_filter))
+        return {}
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class TestPluginEcosystemProperty:
@@ -54,17 +82,17 @@ class TestPluginInitialize:
             plugin.initialize({})  # Missing required fields
 
     def test_creates_metrics_source(self, base_settings):
-        from core.metrics.prometheus import PrometheusMetricsSource
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+        from plugins.self_managed_kafka.telemetry_aliases import CanonicalizingMetricsSource
 
         plugin = SelfManagedKafkaPlugin()
         plugin.initialize(base_settings)
 
-        assert isinstance(plugin._metrics_source, PrometheusMetricsSource)
+        assert isinstance(plugin._metrics_source, CanonicalizingMetricsSource)
 
     def test_creates_metrics_source_with_basic_auth(self, base_settings):
-        from core.metrics.prometheus import PrometheusMetricsSource
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+        from plugins.self_managed_kafka.telemetry_aliases import CanonicalizingMetricsSource
 
         base_settings["metrics"] = {
             "url": "http://prom:9090",
@@ -75,7 +103,7 @@ class TestPluginInitialize:
         plugin = SelfManagedKafkaPlugin()
         plugin.initialize(base_settings)
 
-        assert isinstance(plugin._metrics_source, PrometheusMetricsSource)
+        assert isinstance(plugin._metrics_source, CanonicalizingMetricsSource)
 
     def test_no_admin_client_for_prometheus_source(self, base_settings):
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
@@ -197,13 +225,12 @@ class TestPluginTopicAttributionProvider:
 
         plugin = SelfManagedKafkaPlugin()
         plugin.initialize(base_settings)
-        source = MagicMock()
-        source.query.return_value = {"broker_topic_discovery": []}
+        source = _MetricsSourceFake()
         plugin._metrics_source = source
 
         plugin.build_shared_context("tenant-1")
 
-        queries = source.query.call_args.kwargs["queries"]
+        queries = source.query_calls[0][0]
         assert [query.key for query in queries] == ["broker_topic_discovery"]
 
     def test_new_pipeline_cycle_discards_stale_admin_partitionless_proof(
@@ -231,14 +258,14 @@ class TestPluginTopicAttributionProvider:
 
 class TestPluginGetMetricsSource:
     def test_returns_metrics_source_after_initialize(self, base_settings):
-        from core.metrics.prometheus import PrometheusMetricsSource
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+        from plugins.self_managed_kafka.telemetry_aliases import CanonicalizingMetricsSource
 
         plugin = SelfManagedKafkaPlugin()
         plugin.initialize(base_settings)
 
         source = plugin.get_metrics_source()
-        assert isinstance(source, PrometheusMetricsSource)
+        assert isinstance(source, CanonicalizingMetricsSource)
 
     def test_returns_none_before_initialize(self):
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
@@ -330,6 +357,33 @@ class TestPluginInjectsDependencies:
         cost_input = plugin.get_cost_input()
         assert cost_input._metrics_source is plugin._metrics_source
 
+    def test_initialize_builds_one_catalog_and_injects_the_same_canonicalizing_source_into_every_consumer(
+        self, base_settings: dict[str, object]
+    ) -> None:
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+        from plugins.self_managed_kafka.telemetry_aliases import CanonicalizingMetricsSource
+
+        base_settings["topic_attribution"] = {"enabled": True, "compute_policy": "shared_even_v1"}
+        base_settings["metric_name_overrides"] = {"kafka_log_log_size": "company_log_size"}
+        raw_source = _MetricsSourceFake()
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=raw_source):
+            plugin.initialize(base_settings)
+
+        handler = plugin.get_service_handlers()["kafka"]
+        cost_input = plugin.get_cost_input()
+        topic_provider = plugin.get_topic_attribution_provider()
+        shared_source = plugin.get_metrics_source()
+        shared_catalog = plugin._telemetry_catalog
+
+        assert isinstance(shared_source, CanonicalizingMetricsSource)
+        assert handler._metrics_source is shared_source
+        assert cost_input._metrics_source is shared_source
+        assert topic_provider._metrics_source is shared_source
+        assert handler._telemetry_catalog is shared_catalog
+        assert cost_input._telemetry_catalog is shared_catalog
+        assert topic_provider._telemetry_catalog is shared_catalog
+
 
 class TestPluginGetFallbackAllocator:
     """Tests for get_fallback_allocator() — GAP-074."""
@@ -348,14 +402,14 @@ class TestPluginTelemetryWiring:
     ) -> None:
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
 
-        source = MagicMock()
+        source = _MetricsSourceFake()
         plugin = SelfManagedKafkaPlugin()
         with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
             plugin.initialize(base_settings)
 
         assert plugin.get_service_handlers()["kafka"]._config.metrics_identifier == "kraft-a-001"
         assert plugin.get_cost_input()._config.metrics_identifier_label == "kafka_cluster_id"
-        source.query.assert_not_called()
+        assert source.query_calls == []
 
     def test_initialize_rejects_missing_metrics_identifier(self, base_settings: dict) -> None:
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
@@ -372,7 +426,10 @@ class TestPluginTelemetryWiring:
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
 
         plugin = SelfManagedKafkaPlugin()
-        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=MagicMock()):
+        with patch(
+            "plugins.self_managed_kafka.plugin.create_metrics_source",
+            return_value=_MetricsSourceFake(),
+        ):
             plugin.initialize(base_settings)
 
         assert isinstance(plugin, ScopeGatePlugin)

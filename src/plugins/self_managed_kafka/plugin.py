@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, cast
 from core.logging_context import safe_exception_context, safe_log_context
 from core.metrics.config import create_metrics_source
 from core.metrics.protocol import MetricsQueryError
-from core.models import MetricQuery
 from core.plugin.protocols import (
     ScopeBlockedError,
     ScopeGateDecision,
@@ -20,6 +19,7 @@ from core.plugin.protocols import (
 from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
 from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+from plugins.self_managed_kafka.telemetry_aliases import CanonicalizingMetricsSource, ResolvedTelemetryCatalog
 from plugins.self_managed_kafka.telemetry_contract import (
     MetricsScopeEvidence,
     MetricsScopeRequest,
@@ -51,6 +51,7 @@ class SelfManagedKafkaPlugin:
     def __init__(self) -> None:
         self._config: SelfManagedKafkaConfig | None = None
         self._metrics_source: MetricsSource | None = None
+        self._telemetry_catalog: ResolvedTelemetryCatalog | None = None
         self._admin_client: Any = None
         self._handler: SelfManagedKafkaHandler | None = None
         self._topic_attribution_provider: TopicAttributionProvider | None = None
@@ -79,8 +80,11 @@ class SelfManagedKafkaPlugin:
         self._scope_evidence_by_window.clear()
         self._scope_evidence_by_request.clear()
         self._scope_query_evidence.clear()
-        # Always create MetricsSource (required for cost construction)
-        self._metrics_source = create_metrics_source(self._config.metrics)
+        # Resolve aliases once and share the canonicalizing source with every
+        # self-managed telemetry consumer.
+        self._telemetry_catalog = ResolvedTelemetryCatalog(self._config)
+        raw_metrics_source = create_metrics_source(self._config.metrics)
+        self._metrics_source = CanonicalizingMetricsSource(raw_metrics_source)
 
         # Create AdminClient if using admin_api for resource discovery
         if self._config.resource_source.source == "admin_api":
@@ -94,6 +98,7 @@ class SelfManagedKafkaPlugin:
             metrics_source=self._metrics_source,
             admin_client=self._admin_client,
             metrics_scope_evidence=self._scope_evidence_for_window,
+            telemetry_catalog=self._telemetry_catalog,
         )
         if self._config.topic_attribution.enabled:
             from plugins.self_managed_kafka.overlays.topic_attribution import SelfManagedKafkaTopicAttributionProvider
@@ -101,6 +106,7 @@ class SelfManagedKafkaPlugin:
             self._topic_attribution_provider = SelfManagedKafkaTopicAttributionProvider(
                 config=self._config,
                 metrics_source=self._metrics_source,
+                telemetry_catalog=self._telemetry_catalog,
                 inventory_is_partitionless=lambda: (
                     self._handler is not None and self._handler.admin_inventory_is_partitionless
                 ),
@@ -126,6 +132,7 @@ class SelfManagedKafkaPlugin:
             inventory_is_partitionless=lambda: (
                 self._handler is not None and self._handler.admin_inventory_is_partitionless
             ),
+            telemetry_catalog=self._telemetry_catalog,
         )
 
     def get_overlay_config(self, name: str) -> OverlayConfig | None:
@@ -207,6 +214,7 @@ class SelfManagedKafkaPlugin:
                     step=step,
                     discovery_window_hours=self._config.discovery_window_hours,
                     include_topic_evidence=self._config.topic_attribution.enabled,
+                    telemetry_catalog=self._telemetry_catalog,
                 )
                 context = SMKSharedContext(
                     cluster_resource=cluster,
@@ -608,10 +616,15 @@ class SelfManagedKafkaPlugin:
         *,
         max_points: int,
     ) -> MetricsScopeEvidence:
-        query = MetricQuery(
+        catalog = self._telemetry_catalog
+        if catalog is None:
+            raise RuntimeError("Plugin not initialized. Call initialize() first.")
+        query = catalog.bind_query(
+            canonical_family="up",
             key="target_up",
-            query_expression="up{}",
-            label_keys=(request.metrics_identifier_label,),
+            query_expression=f"{catalog.metric_name('up')}{{}}",
+            canonical_label_keys=(),
+            passthrough_label_keys=(request.metrics_identifier_label,),
             resource_label=request.metrics_identifier_label,
         )
         try:
@@ -824,4 +837,5 @@ class SelfManagedKafkaPlugin:
         if self._metrics_source is not None:
             self._metrics_source.close()
             self._metrics_source = None
+        self._telemetry_catalog = None
         self._topic_attribution_provider = None

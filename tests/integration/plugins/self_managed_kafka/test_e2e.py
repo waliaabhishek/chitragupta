@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs
 
+import httpx
 import pytest
 
 from core.metrics.prometheus import PrometheusConfig, PrometheusMetricsSource
@@ -126,7 +127,7 @@ class _QuotaBackedMetricsSource:
                     )
                     for timestamp in timestamps
                 ]
-            elif "kafka_server_quota_byte_rate" in definition.query_expression:
+            elif definition.key in {"principal_quota_produce", "principal_quota_fetch"}:
                 quota_type = "Produce" if 'quota_type="Produce"' in definition.query_expression else "Fetch"
                 if self._fail_first_quota_type == quota_type:
                     self._fail_first_quota_type = None
@@ -211,6 +212,253 @@ def test_plugin_initialization_produces_cluster_scoped_cost_construction() -> No
     assert isinstance(plugin, ScopeGatePlugin)
 
 
+def test_initialized_plugin_with_real_prometheus_aliases_persists_canonical_allocations(
+    tmp_path: Path,
+) -> None:
+    from core.config.models import PluginSettingsBase, TenantConfig
+    from core.engine.orchestrator import ChargebackOrchestrator
+    from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+    from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+    from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
+
+    settings = _settings()
+    settings.update(
+        {
+            "metrics_identifier": "kraft-a-001",
+            "metrics_identifier_label": "deployment",
+            "identity_source": {
+                "source": "both",
+                "principal_to_team": {"User:alice": "team-data"},
+                "default_team": "UNASSIGNED",
+            },
+            "principal_attribution": {
+                "enabled": True,
+                "scrape_interval_seconds": 3600,
+                "max_gap_seconds": 7200,
+                "compute_policy": "unattributed",
+                "storage_policy": "unattributed",
+            },
+            "topic_attribution": {"enabled": True, "compute_policy": "shared_even_v1"},
+            "metrics": {"url": "http://prometheus.test", "max_workers": 1, "max_retries": 1},
+            "metric_name_overrides": {
+                "up": "company_up",
+                "kafka_server_brokertopicmetrics_alltopics_bytesin_total": "company_all_in",
+                "kafka_server_brokertopicmetrics_alltopics_bytesout_total": "company_all_out",
+                "kafka_log_log_size": "company_log_size",
+                "kafka_server_brokertopicmetrics_bytesin_total": "company_topic_in",
+                "kafka_server_brokertopicmetrics_bytesout_total": "company_topic_out",
+                "kafka_server_quota_byte_rate": "company_quota_rate",
+                "kafka_server_quota_throttle_time_ms": "company_quota_throttle",
+            },
+            "label_name_overrides": {
+                "kafka_server_brokertopicmetrics_alltopics_bytesin_total": {"broker": "node"},
+                "kafka_server_brokertopicmetrics_alltopics_bytesout_total": {"broker": "node"},
+                "kafka_log_log_size": {"broker": "node", "topic": "topic_name", "partition": "part"},
+                "kafka_server_brokertopicmetrics_bytesin_total": {"broker": "node", "topic": "topic_name"},
+                "kafka_server_brokertopicmetrics_bytesout_total": {"broker": "node", "topic": "topic_name"},
+                "kafka_server_quota_byte_rate": {
+                    "broker": "node",
+                    "quota_type": "qtype",
+                    "quota_scope": "qscope",
+                    "user": "principal",
+                    "client_id": "client",
+                },
+                "kafka_server_quota_throttle_time_ms": {
+                    "broker": "node",
+                    "quota_type": "qtype",
+                    "quota_scope": "qscope",
+                    "user": "principal",
+                    "client_id": "client",
+                },
+            },
+        }
+    )
+    observed_queries: list[str] = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        data = {key: values[-1] for key, values in parse_qs(request.content.decode()).items()}
+        expression = data["query"]
+        observed_queries.append(expression)
+        if request.url.path.endswith("query_range"):
+            start = datetime.fromisoformat(data["start"])
+            end = datetime.fromisoformat(data["end"])
+            step = timedelta(seconds=int(data["step"]))
+            timestamps = _range_grid(start, end, step)
+        else:
+            end = datetime.fromisoformat(data["time"])
+            timestamps = (end,)
+
+        metric: dict[str, str]
+        if "company_up" in expression:
+            metric = {"deployment": "kraft-a-001"}
+            values = [(timestamp.timestamp(), "1") for timestamp in timestamps]
+        elif "company_quota_rate" in expression or "company_quota_throttle" in expression:
+            quota_type = "Produce" if 'qtype="Produce"' in expression else "Fetch"
+            metric = {
+                "deployment": "kraft-a-001",
+                "node": "1",
+                "qtype": quota_type,
+                "qscope": "user",
+                "principal": "alice",
+                "client": "not_applicable",
+            }
+            quota_start = timestamps[-1] - timedelta(hours=24)
+            values = [((quota_start + timedelta(hours=index)).timestamp(), "1.0000") for index in range(25)]
+        elif "company_topic_in" in expression or "company_topic_out" in expression:
+            metric = {"node": "1", "topic_name": "orders"}
+            values = [(timestamp.timestamp(), "1073741824") for timestamp in timestamps]
+        elif "company_log_size" in expression:
+            metric = {"node": "1", "topic_name": "orders", "part": "0"}
+            values = [(timestamp.timestamp(), "1073741824") for timestamp in timestamps]
+        else:
+            metric = {}
+            values = [(timestamp.timestamp(), "1073741824") for timestamp in timestamps]
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": {
+                    "resultType": "matrix",
+                    "result": [{"metric": metric, "values": values}],
+                },
+            },
+            request=request,
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(transport))
+    raw_source = PrometheusMetricsSource(
+        PrometheusConfig(url="http://prometheus.test", max_workers=1, max_retries=1),
+        client=client,
+    )
+    raw_close = MagicMock(wraps=raw_source.close)
+    raw_source.close = raw_close
+    plugin = SelfManagedKafkaPlugin()
+    with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=raw_source):
+        plugin.initialize(settings)
+
+    shared_source = plugin.get_metrics_source()
+    handler = plugin.get_service_handlers()["kafka"]
+    cost_input = plugin.get_cost_input()
+    topic_provider = plugin.get_topic_attribution_provider()
+    assert shared_source is not None
+    assert topic_provider is not None
+    assert handler._metrics_source is shared_source
+    assert cost_input._metrics_source is shared_source
+    assert topic_provider._metrics_source is shared_source
+    assert handler._telemetry_catalog is cost_input._telemetry_catalog is topic_provider._telemetry_catalog
+
+    manual_lines = list(
+        cost_input.gather(
+            "tenant-1",
+            datetime(2026, 8, 1, tzinfo=UTC),
+            datetime(2026, 8, 2, tzinfo=UTC),
+            _unit_of_work(),
+        )
+    )
+    fallback = topic_provider.attribute_cluster(
+        tenant_id="tenant-1",
+        cluster_resource_id="billing-cluster-a",
+        env_id="cluster-a",
+        billing_lines=manual_lines,
+        resource_topics=frozenset({"orders"}),
+        metrics_step=timedelta(hours=1),
+    )
+    assert fallback.rows
+    topic_provider.prepare_evidence_chunk(
+        ((datetime(2026, 8, 1, tzinfo=UTC), datetime(2026, 8, 2, tzinfo=UTC)),),
+        timedelta(hours=1),
+    )
+    prepared = topic_provider.attribute_cluster(
+        tenant_id="tenant-1",
+        cluster_resource_id="billing-cluster-a",
+        env_id="cluster-a",
+        billing_lines=manual_lines,
+        resource_topics=frozenset({"orders"}),
+        metrics_step=timedelta(hours=1),
+    )
+    assert prepared.rows
+    topic_provider.clear_evidence_chunk()
+    from plugins.self_managed_kafka.gathering.prometheus import run_broker_topic_discovery
+
+    legacy_brokers, legacy_topics = run_broker_topic_discovery(
+        shared_source,
+        metrics_identifier_label="deployment",
+        metrics_identifier="kraft-a-001",
+        step=timedelta(hours=1),
+        include_topic_evidence=False,
+        telemetry_catalog=plugin._telemetry_catalog,
+    )
+    assert legacy_brokers == frozenset({"1"})
+    assert legacy_topics == frozenset({"orders"})
+
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'physical-aliases.db'}",
+        SelfManagedKafkaStorageModule(),
+        use_migrations=True,
+    )
+    backend.create_tables()
+    tenant = TenantConfig(
+        ecosystem="self_managed_kafka",
+        tenant_id="tenant-1",
+        lookback_days=2,
+        cutoff_days=1,
+        plugin_settings=PluginSettingsBase.model_validate(settings),
+    )
+    orchestrator = ChargebackOrchestrator("tenant", tenant, plugin, backend, shared_source)
+    try:
+        with patch("core.engine.orchestrator.datetime") as patched_datetime:
+            patched_datetime.now.return_value = datetime(2026, 8, 20, tzinfo=UTC)
+            patched_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert result.errors == []
+        assert result.dates_calculated == 1
+        readiness = handler._principal_telemetry_evidence(
+            "tenant-1",
+            "billing-cluster-a",
+            datetime(2026, 8, 2, tzinfo=UTC),
+            timedelta(days=1),
+        )
+        assert readiness.status.value == "observed"
+        assert any('company_up{deployment="kraft-a-001"}' in query for query in observed_queries)
+        assert any("group by (node, topic_name) (company_topic_in" in query for query in observed_queries)
+        assert any("sum by (topic_name) (increase(company_topic_out" in query for query in observed_queries)
+        assert any(
+            "sum by (qtype, qscope, principal, client) (company_quota_rate" in query for query in observed_queries
+        )
+        assert any(
+            'company_quota_rate{deployment="kraft-a-001",qtype="Produce"}' in query for query in observed_queries
+        )
+        assert any("sum(increase(company_all_in" in query for query in observed_queries)
+
+        with backend.create_read_only_unit_of_work() as uow:
+            dates = uow.chargebacks.get_distinct_dates("self_managed_kafka", "tenant-1")
+            rows = [
+                row
+                for tracking_date in dates
+                for row in uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", tracking_date)
+            ]
+            topic_dates = uow.topic_attributions.get_distinct_dates("self_managed_kafka", "tenant-1")
+            topic_rows = uow.topic_attributions.find_by_date("self_managed_kafka", "tenant-1", dates[0])
+
+        assert dates
+        assert set(topic_dates) == set(dates)
+        assert rows
+        assert any(row.product_type == "SELF_KAFKA_NETWORK_INGRESS" for row in rows)
+        assert any(row.product_type == "SELF_KAFKA_NETWORK_EGRESS" for row in rows)
+        principal_rows = [row for row in rows if row.identity_id == "User:alice"]
+        assert principal_rows
+        assert {row.allocation_method for row in principal_rows} == {"principal_quota_ready_v1"}
+        assert {row.metadata.get("team") for row in principal_rows} == {"team-data"}
+        assert any(row.topic_name == "orders" for row in topic_rows)
+    finally:
+        plugin.close()
+        client.close()
+        backend.dispose()
+
+    raw_close.assert_called_once_with()
+
+
 def test_initialized_plugin_calculate_phase_persists_quota_backed_principal_rows_with_team_snapshot(
     tmp_path: Path,
 ) -> None:
@@ -233,6 +481,7 @@ def test_initialized_plugin_calculate_phase_persists_quota_backed_principal_rows
         "compute_policy": "static_even_v1",
         "storage_policy": "unattributed",
     }
+    settings["metric_name_overrides"] = {"kafka_server_quota_byte_rate": "company_quota_rate"}
     source = _QuotaBackedMetricsSource()
     plugin = SelfManagedKafkaPlugin()
     with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
@@ -279,13 +528,13 @@ def test_initialized_plugin_calculate_phase_persists_quota_backed_principal_rows
     quota_calls = [
         (definitions, end)
         for definitions, _, end, _, _ in source.calls
-        if any("kafka_server_quota_byte_rate" in definition.query_expression for definition in definitions)
+        if any("company_quota_rate" in definition.query_expression for definition in definitions)
     ]
     assert len(quota_calls) == 2
     assert [len(definitions) for definitions, _ in quota_calls] == [1, 1]
     assert {definition.query_expression for definitions, _ in quota_calls for definition in definitions} == {
-        'kafka_server_quota_byte_rate{kafka_cluster_id="kraft-a-001",quota_type="Produce"}[93600s]',
-        'kafka_server_quota_byte_rate{kafka_cluster_id="kraft-a-001",quota_type="Fetch"}[93600s]',
+        'company_quota_rate{kafka_cluster_id="kraft-a-001",quota_type="Produce"}[93600s]',
+        'company_quota_rate{kafka_cluster_id="kraft-a-001",quota_type="Fetch"}[93600s]',
     }
     expected_end = principal_rows[0].timestamp + timedelta(days=1)
     assert {end for _, end in quota_calls} == {expected_end}

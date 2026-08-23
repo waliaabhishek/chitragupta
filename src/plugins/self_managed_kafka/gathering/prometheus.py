@@ -13,44 +13,86 @@ from core.models import CoreIdentity, CoreResource, Identity, MetricQuery, Resou
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
     from plugins.self_managed_kafka.config import IdentitySourceConfig
+    from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
 logger = logging.getLogger(__name__)
 
 
-def _broker_topic_discovery_queries(metrics_identifier_label: str) -> list[MetricQuery]:
+def _broker_topic_discovery_queries(
+    telemetry_catalog: ResolvedTelemetryCatalog | str | None = None,
+    metrics_identifier_label: str | None = None,
+) -> list[MetricQuery]:
     """Build the independent topic-evidence discovery queries.
 
     Kafka creates the bytes-in and bytes-out meters lazily, while log-size is
     present for loaded local partitions. Discovery therefore uses their union.
     """
-    return [
-        MetricQuery(
-            key="broker_topic_discovery_bytes_in",
-            query_expression="group by (broker, topic) (kafka_server_brokertopicmetrics_bytesin_total{})",
-            label_keys=("broker", "topic"),
-            resource_label=metrics_identifier_label,
-        ),
-        MetricQuery(
-            key="broker_topic_discovery_bytes_out",
-            query_expression="group by (broker, topic) (kafka_server_brokertopicmetrics_bytesout_total{})",
-            label_keys=("broker", "topic"),
-            resource_label=metrics_identifier_label,
-        ),
-        MetricQuery(
-            key="broker_topic_discovery_log_size",
-            query_expression="group by (broker, topic) (kafka_log_log_size{})",
-            label_keys=("broker", "topic"),
-            resource_label=metrics_identifier_label,
-        ),
-    ]
+    catalog = None if isinstance(telemetry_catalog, (str, type(None))) else telemetry_catalog
+    selector_label = telemetry_catalog if isinstance(telemetry_catalog, str) else metrics_identifier_label
+    if selector_label is None:
+        raise ValueError("metrics_identifier_label is required")
+
+    families = (
+        ("broker_topic_discovery_bytes_in", "kafka_server_brokertopicmetrics_bytesin_total"),
+        ("broker_topic_discovery_bytes_out", "kafka_server_brokertopicmetrics_bytesout_total"),
+        ("broker_topic_discovery_log_size", "kafka_log_log_size"),
+    )
+    queries: list[MetricQuery] = []
+    for key, family in families:
+        metric_name = family if catalog is None else catalog.metric_name(family)
+        broker_label = "broker" if catalog is None else catalog.label_name(family, "broker")
+        topic_label = "topic" if catalog is None else catalog.label_name(family, "topic")
+        expression = f"group by ({broker_label}, {topic_label}) ({metric_name}{{}})"
+        if catalog is None:
+            queries.append(
+                MetricQuery(
+                    key=key,
+                    query_expression=expression,
+                    label_keys=("broker", "topic", selector_label),
+                    resource_label=selector_label,
+                )
+            )
+        else:
+            queries.append(
+                catalog.bind_query(
+                    canonical_family=family,
+                    key=key,
+                    query_expression=expression,
+                    canonical_label_keys=("broker", "topic"),
+                    passthrough_label_keys=(selector_label,),
+                    resource_label=selector_label,
+                )
+            )
+    return queries
 
 
-def _legacy_broker_topic_discovery_query(metrics_identifier_label: str) -> MetricQuery:
+def _legacy_broker_topic_discovery_query(
+    telemetry_catalog: ResolvedTelemetryCatalog | str | None = None,
+    metrics_identifier_label: str | None = None,
+) -> MetricQuery:
     """Build the pre-overlay discovery query used when the overlay is disabled."""
-    return MetricQuery(
+    catalog = None if isinstance(telemetry_catalog, (str, type(None))) else telemetry_catalog
+    selector_label = telemetry_catalog if isinstance(telemetry_catalog, str) else metrics_identifier_label
+    if selector_label is None:
+        raise ValueError("metrics_identifier_label is required")
+    family = "kafka_server_brokertopicmetrics_bytesin_total"
+    metric_name = family if catalog is None else catalog.metric_name(family)
+    broker_label = "broker" if catalog is None else catalog.label_name(family, "broker")
+    topic_label = "topic" if catalog is None else catalog.label_name(family, "topic")
+    expression = f"group by ({broker_label}, {topic_label}) ({metric_name}{{}})"
+    if catalog is None:
+        return MetricQuery(
+            key="broker_topic_discovery",
+            query_expression=expression,
+            label_keys=("broker", "topic", selector_label),
+            resource_label=selector_label,
+        )
+    return catalog.bind_query(
+        canonical_family=family,
         key="broker_topic_discovery",
-        query_expression="group by (broker, topic) (kafka_server_brokertopicmetrics_bytesin_total{})",
-        label_keys=("broker", "topic"),
-        resource_label=metrics_identifier_label,
+        query_expression=expression,
+        canonical_label_keys=("broker", "topic"),
+        passthrough_label_keys=(selector_label,),
+        resource_label=selector_label,
     )
 
 
@@ -89,13 +131,19 @@ def run_broker_topic_discovery(
     step: timedelta,
     discovery_window_hours: int = 1,
     include_topic_evidence: bool = True,
+    telemetry_catalog: ResolvedTelemetryCatalog | None = None,
 ) -> tuple[frozenset[str], frozenset[str]]:
     """Discover broker and topic labels without deriving any identities."""
     now = datetime.now(UTC)
     queries = (
-        _broker_topic_discovery_queries(metrics_identifier_label)
+        _broker_topic_discovery_queries(telemetry_catalog or metrics_identifier_label, metrics_identifier_label)
         if include_topic_evidence
-        else [_legacy_broker_topic_discovery_query(metrics_identifier_label)]
+        else [
+            _legacy_broker_topic_discovery_query(
+                telemetry_catalog or metrics_identifier_label,
+                metrics_identifier_label,
+            )
+        ]
     )
     results = metrics_source.query(
         queries=queries,

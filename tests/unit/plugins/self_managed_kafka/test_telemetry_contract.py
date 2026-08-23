@@ -728,6 +728,153 @@ class TestMetricContractTypes:
 
 
 class TestTargetScopeEvidence:
+    def test_normal_plugin_initialization_wraps_a_real_prometheus_source_and_normalizes_physical_discovery_labels(
+        self,
+    ) -> None:
+        from urllib.parse import parse_qs
+
+        from core.plugin.protocols import ScopeGateDecision
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        observed_queries: list[str] = []
+
+        def transport(request: httpx.Request) -> httpx.Response:
+            data = {key: values[-1] for key, values in parse_qs(request.content.decode()).items()}
+            expression = data["query"]
+            observed_queries.append(expression)
+            if "company_up" in expression:
+                labels = {"deployment": "kafka-prod"}
+            elif "company_topic_in" in expression or "company_topic_out" in expression:
+                labels = {"deployment": "kafka-prod", "node": "1", "topic_name": "orders"}
+            else:
+                labels = {"deployment": "kafka-prod", "node": "1", "topic_name": "orders", "part": "0"}
+            start = datetime.fromisoformat(data["start"])
+            end = datetime.fromisoformat(data["end"])
+            step = timedelta(seconds=int(data["step"]))
+            timestamps: list[datetime] = []
+            timestamp = start
+            while timestamp <= end:
+                timestamps.append(timestamp)
+                timestamp += step
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "data": {
+                        "resultType": "matrix",
+                        "result": [
+                            {"metric": labels, "values": [[timestamp.timestamp(), "1"] for timestamp in timestamps]}
+                        ],
+                    },
+                },
+                request=request,
+            )
+
+        client = httpx.Client(transport=httpx.MockTransport(transport))
+        raw_source = PrometheusMetricsSource(
+            PrometheusConfig(url="http://prometheus.test", max_workers=1, max_retries=1),
+            client=client,
+        )
+        raw_close = MagicMock(wraps=raw_source.close)
+        raw_source.close = raw_close
+        settings = _settings()
+        settings.update(
+            {
+                "metrics_identifier": "kafka-prod",
+                "metrics_identifier_label": "deployment",
+                "topic_attribution": {"enabled": True, "compute_policy": "shared_even_v1"},
+                "metric_name_overrides": {
+                    "up": "company_up",
+                    "kafka_server_brokertopicmetrics_bytesin_total": "company_topic_in",
+                    "kafka_server_brokertopicmetrics_bytesout_total": "company_topic_out",
+                    "kafka_log_log_size": "company_log_size",
+                },
+                "label_name_overrides": {
+                    "kafka_server_brokertopicmetrics_bytesin_total": {"broker": "node", "topic": "topic_name"},
+                    "kafka_server_brokertopicmetrics_bytesout_total": {"broker": "node", "topic": "topic_name"},
+                    "kafka_log_log_size": {"broker": "node", "topic": "topic_name", "partition": "part"},
+                },
+            }
+        )
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=raw_source):
+            plugin.initialize(settings)
+
+        shared = plugin.build_shared_context("tenant-1")
+        uow = MagicMock()
+        uow.self_managed_kafka_scope_state.get.return_value = None
+        scope = plugin.prepare_gather_scope(
+            "tenant-1",
+            datetime(2026, 8, 1, tzinfo=UTC),
+            datetime(2026, 8, 1, 1, tzinfo=UTC),
+            uow,
+        )
+        plugin.close()
+        client.close()
+
+        assert shared.discovered_brokers == frozenset({"1"})
+        assert shared.discovered_topics == frozenset({"orders"})
+        assert scope.decision is ScopeGateDecision.ALLOW
+        assert 'group by (node, topic_name) (company_topic_in{deployment="kafka-prod"})' in observed_queries
+        assert 'group by (node, topic_name) (company_topic_out{deployment="kafka-prod"})' in observed_queries
+        assert 'group by (node, topic_name) (company_log_size{deployment="kafka-prod"})' in observed_queries
+        assert 'company_up{deployment="kafka-prod"}' in observed_queries
+        raw_close.assert_called_once_with()
+
+    def test_scope_target_health_resolves_the_up_alias_while_retaining_the_physical_global_selector(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        settings = _settings()
+        settings["metrics_identifier"] = "kafka-prod"
+        settings["metrics_identifier_label"] = "deployment"
+        settings["metric_name_overrides"] = {"up": "company_up"}
+        source = _MetricsSource(
+            lambda queries, start, end, step, resource_id_filter: {
+                query.key: [
+                    MetricRow(
+                        timestamp=timestamp,
+                        metric_key=query.key,
+                        value=1.0,
+                        labels={"deployment": "kafka-prod"},
+                        source_series=(("__name__", "company_up"), ("deployment", "kafka-prod")),
+                    )
+                    for timestamp in _expected_timestamps(start, end, step)
+                ]
+                for query in queries
+            }
+        )
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+            plugin.initialize(settings)
+        uow = MagicMock()
+        uow.self_managed_kafka_scope_state.get.return_value = None
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        end = start + timedelta(days=1)
+
+        result = plugin.prepare_gather_scope("tenant-1", start, end, uow)
+
+        assert result.decision is ScopeGateDecision.ALLOW
+        [call] = source.calls
+        (query,), query_start, query_end, query_step, resource_filter = call
+        assert (
+            query.query_expression,
+            query.label_keys,
+            query.resource_label,
+            query_start,
+            query_end,
+            query_step,
+            resource_filter,
+        ) == (
+            "company_up{}",
+            ("deployment",),
+            "deployment",
+            start,
+            end,
+            timedelta(seconds=3600),
+            "kafka-prod",
+        )
+
     def test_scope_validation_uses_bounded_queries_for_a_long_historical_window(self) -> None:
         from core.plugin.protocols import ScopeGateDecision
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin

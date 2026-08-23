@@ -967,3 +967,60 @@ def _grid(start: datetime, end: datetime, step: timedelta) -> tuple[datetime, ..
 
 def _logical_family_queries(source: MagicMock) -> int:
     return sum(len(call.kwargs["queries"]) for call in source.query.call_args_list)
+
+
+def test_cost_queries_use_resolved_physical_metric_names_without_changing_daily_semantics() -> None:
+    from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+    from plugins.self_managed_kafka.cost_input import _cost_queries
+    from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
+
+    config = SelfManagedKafkaConfig.from_plugin_settings(
+        {
+            "cluster_id": "billing-cluster-a",
+            "metrics_identifier": "kafka-prod",
+            "metrics_identifier_label": "deployment",
+            "broker_count": 3,
+            "cost_model": {
+                "compute_hourly_rate": "0.10",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
+            },
+            "metrics": {"url": "http://prometheus:9090"},
+            "metric_name_overrides": {
+                "kafka_server_brokertopicmetrics_alltopics_bytesin_total": "company_alltopics_in",
+                "kafka_server_brokertopicmetrics_alltopics_bytesout_total": "company_alltopics_out",
+                "kafka_log_log_size": "company_log_size",
+            },
+        }
+    )
+
+    queries = _cost_queries(ResolvedTelemetryCatalog(config), config.metrics_identifier_label)
+
+    observed = [
+        (query.key, query.query_expression, query.query_mode, query.label_keys, query.resource_label)
+        for query in queries
+    ]
+    assert observed == [
+        (
+            "cluster_bytes_in",
+            "sum(increase(company_alltopics_in{}[86400s]))",
+            "instant",
+            ("deployment",),
+            "deployment",
+        ),
+        (
+            "cluster_bytes_out",
+            "sum(increase(company_alltopics_out{}[86400s]))",
+            "instant",
+            ("deployment",),
+            "deployment",
+        ),
+        (
+            "cluster_storage_bytes",
+            "sum(company_log_size{})",
+            "range",
+            ("deployment",),
+            "deployment",
+        ),
+    ]

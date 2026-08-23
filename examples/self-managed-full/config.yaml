@@ -169,6 +169,18 @@ tenants:
         # auth_type: bearer
         # bearer_token: "${PROMETHEUS_TOKEN}"
 
+      # ── Prometheus name aliases (optional) ────────────────────────────────
+      # Canonical names are keys; physical Prometheus names are values. These
+      # mappings are optional and partial. Leaving them commented preserves
+      # the canonical defaults shown in the metric inventory.
+      # metric_name_overrides:
+      #   kafka_log_log_size: company_kafka_partition_size
+      # label_name_overrides:
+      #   kafka_log_log_size:
+      #     broker: node
+      #     topic: topic_name
+      #     partition: partition_number
+
       # ── Quota-backed principal attribution (optional) ───────────────────────
       # Off by default. When enabled, Produce and Fetch quota gauges allocate the
       # network pools separately. Scrape interval and maximum gap must match your

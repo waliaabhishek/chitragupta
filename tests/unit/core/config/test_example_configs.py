@@ -208,6 +208,40 @@ class TestSelfManagedExamples:
         assert all("principal label on BrokerTopicMetrics" not in source for source in documents)
         assert all("quota" in source.lower() for source in documents)
 
+    def test_self_managed_full_example_documents_a_parseable_alias_template_without_changing_default_resolution(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        config_path = EXAMPLES_DIR / "self-managed-full" / "config.yaml"
+        monkeypatch.setenv("PROMETHEUS_URL", "http://localhost:9090")
+        app_config = load_config(config_path)
+        source = config_path.read_text(encoding="utf-8")
+        tenant = app_config.tenants["kafka-dc1"]
+        plugin_config = SelfManagedKafkaConfig.from_plugin_settings(tenant.plugin_settings.model_dump())
+
+        assert plugin_config.metric_name_overrides == {}
+        assert plugin_config.label_name_overrides == {}
+        assert "metric_name_overrides:" in source
+        assert "kafka_log_log_size: company_kafka_partition_size" in source
+        assert "label_name_overrides:" in source
+        assert "partition: partition_number" in source
+
+    def test_self_managed_reference_documents_alias_scope_checker_and_unsupported_transformations(self) -> None:
+        source = Path("docs/configuration/self-managed-reference.md").read_text(encoding="utf-8")
+
+        for required_text in (
+            "metric_name_overrides",
+            "label_name_overrides",
+            "metrics_identifier_label",
+            "--check-self-managed-telemetry",
+            "not_observed",
+            "inconclusive",
+            "label-value mapping",
+            "arbitrary PromQL",
+        ):
+            assert required_text in source
+
 
 class TestSelfManagedKafkaTelemetryLabExample:
     LAB_DIR = EXAMPLES_DIR / "self-managed-kafka-telemetry-lab"

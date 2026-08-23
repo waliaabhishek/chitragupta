@@ -185,8 +185,79 @@ class TestBrokerTopicDiscovery:
         _, kwargs = metrics_source.query.call_args
         assert kwargs["resource_id_filter"] == "kraft-a-001"
         query = kwargs["queries"][0]
-        assert query.label_keys == ("broker", "topic")
+        assert query.label_keys == ("broker", "topic", "kafka_cluster_id")
         assert query.resource_label == "kafka_cluster_id"
+
+    def test_discovery_queries_share_resolved_metric_and_label_aliases_for_overlay_and_legacy_paths(self) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+        from plugins.self_managed_kafka.gathering.prometheus import (
+            _broker_topic_discovery_queries,
+            _legacy_broker_topic_discovery_query,
+        )
+        from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(
+            {
+                "cluster_id": "billing-cluster-a",
+                "metrics_identifier": "kafka-prod",
+                "metrics_identifier_label": "deployment",
+                "broker_count": 3,
+                "cost_model": {
+                    "compute_hourly_rate": "0.10",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
+                },
+                "metrics": {"url": "http://prometheus:9090"},
+                "metric_name_overrides": {
+                    "kafka_server_brokertopicmetrics_bytesin_total": "company_topic_in",
+                    "kafka_server_brokertopicmetrics_bytesout_total": "company_topic_out",
+                    "kafka_log_log_size": "company_log_size",
+                },
+                "label_name_overrides": {
+                    "kafka_server_brokertopicmetrics_bytesin_total": {"broker": "node", "topic": "topic_name"},
+                    "kafka_server_brokertopicmetrics_bytesout_total": {"broker": "node", "topic": "topic_name"},
+                    "kafka_log_log_size": {"broker": "node", "topic": "topic_name"},
+                },
+            }
+        )
+        catalog = ResolvedTelemetryCatalog(config)
+
+        overlay_queries = _broker_topic_discovery_queries(catalog, config.metrics_identifier_label)
+        legacy_query = _legacy_broker_topic_discovery_query(catalog, config.metrics_identifier_label)
+
+        observed = [
+            (query.key, query.query_expression, query.label_keys, query.resource_label) for query in overlay_queries
+        ]
+        assert observed == [
+            (
+                "broker_topic_discovery_bytes_in",
+                "group by (node, topic_name) (company_topic_in{})",
+                ("node", "topic_name", "deployment"),
+                "deployment",
+            ),
+            (
+                "broker_topic_discovery_bytes_out",
+                "group by (node, topic_name) (company_topic_out{})",
+                ("node", "topic_name", "deployment"),
+                "deployment",
+            ),
+            (
+                "broker_topic_discovery_log_size",
+                "group by (node, topic_name) (company_log_size{})",
+                ("node", "topic_name", "deployment"),
+                "deployment",
+            ),
+        ]
+        assert (
+            legacy_query.query_expression,
+            legacy_query.label_keys,
+            legacy_query.resource_label,
+        ) == (
+            "group by (node, topic_name) (company_topic_in{})",
+            ("node", "topic_name", "deployment"),
+            "deployment",
+        )
 
 
 class TestLoadStaticIdentities:

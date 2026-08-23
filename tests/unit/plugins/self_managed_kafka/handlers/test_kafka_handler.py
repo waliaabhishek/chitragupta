@@ -310,3 +310,93 @@ class TestHandlerIdentityResolution:
         handler = SelfManagedKafkaHandler(base_config, mock_metrics_source)
 
         assert handler.get_metrics_for_product_type(product_type) == []
+
+
+class TestHandlerTelemetryAliases:
+    def test_legacy_readiness_and_measured_quota_queries_use_resolved_names_without_value_mapping(self) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+        from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
+        from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(
+            {
+                "cluster_id": "billing-cluster-a",
+                "metrics_identifier": "kafka-prod",
+                "metrics_identifier_label": "deployment",
+                "broker_count": 3,
+                "cost_model": {
+                    "compute_hourly_rate": "0.10",
+                    "storage_per_gib_hourly": "0.0001",
+                    "network_ingress_per_gib": "0.01",
+                    "network_egress_per_gib": "0.02",
+                },
+                "metrics": {"url": "http://prometheus:9090"},
+                "identity_source": {"source": "both"},
+                "metric_name_overrides": {
+                    "kafka_server_quota_byte_rate": "company_quota_rate",
+                    "kafka_server_quota_throttle_time_ms": "company_quota_throttle",
+                },
+                "label_name_overrides": {
+                    "kafka_server_quota_byte_rate": {
+                        "broker": "node",
+                        "quota_type": "quota_kind",
+                        "quota_scope": "scope_name",
+                        "user": "principal_name",
+                        "client_id": "client_name",
+                    },
+                    "kafka_server_quota_throttle_time_ms": {
+                        "broker": "node",
+                        "quota_type": "quota_kind",
+                        "quota_scope": "scope_name",
+                        "user": "principal_name",
+                        "client_id": "client_name",
+                    },
+                },
+            }
+        )
+        source = MagicMock()
+        source.query.return_value = {"quota_byte_rate": [], "quota_throttle_time_ms": []}
+        handler = SelfManagedKafkaHandler(
+            config,
+            source,
+            telemetry_catalog=ResolvedTelemetryCatalog(config),
+        )
+
+        measured = handler._quota_query("ingress", "Produce", timedelta(hours=2))
+        evidence = handler._principal_telemetry_evidence(
+            "tenant-1",
+            "billing-cluster-a",
+            datetime(2026, 8, 1, tzinfo=UTC),
+            timedelta(days=1),
+        )
+
+        assert (
+            measured.query_expression,
+            measured.label_keys,
+            measured.resource_label,
+            measured.query_mode,
+        ) == (
+            'company_quota_rate{deployment="kafka-prod",quota_kind="Produce"}[7200s]',
+            ("node", "deployment", "quota_kind", "scope_name", "principal_name", "client_name"),
+            "deployment",
+            "instant",
+        )
+        readiness_queries = source.query.call_args.kwargs["queries"]
+        observed = [
+            (query.key, query.query_expression, query.label_keys, query.resource_label) for query in readiness_queries
+        ]
+        assert observed == [
+            (
+                "quota_byte_rate",
+                "sum by (quota_kind, scope_name, principal_name, client_name) (company_quota_rate{})",
+                ("quota_kind", "scope_name", "principal_name", "client_name", "deployment"),
+                "deployment",
+            ),
+            (
+                "quota_throttle_time_ms",
+                "avg by (quota_kind, scope_name, principal_name, client_name) (company_quota_throttle{})",
+                ("quota_kind", "scope_name", "principal_name", "client_name", "deployment"),
+                "deployment",
+            ),
+        ]
+        assert evidence.status.value == "not_observed"

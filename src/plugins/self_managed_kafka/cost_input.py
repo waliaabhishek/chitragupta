@@ -11,7 +11,7 @@ import logging
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from core.metrics.protocol import MetricsQueryError
 from core.models import BillingLineItem, CoreBillingLineItem, MetricQuery
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from core.models import MetricRow
     from core.storage.interface import UnitOfWork
     from plugins.self_managed_kafka.config import CostModelConfig, SelfManagedKafkaConfig
+    from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
 
 logger = logging.getLogger(__name__)
 ECOSYSTEM = "self_managed_kafka"
@@ -35,28 +36,75 @@ class _MissingStorageEvidenceError(MetricsQueryError):
     """A retryable daily storage-evidence gap that must not abort other days."""
 
 
-def _cost_queries(metrics_identifier_label: str) -> list[MetricQuery]:
+def _cost_queries(
+    telemetry_catalog: ResolvedTelemetryCatalog | str | None = None,
+    metrics_identifier_label: str | None = None,
+) -> list[MetricQuery]:
     """Build cost queries bound to this configured Prometheus target scope."""
+    selector_label: str
+    catalog: ResolvedTelemetryCatalog | None
+    if isinstance(telemetry_catalog, str):
+        # Keep the helper compatible with callers that construct baseline queries directly.
+        selector_label = telemetry_catalog
+        catalog = None
+    elif telemetry_catalog is not None and metrics_identifier_label is not None:
+        selector_label = metrics_identifier_label
+        catalog = telemetry_catalog
+    elif telemetry_catalog is None and metrics_identifier_label is not None:
+        selector_label = metrics_identifier_label
+        catalog = None
+    else:
+        raise ValueError("metrics_identifier_label is required")
+
+    def bind(
+        family: str,
+        *,
+        key: str,
+        query_expression: str,
+        query_mode: Literal["instant", "range"] = "range",
+    ) -> MetricQuery:
+        if catalog is None:
+            return MetricQuery(
+                key=key,
+                query_expression=query_expression,
+                label_keys=(),
+                resource_label=selector_label,
+                query_mode=query_mode,
+            )
+        return catalog.bind_query(
+            canonical_family=family,
+            key=key,
+            query_expression=query_expression,
+            canonical_label_keys=(),
+            passthrough_label_keys=(selector_label,),
+            resource_label=selector_label,
+            query_mode=query_mode,
+        )
+
+    bytes_in = "kafka_server_brokertopicmetrics_alltopics_bytesin_total"
+    bytes_out = "kafka_server_brokertopicmetrics_alltopics_bytesout_total"
+    storage = "kafka_log_log_size"
+    if catalog is not None:
+        bytes_in = catalog.metric_name(bytes_in)
+        bytes_out = catalog.metric_name(bytes_out)
+        storage = catalog.metric_name(storage)
     return [
-        MetricQuery(
+        bind(
+            "kafka_server_brokertopicmetrics_alltopics_bytesin_total",
             key="cluster_bytes_in",
-            query_expression="sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesin_total{}[86400s]))",
-            label_keys=(),
-            resource_label=metrics_identifier_label,
+            query_expression=f"sum(increase({bytes_in}{{}}[86400s]))",
             query_mode="instant",
         ),
-        MetricQuery(
+        bind(
+            "kafka_server_brokertopicmetrics_alltopics_bytesout_total",
             key="cluster_bytes_out",
-            query_expression="sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesout_total{}[86400s]))",
-            label_keys=(),
-            resource_label=metrics_identifier_label,
+            query_expression=f"sum(increase({bytes_out}{{}}[86400s]))",
             query_mode="instant",
         ),
-        MetricQuery(
+        bind(
+            "kafka_log_log_size",
             key="cluster_storage_bytes",
-            query_expression="sum(kafka_log_log_size{})",
-            label_keys=(),
-            resource_label=metrics_identifier_label,
+            query_expression=f"sum({storage}{{}})",
         ),
     ]
 
@@ -97,10 +145,16 @@ class ConstructedCostInput(CostInput):
         config: SelfManagedKafkaConfig,
         metrics_source: MetricsSource,
         inventory_is_partitionless: Callable[[], bool] | None = None,
+        telemetry_catalog: ResolvedTelemetryCatalog | None = None,
     ) -> None:
         self._config = config
         self._metrics_source = metrics_source
         self._inventory_is_partitionless = inventory_is_partitionless or (lambda: False)
+        if telemetry_catalog is None:
+            from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
+
+            telemetry_catalog = ResolvedTelemetryCatalog(config)
+        self._telemetry_catalog = telemetry_catalog
 
     def gather(
         self,
@@ -115,7 +169,7 @@ class ConstructedCostInput(CostInput):
         if normalized_start >= normalized_end:
             return
 
-        queries = _cost_queries(self._config.metrics_identifier_label)
+        queries = _cost_queries(self._telemetry_catalog, self._config.metrics_identifier_label)
         windows = tuple(_day_starts(normalized_start, normalized_end))
         if len(windows) > 1:
             for chunk, daily_metrics in iter_daily_evidence(

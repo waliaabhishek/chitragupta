@@ -94,6 +94,8 @@ tenants:
 | `historical_acquisition_chunk_days` | int | 5 | Maximum closed UTC days in one historical response and reduced workload chunk; valid range `1..30`, with `30` an explicit operator-selected maximum |
 | `metrics.url` | string | required | Prometheus URL |
 | `metrics.auth_type` | enum | `none` | `basic`, `bearer`, or `none` |
+| `metric_name_overrides` | dict[string, string] | `{}` | Optional tenant-wide mapping from canonical metric-family names to their physical Prometheus metric names |
+| `label_name_overrides` | dict[string, dict[string, string]] | `{}` | Optional per-family mapping from canonical labels to their physical Prometheus label names |
 | `topic_attribution.enabled` | bool | `false` | Enable the independent topic-level analytical overlay. It does not change principal chargebacks. |
 | `topic_attribution.compute_policy` | enum | `disabled` | `disabled` keeps compute as `__UNATTRIBUTED__`; `shared_even_v1` uses the fixed, shared-even policy described below. |
 | `topic_attribution.exclude_topic_patterns` | list[string] | `[]` | Optional shell-style topic patterns for read-time reporting classification. Omit it, or set `[]`, to exclude no topics. |
@@ -101,6 +103,115 @@ tenants:
 | `topic_attribution.emitters` | list | `[]` | Optional emitter specs for topic-attribution output. |
 | `allocator_overrides` | dict | `{}` | Replace allocator for specific product types (see [Advanced Scenarios](advanced-scenarios.md)) |
 | `identity_resolution_overrides` | dict | `{}` | Replace identity resolver for specific product types |
+
+## Prometheus metric and label aliases
+
+Self-managed Kafka telemetry uses canonical names in configuration, code, and
+chargeback output. Prometheus may expose different names after JMX exporter
+configuration, relabeling, or recording rules. Use the two optional mappings to
+describe that physical naming without changing the canonical data model:
+
+```yaml
+plugin_settings:
+  metric_name_overrides:
+    kafka_log_log_size: company_kafka_partition_size
+  label_name_overrides:
+    kafka_log_log_size:
+      broker: node
+      topic: topic_name
+      partition: partition_number
+```
+
+Canonical names are keys and physical Prometheus names are values. The mappings
+are tenant-wide, optional, and partial: omitted families and labels resolve to
+their canonical names. Each canonical family maps to exactly one physical metric
+name, and each canonical label maps to exactly one physical label name. Names
+must be valid Prometheus identifiers. The mappings are used consistently for
+target scope, discovery, cost input, historical acquisition, topic evidence, and
+quota/principal readiness; returned rows are converted back to canonical labels
+before allocation and persistence.
+
+The global selector is a separate boundary. `metrics_identifier` is the value
+that identifies the cluster and `metrics_identifier_label` is the physical label
+used to select it. That selector label is required on every family and is never
+configured inside `label_name_overrides`; aliases cannot give different families
+different selector labels. For example, with
+`metrics_identifier_label: deployment` and `metrics_identifier: kafka-prod`, all
+queries include `deployment="kafka-prod"`.
+
+### Supported canonical telemetry catalog
+
+The following eight canonical families are supported. The listed labels are
+non-selector labels; the configured global selector is required in addition to
+them. A disabled feature produces no query for its family in the live checker and
+is reported as `skipped`.
+
+| Canonical metric family | Type | Canonical non-selector labels | Queried when | Production feature(s) |
+|---|---|---|---|---|
+| `up` | gauge | none | always | target scope |
+| `kafka_server_brokertopicmetrics_alltopics_bytesin_total` | counter | `broker` | always | cluster ingress |
+| `kafka_server_brokertopicmetrics_alltopics_bytesout_total` | counter | `broker` | always | cluster egress |
+| `kafka_log_log_size` | gauge | `broker`, `topic`, `partition` | always | cluster storage, Prometheus discovery, topic storage |
+| `kafka_server_brokertopicmetrics_bytesin_total` | counter | `broker`, `topic` | Prometheus resource discovery or topic attribution | Prometheus discovery, topic ingress |
+| `kafka_server_brokertopicmetrics_bytesout_total` | counter | `broker`, `topic` | topic attribution | Prometheus discovery, topic egress |
+| `kafka_server_quota_byte_rate` | gauge | `broker`, `quota_type`, `quota_scope`, `user`, `client_id` | `identity_source.source` is `prometheus` or `both` | principal readiness, principal attribution |
+| `kafka_server_quota_throttle_time_ms` | gauge | `broker`, `quota_type`, `quota_scope`, `user`, `client_id` | `identity_source.source` is `prometheus` or `both` and principal attribution is disabled | principal readiness |
+
+Aliases change names only. They do not change metric type, units, values,
+temporality, query operators, selector values, UTC windows, allocation policy,
+reconciliation, persistence, API responses, or exports.
+
+## Live self-managed telemetry checker
+
+Run the explicit Prometheus check without starting the worker, API, storage,
+Kafka Admin client, or normal pipeline:
+
+```console
+chitragupta --config-file config.yaml --check-self-managed-telemetry
+```
+
+The checker examines every configured `self_managed_kafka` tenant in mapping
+order. It validates all selected tenant configurations before opening any
+Prometheus source, captures one UTC end time for all tenants, and checks the
+families above over each tenant's `discovery_window_hours`. Each enabled family
+is queried independently, so a failed family does not erase the other results.
+The report is JSON Lines on stdout: one record per family, in tenant/catalog
+order, followed by one summary record. Every family record includes the tenant,
+canonical and resolved physical metric names, the selector, expected physical
+labels, observed label-name union (never label values), affected production
+features, a deterministic corrective override when applicable, and a warning.
+
+The five possible states are:
+
+| State | Meaning | Exit impact |
+|---|---|---:|
+| `valid` | At least one selected series has the required selector and labels; `up` samples are finite and equal to `1`. | 0 |
+| `invalid` | A selected series has a missing/blank selector or required label, or `up` is unhealthy. | 1 |
+| `not_observed` | The query succeeded but returned no selected series. This is a historical-coverage warning only. | 0 |
+| `inconclusive` | Prometheus returned an error, parsing failed, a result key was absent, or the source could not be constructed. | 1 |
+| `skipped` | The family is disabled by the tenant's feature configuration. | 0 |
+
+An empty result reports a `metric_name_overrides` placeholder so an operator can
+provide the physical metric name. Missing family labels report deterministic
+`label_name_overrides` placeholders. The checker never guesses a mapping from
+unrelated labels. Source or query failures have no corrective override. Historical
+gaps remain warnings and do not mutate scope state, block normal reconciliation,
+or fabricate chargeback data. A complete report is emitted even when the exit
+code is `1`.
+
+Configuration errors exit `1` with `Telemetry check configuration failed` on
+stderr. If no self-managed Kafka tenant is configured, the command exits `2` with
+`error: no self-managed Kafka tenant is configured`. Missing configuration or an
+invalid checker option combination keeps the existing argparse exit-`2` contract.
+
+### Alias boundaries
+
+Aliases are name mappings only. They are not a label-value mapping, and they do
+not support arbitrary PromQL, metric discovery, fuzzy or inferred semantic
+matching, multiple physical names for one family, value/unit conversion, metric
+type or temporality changes, or per-family selector overrides. Configure the
+exporter and source data to expose the required canonical dimensions and values;
+use the checker to identify missing physical names or labels.
 
 ## Prometheus metric inventory
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from math import isfinite
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from core.storage.interface import UnitOfWork
     from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
     from plugins.self_managed_kafka.shared_context import SMKSharedContext
+    from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,7 @@ class SelfManagedKafkaHandler:
         metrics_source: MetricsSource,
         admin_client: Any = None,
         metrics_scope_evidence: Callable[[str, datetime, timedelta], MetricsScopeEvidence | None] | None = None,
+        telemetry_catalog: ResolvedTelemetryCatalog | None = None,
     ) -> None:
         """Initialize handler with config and discovery clients.
 
@@ -94,6 +97,11 @@ class SelfManagedKafkaHandler:
         self._metrics_source = metrics_source
         self._admin_client = admin_client
         self._metrics_scope_evidence = metrics_scope_evidence
+        if telemetry_catalog is None:
+            from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
+
+            telemetry_catalog = ResolvedTelemetryCatalog(config)
+        self._telemetry_catalog = telemetry_catalog
         self._ecosystem = "self_managed_kafka"
         self._current_gather_ctx: SMKSharedContext | None = None
         self._admin_inventory_complete = False
@@ -388,22 +396,29 @@ class SelfManagedKafkaHandler:
         selector_label = self._promql_quote(self._config.metrics_identifier_label)
         selector_value = self._promql_quote(self._config.metrics_identifier)
         seconds = int(source_window.total_seconds())
-        return MetricQuery(
+        family = "kafka_server_quota_byte_rate"
+        physical_metric = self._telemetry_catalog.metric_name(family)
+        physical_quota_type = self._telemetry_catalog.label_name(family, "quota_type")
+        query = self._telemetry_catalog.bind_query(
+            canonical_family=family,
             key=f"principal_quota_{quota_type.lower()}",
             query_expression=(
-                f'kafka_server_quota_byte_rate{{{selector_label}="{selector_value}",quota_type="{quota_type}"}}[{seconds}s]'
+                f'{physical_metric}{{{selector_label}="{selector_value}",'
+                f'{physical_quota_type}="{quota_type}"}}[{seconds}s]'
             ),
-            label_keys=(
-                "broker",
-                self._config.metrics_identifier_label,
-                "quota_type",
-                "quota_scope",
-                "user",
-                "client_id",
-            ),
+            canonical_label_keys=("broker", "quota_type", "quota_scope", "user", "client_id"),
+            passthrough_label_keys=(self._config.metrics_identifier_label,),
             resource_label=self._config.metrics_identifier_label,
             query_mode="instant",
         )
+        # Preserve the measured selector's established label order: broker,
+        # global selector, then quota dimensions.
+        physical_broker = self._telemetry_catalog.label_name(family, "broker")
+        physical_dimensions = tuple(
+            self._telemetry_catalog.label_name(family, label)
+            for label in ("quota_type", "quota_scope", "user", "client_id")
+        )
+        return replace(query, label_keys=(physical_broker, self._config.metrics_identifier_label, *physical_dimensions))
 
     @staticmethod
     def _promql_quote(value: str) -> str:
@@ -457,19 +472,37 @@ class SelfManagedKafkaHandler:
         cache_key = (tenant_id, resource_id, start, end)
         if cache_key in self._principal_evidence_cache:
             return self._principal_evidence_cache[cache_key]
+        byte_rate_family = "kafka_server_quota_byte_rate"
+        throttle_family = "kafka_server_quota_throttle_time_ms"
+        byte_rate_labels = tuple(
+            self._telemetry_catalog.label_name(byte_rate_family, label)
+            for label in ("quota_type", "quota_scope", "user", "client_id")
+        )
+        throttle_labels = tuple(
+            self._telemetry_catalog.label_name(throttle_family, label)
+            for label in ("quota_type", "quota_scope", "user", "client_id")
+        )
         queries = [
-            MetricQuery(
+            self._telemetry_catalog.bind_query(
+                canonical_family=byte_rate_family,
                 key="quota_byte_rate",
-                query_expression="sum by (quota_type, quota_scope, user, client_id) (kafka_server_quota_byte_rate{})",
-                label_keys=("quota_type", "quota_scope", "user", "client_id"),
+                query_expression=(
+                    f"sum by ({', '.join(byte_rate_labels)}) "
+                    f"({self._telemetry_catalog.metric_name(byte_rate_family)}{{}})"
+                ),
+                canonical_label_keys=("quota_type", "quota_scope", "user", "client_id"),
+                passthrough_label_keys=(self._config.metrics_identifier_label,),
                 resource_label=self._config.metrics_identifier_label,
             ),
-            MetricQuery(
+            self._telemetry_catalog.bind_query(
+                canonical_family=throttle_family,
                 key="quota_throttle_time_ms",
                 query_expression=(
-                    "avg by (quota_type, quota_scope, user, client_id) (kafka_server_quota_throttle_time_ms{})"
+                    f"avg by ({', '.join(throttle_labels)}) "
+                    f"({self._telemetry_catalog.metric_name(throttle_family)}{{}})"
                 ),
-                label_keys=("quota_type", "quota_scope", "user", "client_id"),
+                canonical_label_keys=("quota_type", "quota_scope", "user", "client_id"),
+                passthrough_label_keys=(self._config.metrics_identifier_label,),
                 resource_label=self._config.metrics_identifier_label,
             ),
         ]

@@ -65,5 +65,5 @@ def test_resource_discovery_is_scoped_and_collects_only_brokers_and_topics() -> 
     assert context.discovered_topics == frozenset({"orders"})
     _, kwargs = source.query.call_args
     assert kwargs["resource_id_filter"] == "kraft-a-001"
-    assert kwargs["queries"][0].label_keys == ("broker", "topic")
+    assert kwargs["queries"][0].label_keys == ("broker", "topic", "kafka_cluster_id")
     assert kwargs["queries"][0].resource_label == "kafka_cluster_id"

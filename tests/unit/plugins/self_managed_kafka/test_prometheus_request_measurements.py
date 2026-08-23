@@ -20,6 +20,7 @@ def _plugin_settings(
     *,
     chunk_days: int | None = None,
     metrics_step_seconds: int | None = None,
+    metric_name_overrides: dict[str, str] | None = None,
 ) -> dict[str, object]:
     settings: dict[str, object] = {
         "cluster_id": "billing-cluster-a",
@@ -38,6 +39,8 @@ def _plugin_settings(
         settings["historical_acquisition_chunk_days"] = chunk_days
     if metrics_step_seconds is not None:
         settings["metrics_step_seconds"] = metrics_step_seconds
+    if metric_name_overrides is not None:
+        settings["metric_name_overrides"] = metric_name_overrides
     return settings
 
 
@@ -186,6 +189,7 @@ def _run_plugin_workload_measurement(
     metrics_step_seconds: int = 3600,
     recovery: bool = False,
     fail_bounded_category: str | None = None,
+    metric_name_overrides: dict[str, str] | None = None,
 ) -> tuple[Counter[str], Counter[str], list[dict[str, str]], MagicMock, object, object, MagicMock]:
     from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
 
@@ -196,6 +200,7 @@ def _run_plugin_workload_measurement(
             _plugin_settings(
                 chunk_days=chunk_days,
                 metrics_step_seconds=metrics_step_seconds,
+                metric_name_overrides=metric_name_overrides,
             )
         )
     start = datetime(2026, 2, 1, tzinfo=UTC)
@@ -668,3 +673,24 @@ def test_recovery_measures_all_sources_with_unequal_discontiguous_cluster_and_to
     assert _logical_family_count(logical_query) == 17
     assert _logical_family_categories(logical_query) == categories
     assert len(requests) == sum(categories.values())
+
+
+def test_name_aliases_do_not_change_logical_or_transport_request_counts() -> None:
+    baseline = _run_plugin_workload_measurement(
+        chunk_days=5,
+        cluster_days=6,
+        topic_indexes=(0, 2, 5),
+    )
+    overridden = _run_plugin_workload_measurement(
+        chunk_days=5,
+        cluster_days=6,
+        topic_indexes=(0, 2, 5),
+        metric_name_overrides={"kafka_log_log_size": "company_kafka_log_size"},
+    )
+    baseline_transport, baseline_logical, _, _, _, _, _ = baseline
+    overridden_transport, overridden_logical, overridden_requests, _, _, _, _ = overridden
+
+    assert overridden_transport == baseline_transport
+    assert overridden_logical == baseline_logical
+    assert sum(overridden_transport.values()) == sum(baseline_transport.values())
+    assert any("company_kafka_log_size" in request["query"] for request in overridden_requests)

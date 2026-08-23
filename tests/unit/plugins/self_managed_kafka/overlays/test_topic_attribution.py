@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -473,6 +474,105 @@ def test_non_divisor_chunk_uses_one_counter_request_per_family_and_one_gauge_gro
 
     assert source.query.call_count == 5
     assert all(call.kwargs["end"] - call.kwargs["start"] <= timedelta(days=30) for call in source.query.call_args_list)
+
+
+def test_topic_attribution_uses_one_catalog_for_prepared_and_on_demand_physical_queries() -> None:
+    from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+    from plugins.self_managed_kafka.overlays.topic_attribution import SelfManagedKafkaTopicAttributionProvider
+    from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
+
+    config = SelfManagedKafkaConfig.from_plugin_settings(
+        {
+            "cluster_id": "billing-cluster-a",
+            "metrics_identifier": "kafka-prod",
+            "metrics_identifier_label": "deployment",
+            "broker_count": 3,
+            "cost_model": {
+                "compute_hourly_rate": "0.10",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
+            },
+            "metrics": {"url": "http://prometheus:9090"},
+            "topic_attribution": {"enabled": True, "compute_policy": "shared_even_v1"},
+            "metric_name_overrides": {
+                "kafka_server_brokertopicmetrics_bytesin_total": "company_topic_in",
+                "kafka_server_brokertopicmetrics_bytesout_total": "company_topic_out",
+                "kafka_log_log_size": "company_log_size",
+            },
+            "label_name_overrides": {
+                "kafka_server_brokertopicmetrics_bytesin_total": {"topic": "topic_name"},
+                "kafka_server_brokertopicmetrics_bytesout_total": {"topic": "topic_name"},
+                "kafka_log_log_size": {"topic": "topic_name"},
+            },
+        }
+    )
+    source = MagicMock()
+    source.query.return_value = {
+        "topic_bytes_in": [],
+        "topic_bytes_out": [],
+        "topic_storage_bytes": [],
+    }
+    provider = SelfManagedKafkaTopicAttributionProvider(
+        config=config,
+        metrics_source=source,
+        telemetry_catalog=ResolvedTelemetryCatalog(config),
+        inventory_is_partitionless=lambda: True,
+    )
+    first_day = datetime(2026, 2, 1, tzinfo=UTC)
+    provider.prepare_evidence_chunk([(first_day, first_day + timedelta(days=1))], timedelta(hours=1))
+
+    prepared_queries = {
+        call.kwargs["queries"][0].key: call.kwargs["queries"][0] for call in source.query.call_args_list
+    }
+    assert {
+        key: (query.query_expression, query.label_keys, query.resource_label) for key, query in prepared_queries.items()
+    } == {
+        "topic_bytes_in": (
+            "sum by (topic_name) (increase(company_topic_in{}[86400s]))",
+            ("topic_name", "deployment"),
+            "deployment",
+        ),
+        "topic_bytes_out": (
+            "sum by (topic_name) (increase(company_topic_out{}[86400s]))",
+            ("topic_name", "deployment"),
+            "deployment",
+        ),
+        "topic_storage_bytes": (
+            "sum by (topic_name) (company_log_size{})",
+            ("topic_name", "deployment"),
+            "deployment",
+        ),
+    }
+
+    source.reset_mock()
+    second_day_line = replace(
+        _billing_line("SELF_KAFKA_NETWORK_INGRESS", Decimal("1"), Decimal("10")),
+        timestamp=datetime(2026, 2, 2, tzinfo=UTC),
+    )
+    provider.attribute_cluster(
+        tenant_id="tenant-1",
+        cluster_resource_id="billing-cluster-a",
+        env_id="cluster-a",
+        billing_lines=[second_day_line],
+        resource_topics=frozenset({"orders"}),
+        metrics_step=timedelta(hours=1),
+    )
+
+    [fallback_query] = source.query.call_args.kwargs["queries"]
+    assert (
+        fallback_query.key,
+        fallback_query.query_expression,
+        fallback_query.label_keys,
+        fallback_query.resource_label,
+        fallback_query.query_mode,
+    ) == (
+        "topic_bytes_in",
+        "sum by (topic_name) (increase(company_topic_in{}[86400s]))",
+        ("topic_name", "deployment"),
+        "deployment",
+        "instant",
+    )
 
 
 def _query_grid(start: datetime, end: datetime, step: timedelta) -> tuple[datetime, ...]:
