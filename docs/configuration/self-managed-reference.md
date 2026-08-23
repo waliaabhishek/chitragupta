@@ -104,6 +104,28 @@ tenants:
 | `allocator_overrides` | dict | `{}` | Replace allocator for specific product types (see [Advanced Scenarios](advanced-scenarios.md)) |
 | `identity_resolution_overrides` | dict | `{}` | Replace identity resolver for specific product types |
 
+## Cost-pool value ranges and fail-closed behavior
+
+Self-managed Kafka infrastructure rates are finite decimal values greater than
+or equal to zero. This applies to every base rate and every regional override:
+`compute_hourly_rate`, `storage_per_gib_hourly`, `network_ingress_per_gib`, and
+`network_egress_per_gib`. Negative values, `NaN`, and positive or negative
+infinity are rejected during configuration validation. `-0`, `0`, and `+0`
+are valid zero rates.
+
+The broker-wide ingress and egress counters and the storage gauge must provide
+finite, non-negative samples after the normal family-presence and closed UTC-day
+selection rules. Signed zero is valid telemetry. A selected negative or
+non-finite sample fails that entire UTC day closed before any billing line is
+written. The independent days in the same backfill continue, and the failed day
+is retryable on a later refresh. The existing storage rule remains unchanged:
+an absent storage family is retryable unless the authoritative inventory check
+confirms a partitionless cluster, in which case it is measured zero.
+
+This validation is private to self-managed constructed cost pools. Shared
+billing models and other providers may still represent explicit negative credits
+or adjustments.
+
 ## Prometheus metric and label aliases
 
 Self-managed Kafka telemetry uses canonical names in configuration, code, and

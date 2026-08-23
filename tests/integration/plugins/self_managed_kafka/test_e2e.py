@@ -1709,6 +1709,243 @@ def test_initialized_plugin_closes_durable_overlay_recovery_only_after_overlay_c
     backend.dispose()
 
 
+@pytest.mark.parametrize(
+    ("literal", "expected"),
+    [
+        ("-0", -0.0),
+        ("0", 0.0),
+        ("+0", 0.0),
+        ("-1", -1.0),
+        ("NaN", float("nan")),
+        ("+Inf", float("inf")),
+        ("-Inf", float("-inf")),
+    ],
+)
+def test_real_prometheus_parser_preserves_pool_value_boundaries(
+    literal: str,
+    expected: float,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        form = parse_qs(request.content.decode())
+        timestamp = datetime.fromisoformat(form["time"][0]).timestamp()
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [
+                        {
+                            "metric": {"kafka_cluster_id": "kraft-a-001"},
+                            "value": [timestamp, literal],
+                        }
+                    ],
+                },
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    source = PrometheusMetricsSource(
+        PrometheusConfig(url="http://prometheus.test", cache_ttl_seconds=0),
+        client=client,
+    )
+    query = MetricQuery(
+        key="cluster_bytes_in",
+        query_expression="test_pool_metric{}",
+        label_keys=("kafka_cluster_id",),
+        resource_label="kafka_cluster_id",
+        query_mode="instant",
+    )
+    try:
+        rows = source.query(
+            [query],
+            start=datetime(2026, 8, 18, tzinfo=UTC),
+            end=datetime(2026, 8, 19, tzinfo=UTC),
+            resource_id_filter="kraft-a-001",
+        )
+    finally:
+        client.close()
+
+    [row] = rows["cluster_bytes_in"]
+    assert row.source_value == literal
+    if literal == "NaN":
+        assert row.value != row.value
+    else:
+        assert row.value == expected
+
+
+@pytest.mark.parametrize(
+    ("pool_literal", "initial_pool_invalid"),
+    [("-1", True), ("NaN", True), ("+Inf", True), ("-Inf", True), ("0", False)],
+)
+def test_workflow_runner_omits_invalid_pool_day_and_emits_valid_neighbor_after_retry(
+    tmp_path: Path,
+    pool_literal: str,
+    initial_pool_invalid: bool,
+) -> None:
+    from core.config.models import AppSettings, EmitterSpec, PluginSettingsBase, StorageConfig, TenantConfig
+    from core.emitters.registry import register as register_emitter
+    from core.plugin.registry import PluginRegistry
+    from emitters.csv_emitter import make_csv_emitter
+    from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+    from workflow_runner import WorkflowRunner
+
+    now = datetime(2026, 8, 20, tzinfo=UTC)
+    valid_day = datetime(2026, 8, 17, tzinfo=UTC).date()
+    invalid_day = datetime(2026, 8, 18, tzinfo=UTC).date()
+    invalid_pool_evidence = initial_pool_invalid
+
+    def response_value(query: str, timestamp: datetime) -> str:
+        if "alltopics_bytesout_total" in query and timestamp.date() == invalid_day + timedelta(days=1):
+            if not initial_pool_invalid or invalid_pool_evidence:
+                return pool_literal
+            return "1073741824"
+        if "up{" in query:
+            return "1"
+        return "1073741824"
+
+    def prometheus_handler(request: httpx.Request) -> httpx.Response:
+        form = parse_qs(request.content.decode())
+        query = form["query"][0]
+        if request.url.path.endswith("query_range"):
+            start = datetime.fromisoformat(form["start"][0])
+            end = datetime.fromisoformat(form["end"][0])
+            step = timedelta(seconds=int(form["step"][0]))
+            values: list[list[float | str]] = []
+            timestamp = start
+            while timestamp <= end:
+                values.append([timestamp.timestamp(), response_value(query, timestamp)])
+                timestamp += step
+            sample = {"values": values}
+            result_type = "matrix"
+        else:
+            timestamp = datetime.fromisoformat(form["time"][0])
+            sample = {"value": [timestamp.timestamp(), response_value(query, timestamp)]}
+            result_type = "vector"
+        labels = {"kafka_cluster_id": "kraft-a-001", "broker": "1"}
+        if "alltopics" not in query and "up{" not in query:
+            labels["topic"] = "orders"
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": {
+                    "resultType": result_type,
+                    "result": [{"metric": labels, **sample}],
+                },
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(prometheus_handler))
+    source = PrometheusMetricsSource(
+        PrometheusConfig(url="http://prometheus.test", cache_ttl_seconds=0),
+        client=client,
+    )
+    plugin_settings = _settings()
+    plugin_settings["min_refresh_gap_seconds"] = 0
+    plugin_settings["topic_attribution"] = {
+        "enabled": True,
+        "compute_policy": "shared_even_v1",
+        "emitters": [
+            EmitterSpec(
+                type="csv",
+                name="topic_csv",
+                params={
+                    "output_dir": str(tmp_path),
+                    "filename_template": "topic_{tenant_id}_{date}.csv",
+                },
+            ).model_dump()
+        ],
+    }
+    tenant = TenantConfig(
+        ecosystem="self_managed_kafka",
+        tenant_id="tenant-1",
+        lookback_days=3,
+        cutoff_days=1,
+        storage=StorageConfig(connection_string=f"sqlite:///{tmp_path / 'task-273.db'}"),
+        plugin_settings=PluginSettingsBase.model_validate(plugin_settings),
+    )
+    registry = PluginRegistry()
+    registry.register("self_managed_kafka", SelfManagedKafkaPlugin)
+    register_emitter("csv", make_csv_emitter)
+
+    try:
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+            runner = WorkflowRunner(AppSettings(tenants={"kafka": tenant}), registry)
+            runner.bootstrap_storage()
+        with patch("core.engine.orchestrator.datetime") as clock:
+            clock.now.return_value = now
+            clock.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            first_result = runner._run_tenant("kafka", tenant)
+
+        assert first_result.errors == []
+        runtime = runner._tenant_runtimes["kafka"]
+        with runtime.storage.create_read_only_unit_of_work() as uow:
+            valid_state = uow.pipeline_state.get("self_managed_kafka", "tenant-1", valid_day)
+            assert len(uow.billing.find_by_date("self_managed_kafka", "tenant-1", valid_day)) == 4
+            assert uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", valid_day)
+            assert uow.topic_attributions.find_by_date("self_managed_kafka", "tenant-1", valid_day)
+            assert valid_state is not None
+            assert valid_state.billing_gathered is True
+            assert valid_state.chargeback_calculated is True
+            assert valid_state.topic_attribution_calculated is True
+            emitted_dates = uow.emissions.get_emitted_dates(
+                "self_managed_kafka", "tenant-1", "topic_csv", "topic_attribution"
+            )
+            assert valid_day in emitted_dates
+            if initial_pool_invalid:
+                assert invalid_day not in emitted_dates
+                assert uow.billing.find_by_date("self_managed_kafka", "tenant-1", invalid_day) == []
+                assert uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", invalid_day) == []
+                assert uow.pipeline_state.get("self_managed_kafka", "tenant-1", invalid_day) is None
+                assert uow.topic_attributions.find_by_date("self_managed_kafka", "tenant-1", invalid_day) == []
+            else:
+                assert invalid_day in emitted_dates
+                assert len(uow.billing.find_by_date("self_managed_kafka", "tenant-1", invalid_day)) == 4
+                assert uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", invalid_day)
+                assert uow.topic_attributions.find_by_date("self_managed_kafka", "tenant-1", invalid_day)
+                initial_state = uow.pipeline_state.get("self_managed_kafka", "tenant-1", invalid_day)
+                assert initial_state is not None
+                assert initial_state.billing_gathered is True
+                assert initial_state.chargeback_calculated is True
+                assert initial_state.topic_attribution_calculated is True
+        valid_csv = tmp_path / f"topic_tenant-1_{valid_day.isoformat()}.csv"
+        invalid_csv = tmp_path / f"topic_tenant-1_{invalid_day.isoformat()}.csv"
+        assert valid_day.isoformat() in valid_csv.read_text(encoding="utf-8")
+        if initial_pool_invalid:
+            assert not invalid_csv.exists()
+        else:
+            assert invalid_day.isoformat() in invalid_csv.read_text(encoding="utf-8")
+
+        invalid_pool_evidence = False
+        with patch("core.engine.orchestrator.datetime") as clock:
+            clock.now.return_value = now
+            clock.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            retry_result = runner._run_tenant("kafka", tenant)
+
+        assert retry_result.errors == []
+        with runtime.storage.create_read_only_unit_of_work() as uow:
+            retry_state = uow.pipeline_state.get("self_managed_kafka", "tenant-1", invalid_day)
+            assert len(uow.billing.find_by_date("self_managed_kafka", "tenant-1", valid_day)) == 4
+            assert len(uow.billing.find_by_date("self_managed_kafka", "tenant-1", invalid_day)) == 4
+            assert uow.chargebacks.find_by_date("self_managed_kafka", "tenant-1", invalid_day)
+            assert uow.topic_attributions.find_by_date("self_managed_kafka", "tenant-1", invalid_day)
+            assert retry_state is not None
+            assert retry_state.billing_gathered is True
+            assert retry_state.chargeback_calculated is True
+            assert retry_state.topic_attribution_calculated is True
+            assert invalid_day in uow.emissions.get_emitted_dates(
+                "self_managed_kafka", "tenant-1", "topic_csv", "topic_attribution"
+            )
+            assert valid_day in uow.emissions.get_emitted_dates(
+                "self_managed_kafka", "tenant-1", "topic_csv", "topic_attribution"
+            )
+        assert invalid_day.isoformat() in invalid_csv.read_text(encoding="utf-8")
+    finally:
+        runner.close()
+        client.close()
+
+
 def test_configured_plugin_runs_topic_overlay_through_the_normal_orchestrator_path(tmp_path: Path) -> None:
     from core.config.models import PluginSettingsBase, TenantConfig
     from core.engine.orchestrator import ChargebackOrchestrator

@@ -12,5 +12,8 @@
 - Add optional self-managed Kafka Prometheus metric and label aliases plus an
   explicit telemetry checker with deterministic JSONL diagnostics and
   warning-only historical gaps.
+- Reject negative and non-finite self-managed Kafka cost rates and pool telemetry;
+  invalid UTC days fail closed, remain retryable, and do not create downstream
+  billing or attribution output.
 
 --8<-- "CHANGELOG.md"

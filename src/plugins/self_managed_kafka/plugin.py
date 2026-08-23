@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from math import isfinite
 from typing import TYPE_CHECKING, Any, cast
 
+from pydantic import ValidationError
+
 from core.logging_context import safe_exception_context, safe_log_context
 from core.metrics.config import create_metrics_source
 from core.metrics.protocol import MetricsQueryError
@@ -36,6 +38,70 @@ if TYPE_CHECKING:
     from plugins.self_managed_kafka.storage.repositories import SelfManagedKafkaScopeStateRepository
 
 logger = logging.getLogger(__name__)
+
+
+_RATE_FIELDS = frozenset(
+    {
+        "compute_hourly_rate",
+        "storage_per_gib_hourly",
+        "network_ingress_per_gib",
+        "network_egress_per_gib",
+    }
+)
+_RATE_CATEGORIES = {
+    "compute_hourly_rate": "compute",
+    "storage_per_gib_hourly": "storage",
+    "network_ingress_per_gib": "network_ingress",
+    "network_egress_per_gib": "network_egress",
+}
+
+
+def _invalid_rate_details(
+    settings: dict[str, Any],
+    error: ValidationError,
+) -> str | None:
+    """Return a stable, secret-safe diagnostic for a constrained rate failure."""
+    for item in error.errors():
+        location = item.get("loc", ())
+        if not location or location[0] != "cost_model":
+            continue
+        field_name: str | None = None
+        if len(location) == 2 and location[1] in _RATE_FIELDS:
+            field_name = str(location[1])
+        elif len(location) == 4 and location[1] == "region_overrides" and location[3] in _RATE_FIELDS:
+            field_name = ".".join(str(part) for part in location[1:])
+        if field_name is None:
+            continue
+
+        error_type = item.get("type")
+        if error_type == "finite_number":
+            reason = "non_finite"
+        elif error_type == "greater_than_equal":
+            reason = "negative"
+        else:
+            continue
+        base_field = field_name.rsplit(".", maxsplit=1)[-1]
+        category = _RATE_CATEGORIES[base_field]
+        cluster_id = settings.get("cluster_id", "")
+        metrics_identifier = settings.get("metrics_identifier", "")
+        selector_label = settings.get("metrics_identifier_label", "kafka_cluster_id")
+        return (
+            "invalid_self_managed_cost_rate "
+            f"cluster={cluster_id} selector={selector_label}={metrics_identifier} "
+            f"field=cost_model.{field_name} category={category} reason={reason}"
+        )
+    return None
+
+
+def _parse_config(settings: dict[str, Any]) -> SelfManagedKafkaConfig:
+    """Parse plugin settings and translate constrained-rate failures safely."""
+    try:
+        return SelfManagedKafkaConfig.from_plugin_settings(settings)
+    except ValidationError as exc:
+        details = _invalid_rate_details(settings, exc)
+        if details is not None:
+            raise ValueError(details) from None
+        raise
 
 
 class SelfManagedKafkaPlugin:
@@ -76,7 +142,7 @@ class SelfManagedKafkaPlugin:
             safe_log_context(stage="plugin_initialize", operation="initialize", outcome="started"),
         )
         self._topic_attribution_provider = None
-        self._config = SelfManagedKafkaConfig.from_plugin_settings(config)
+        self._config = _parse_config(config)
         self._scope_evidence_by_window.clear()
         self._scope_evidence_by_request.clear()
         self._scope_query_evidence.clear()
@@ -815,7 +881,7 @@ class SelfManagedKafkaPlugin:
 
     def validate_plugin_settings(self, config: dict[str, Any]) -> None:
         """Validate plugin-specific config without creating live connections."""
-        SelfManagedKafkaConfig.from_plugin_settings(config)
+        _parse_config(config)
 
     def close(self) -> None:
         """Clean up resources (AdminClient connection, metrics source)."""

@@ -233,6 +233,77 @@ class TestPluginTopicAttributionProvider:
         queries = source.query_calls[0][0]
         assert [query.key for query in queries] == ["broker_topic_discovery"]
 
+
+class TestInvalidCostRateDiagnostics:
+    @pytest.mark.parametrize(
+        ("selector_label", "field_path", "value", "category", "reason"),
+        [
+            (None, "compute_hourly_rate", "-0.125", "compute", "negative"),
+            ("deployment", "network_egress_per_gib", "Infinity", "network_egress", "non_finite"),
+            (
+                None,
+                "region_overrides.us-west-2.storage_per_gib_hourly",
+                "-0.125",
+                "storage",
+                "negative",
+            ),
+            (
+                "deployment",
+                "region_overrides.us-west-2.network_ingress_per_gib",
+                "NaN",
+                "network_ingress",
+                "non_finite",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("entrypoint", ("validate_plugin_settings", "initialize"))
+    def test_plugin_startup_entrypoints_report_sanitized_invalid_rate_details(
+        self,
+        base_settings: dict[str, object],
+        selector_label: str | None,
+        field_path: str,
+        value: str,
+        category: str,
+        reason: str,
+        entrypoint: str,
+    ) -> None:
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        if selector_label is not None:
+            base_settings["metrics_identifier_label"] = selector_label
+        if field_path.startswith("region_overrides"):
+            base_settings["cost_model"]["region_overrides"] = {
+                "us-west-2": {field_path.rsplit(".", maxsplit=1)[1]: value}
+            }
+        else:
+            base_settings["cost_model"][field_path] = value
+
+        with pytest.raises(ValueError) as error:
+            getattr(SelfManagedKafkaPlugin(), entrypoint)(base_settings)
+
+        detail = str(error.value)
+        import traceback
+
+        traceback_text = "".join(traceback.format_exception(error.value))
+        expected_selector = f"{selector_label or 'kafka_cluster_id'}=kraft-a-001"
+        expected_field = f"cost_model.{field_path}"
+        assert "invalid_self_managed_cost_rate" in detail
+        assert "cluster=kafka-001" in detail
+        assert f"selector={expected_selector}" in detail
+        assert f"field={expected_field}" in detail
+        assert f"category={category}" in detail
+        assert f"reason={reason}" in detail
+        assert "date=" not in detail
+        assert value not in detail
+        assert "http://prom:9090" not in detail
+        assert error.value.__cause__ is None
+        assert error.value.__suppress_context__ is True
+        assert "ValidationError" not in traceback_text
+        assert "input_value" not in traceback_text
+        assert "errors.pydantic.dev" not in traceback_text
+
+
+class TestPluginTopicAttributionProviderState:
     def test_new_pipeline_cycle_discards_stale_admin_partitionless_proof(
         self, base_settings: dict[str, object]
     ) -> None:

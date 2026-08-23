@@ -33,6 +33,30 @@ def sample_config():
 
 
 @pytest.fixture
+def sensitive_sample_config():
+    from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+    return SelfManagedKafkaConfig.from_plugin_settings(
+        {
+            "cluster_id": "kafka-cluster-001",
+            "metrics_identifier": "kraft-a-001",
+            "broker_count": 3,
+            "cost_model": {
+                "compute_hourly_rate": "0.10",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
+            },
+            "metrics": {
+                "url": "https://prometheus.private.test:9090",
+                "auth_type": "bearer",
+                "bearer_token": "configured-bearer-token",
+            },
+        }
+    )
+
+
+@pytest.fixture
 def mock_metrics_source():
     return MagicMock()
 
@@ -1024,3 +1048,171 @@ def test_cost_queries_use_resolved_physical_metric_names_without_changing_daily_
             "deployment",
         ),
     ]
+
+
+class TestInvalidCostPoolTelemetry:
+    @pytest.mark.parametrize(
+        ("metric_key", "category", "product_type"),
+        [
+            ("cluster_bytes_in", "network_ingress", "SELF_KAFKA_NETWORK_INGRESS"),
+            ("cluster_bytes_out", "network_egress", "SELF_KAFKA_NETWORK_EGRESS"),
+            ("cluster_storage_bytes", "storage", "SELF_KAFKA_STORAGE"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("value", "is_valid", "reason"),
+        [
+            (-0.0, True, None),
+            (0.0, True, None),
+            (+0.0, True, None),
+            (0.125, True, None),
+            (-0.125, False, "negative"),
+            (float("nan"), False, "non_finite"),
+            (float("inf"), False, "non_finite"),
+            (float("-inf"), False, "non_finite"),
+        ],
+    )
+    def test_pool_metric_values_fail_closed_only_for_negative_or_non_finite_samples(
+        self,
+        sensitive_sample_config: object,
+        mock_metrics_source: MagicMock,
+        day_start: datetime,
+        day_end: datetime,
+        caplog: pytest.LogCaptureFixture,
+        metric_key: str,
+        category: str,
+        product_type: str,
+        value: float,
+        is_valid: bool,
+        reason: str | None,
+    ) -> None:
+        import logging
+
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        metrics = sample_metrics_data()
+        metrics[metric_key] = [
+            MetricRow(
+                timestamp=day_start,
+                metric_key=metric_key,
+                value=value,
+                labels={
+                    "kafka_cluster_id": "kraft-a-001",
+                    "authorization": "Bearer configured-bearer-token",
+                    "raw_source_label": "raw-source-label-secret",
+                },
+                source_value=repr(value),
+                source_series=(
+                    ("__name__", metric_key),
+                    ("authorization", "Bearer configured-bearer-token"),
+                    ("raw_source_label", "raw-source-label-secret"),
+                    ("source_url", "https://prometheus.private.test:9090"),
+                ),
+            )
+        ]
+        mock_metrics_source.query.return_value = metrics
+
+        with caplog.at_level(logging.ERROR):
+            lines = list(
+                ConstructedCostInput(sensitive_sample_config, mock_metrics_source).gather(
+                    "tenant-1", day_start, day_end, MagicMock()
+                )
+            )
+
+        if is_valid:
+            assert len(lines) == 4
+            if value == 0:
+                line = next(item for item in lines if item.product_type == product_type)
+                assert line.quantity == Decimal("0")
+            return
+
+        assert lines == []
+        assert "invalid_self_managed_cost_pool_input" in caplog.text
+        assert "tenant=tenant-1" in caplog.text
+        assert "cluster=kafka-cluster-001" in caplog.text
+        assert "selector=kafka_cluster_id=kraft-a-001" in caplog.text
+        assert "date=2026-02-01" in caplog.text
+        assert f"category={category}" in caplog.text
+        assert f"reason={reason}" in caplog.text
+        assert "https://prometheus.private.test:9090" not in caplog.text
+        assert "configured-bearer-token" not in caplog.text
+        assert "raw-source-label-secret" not in caplog.text
+        assert "source_series" not in caplog.text
+        assert "value=" not in caplog.text
+        assert "sample=" not in caplog.text
+        if str(value) != "nan":
+            assert repr(value) not in caplog.text
+
+    def test_invalid_network_evidence_rejects_the_whole_day_before_compute_or_storage_can_leak(
+        self,
+        sample_config: object,
+        mock_metrics_source: MagicMock,
+        day_start: datetime,
+        day_end: datetime,
+    ) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        metrics = sample_metrics_data()
+        metrics["cluster_bytes_out"] = [make_metric_row("cluster_bytes_out", -1.0)]
+        mock_metrics_source.query.return_value = metrics
+
+        lines = list(
+            ConstructedCostInput(sample_config, mock_metrics_source).gather("tenant-1", day_start, day_end, MagicMock())
+        )
+
+        assert lines == []
+
+    def test_invalid_middle_day_does_not_discard_neighbors_and_is_retryable(
+        self,
+    ) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        first_day = datetime(2026, 2, 1, tzinfo=UTC)
+        invalid_day = first_day + timedelta(days=1)
+        source = MagicMock()
+        has_invalid_evidence = True
+
+        def response(
+            *,
+            queries: list[object],
+            start: datetime,
+            end: datetime,
+            step: timedelta,
+            **kwargs: object,
+        ) -> dict[str, list[MetricRow]]:
+            evidence = _historical_cluster_response(
+                queries=queries,
+                start=start,
+                end=end,
+                step=step,
+                **kwargs,
+            )
+            if has_invalid_evidence and queries[0].key == "cluster_bytes_out":
+                evidence["cluster_bytes_out"] = [
+                    MetricRow(
+                        timestamp=row.timestamp,
+                        metric_key=row.metric_key,
+                        value=-1.0 if row.timestamp == invalid_day + timedelta(days=1) else row.value,
+                        labels=row.labels,
+                    )
+                    for row in evidence["cluster_bytes_out"]
+                ]
+            return evidence
+
+        source.query.side_effect = response
+        cost_input = ConstructedCostInput(_historical_config(chunk_days=3), source)
+
+        initial_lines = list(cost_input.gather("tenant-1", first_day, first_day + timedelta(days=3), MagicMock()))
+
+        assert {line.timestamp for line in initial_lines} == {first_day, first_day + timedelta(days=2)}
+        assert len(initial_lines) == 8
+
+        has_invalid_evidence = False
+        retried_lines = list(cost_input.gather("tenant-1", first_day, first_day + timedelta(days=3), MagicMock()))
+
+        assert {line.timestamp for line in retried_lines} == {
+            first_day,
+            invalid_day,
+            first_day + timedelta(days=2),
+        }
+        assert len(retried_lines) == 12

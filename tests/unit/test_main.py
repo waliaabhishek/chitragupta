@@ -775,6 +775,77 @@ class TestSelfManagedTelemetryCheckCLI:
         create_source.assert_not_called()
         create_runner.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("selector_label", "field_path", "value", "expected_selector", "category", "reason"),
+        [
+            (None, "compute_hourly_rate", "-0.125", "kafka_cluster_id=kafka-a", "compute", "negative"),
+            (
+                "deployment",
+                "region_overrides.us-west-2.network_egress_per_gib",
+                "Infinity",
+                "deployment=kafka-a",
+                "network_egress",
+                "non_finite",
+            ),
+        ],
+    )
+    @patch("plugins.self_managed_kafka.telemetry_check.create_metrics_source")
+    @patch("main.load_config")
+    def test_checker_invalid_rates_use_sanitized_tenant_diagnostics(
+        self,
+        mock_load: MagicMock,
+        create_source: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        selector_label: str | None,
+        field_path: str,
+        value: str,
+        expected_selector: str,
+        category: str,
+        reason: str,
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, StorageConfig, TenantConfig
+        from main import main
+
+        settings = _checker_tenant_settings("cluster-a", "kafka-a")
+        if selector_label is None:
+            settings.pop("metrics_identifier_label")
+        else:
+            settings["metrics_identifier_label"] = selector_label
+        cost_model = settings["cost_model"]
+        assert isinstance(cost_model, dict)
+        if field_path.startswith("region_overrides"):
+            cost_model["region_overrides"] = {"us-west-2": {field_path.rsplit(".", maxsplit=1)[1]: value}}
+        else:
+            cost_model[field_path] = value
+        mock_load.return_value = AppSettings(
+            tenants={
+                "kafka-prod": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="tenant-check",
+                    storage=StorageConfig(connection_string="sqlite:///checker-invalid-rate.db"),
+                    plugin_settings=PluginSettingsBase.model_validate(settings),
+                )
+            }
+        )
+
+        with pytest.raises(SystemExit) as raised:
+            main(["--config-file", "config.yaml", "--check-self-managed-telemetry"])
+
+        assert raised.value.code == 1
+        detail = capsys.readouterr().err
+        assert "Telemetry check configuration failed:" in detail
+        assert "invalid_self_managed_cost_rate" in detail
+        assert "tenant=tenant-check" in detail
+        assert "cluster=cluster-a" in detail
+        assert f"selector={expected_selector}" in detail
+        assert f"field=cost_model.{field_path}" in detail
+        assert f"category={category}" in detail
+        assert f"reason={reason}" in detail
+        assert "date=" not in detail
+        assert value not in detail
+        assert "http://prometheus:9090" not in detail
+        create_source.assert_not_called()
+
     @patch("main.load_config")
     def test_checker_main_path_continues_after_source_construction_failure_without_starting_runtime(
         self,
@@ -1791,3 +1862,82 @@ class TestEmitOnce:
 
         storage.dispose.assert_called_once_with()
         plugin.close.assert_called_once_with()
+
+
+class TestSelfManagedCostRateStartupDiagnostics:
+    @pytest.mark.parametrize(
+        ("selector_label", "field_path", "value", "expected_selector", "category", "reason"),
+        [
+            (
+                None,
+                "compute_hourly_rate",
+                "-0.125",
+                "kafka_cluster_id=kraft-a-001",
+                "compute",
+                "negative",
+            ),
+            (
+                "deployment",
+                "region_overrides.us-west-2.network_egress_per_gib",
+                "Infinity",
+                "deployment=kraft-a-001",
+                "network_egress",
+                "non_finite",
+            ),
+        ],
+    )
+    @patch("core.plugin.loader.discover_plugins")
+    @patch("main.load_config")
+    def test_explicit_startup_validation_reports_tenant_and_sanitized_rate_details(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        selector_label: str | None,
+        field_path: str,
+        value: str,
+        expected_selector: str,
+        category: str,
+        reason: str,
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, TenantConfig
+        from main import main
+        from plugins.self_managed_kafka import SelfManagedKafkaPlugin
+
+        settings = _checker_tenant_settings("billing-cluster-a", "kraft-a-001")
+        if selector_label is None:
+            settings.pop("metrics_identifier_label")
+        else:
+            settings["metrics_identifier_label"] = selector_label
+        cost_model = settings["cost_model"]
+        assert isinstance(cost_model, dict)
+        if field_path.startswith("region_overrides"):
+            cost_model["region_overrides"] = {"us-west-2": {field_path.rsplit(".", maxsplit=1)[1]: value}}
+        else:
+            cost_model[field_path] = value
+        mock_discover.return_value = [("self_managed_kafka", SelfManagedKafkaPlugin)]
+        mock_load.return_value = AppSettings(
+            tenants={
+                "kafka-prod": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="tenant-273",
+                    plugin_settings=PluginSettingsBase.model_validate(settings),
+                )
+            }
+        )
+
+        with pytest.raises(SystemExit) as error:
+            main(["--config-file", "task-273.yaml", "--validate"])
+
+        assert error.value.code == 1
+        detail = capsys.readouterr().err
+        assert "invalid_self_managed_cost_rate" in detail
+        assert "tenant=tenant-273" in detail
+        assert "cluster=billing-cluster-a" in detail
+        assert f"selector={expected_selector}" in detail
+        assert f"field=cost_model.{field_path}" in detail
+        assert f"category={category}" in detail
+        assert f"reason={reason}" in detail
+        assert "date=" not in detail
+        assert value not in detail
+        assert "http://prometheus:9090" not in detail

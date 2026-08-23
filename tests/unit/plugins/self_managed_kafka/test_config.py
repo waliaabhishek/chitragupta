@@ -707,3 +707,79 @@ class TestBytesPerGiBConstant:
         from plugins.self_managed_kafka.cost_input import _BYTES_PER_GIB
 
         assert Decimal("1073741824") == _BYTES_PER_GIB
+
+
+_RATE_FIELDS = (
+    "compute_hourly_rate",
+    "storage_per_gib_hourly",
+    "network_ingress_per_gib",
+    "network_egress_per_gib",
+)
+
+
+class TestSelfManagedCostRateBounds:
+    @pytest.mark.parametrize("field", _RATE_FIELDS)
+    @pytest.mark.parametrize(
+        ("value", "is_valid"),
+        [
+            ("-0", True),
+            ("0", True),
+            ("+0", True),
+            ("0.125", True),
+            ("-0.125", False),
+            ("NaN", False),
+            ("Infinity", False),
+            ("-Infinity", False),
+        ],
+    )
+    def test_base_rate_accepts_only_finite_non_negative_values(
+        self,
+        base_cost_model: dict[str, str],
+        field: str,
+        value: str,
+        is_valid: bool,
+    ) -> None:
+        from plugins.self_managed_kafka.config import CostModelConfig
+
+        base_cost_model[field] = value
+
+        if not is_valid:
+            with pytest.raises(ValidationError):
+                CostModelConfig.model_validate(base_cost_model)
+            return
+
+        model = CostModelConfig.model_validate(base_cost_model)
+        assert getattr(model, field) == Decimal(value)
+
+    @pytest.mark.parametrize("field", _RATE_FIELDS)
+    @pytest.mark.parametrize(
+        ("value", "is_valid"),
+        [
+            ("-0", True),
+            ("0", True),
+            ("+0", True),
+            ("0.125", True),
+            ("-0.125", False),
+            ("NaN", False),
+            ("Infinity", False),
+            ("-Infinity", False),
+        ],
+    )
+    def test_regional_override_rate_accepts_only_finite_non_negative_values(
+        self,
+        base_cost_model: dict[str, str],
+        field: str,
+        value: str,
+        is_valid: bool,
+    ) -> None:
+        from plugins.self_managed_kafka.config import CostModelConfig
+
+        base_cost_model["region_overrides"] = {"us-west-2": {field: value}}
+
+        if not is_valid:
+            with pytest.raises(ValidationError):
+                CostModelConfig.model_validate(base_cost_model)
+            return
+
+        model = CostModelConfig.model_validate(base_cost_model)
+        assert getattr(model.region_overrides["us-west-2"], field) == Decimal(value)

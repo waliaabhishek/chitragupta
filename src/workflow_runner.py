@@ -342,7 +342,13 @@ class WorkflowRunner:
         plugin = self._plugin_registry.create(config.ecosystem)
         storage: StorageBackend | None = None
         try:
-            plugin.initialize(config.plugin_settings.model_dump())
+            try:
+                plugin.initialize(config.plugin_settings.model_dump())
+            except ValueError as exc:
+                detail = str(exc)
+                if detail.startswith("invalid_self_managed_cost_rate"):
+                    raise ValueError(f"tenant={config.tenant_id} {detail}") from exc
+                raise
             from core.storage.registry import create_storage_backend
 
             storage = create_storage_backend(

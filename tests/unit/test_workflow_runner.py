@@ -2363,3 +2363,99 @@ class TestCleanupRetentionTopicAttribution:
         mock_uow.topic_attributions.delete_before.assert_not_called()
         mock_uow.commit.assert_called_once_with()
         assert "Tenant t1: retention cleanup failed" not in caplog.messages
+
+
+class TestSelfManagedCostRateRuntimeStartupDiagnostics:
+    @pytest.mark.parametrize(
+        ("selector_label", "field_path", "value", "expected_selector", "category", "reason"),
+        [
+            (
+                None,
+                "storage_per_gib_hourly",
+                "-0.125",
+                "kafka_cluster_id=kraft-a-001",
+                "storage",
+                "negative",
+            ),
+            (
+                "deployment",
+                "region_overrides.us-west-2.network_ingress_per_gib",
+                "NaN",
+                "deployment=kraft-a-001",
+                "network_ingress",
+                "non_finite",
+            ),
+        ],
+    )
+    @patch("plugins.self_managed_kafka.plugin.SelfManagedKafkaPlugin.close")
+    @patch("core.storage.registry.create_storage_backend")
+    def test_runtime_initialization_rejects_invalid_rates_before_storage_creation(
+        self,
+        mock_create_storage: MagicMock,
+        mock_plugin_close: MagicMock,
+        selector_label: str | None,
+        field_path: str,
+        value: str,
+        expected_selector: str,
+        category: str,
+        reason: str,
+    ) -> None:
+        from core.config.models import PluginSettingsBase
+        from core.plugin.registry import PluginRegistry
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        settings: dict[str, object] = {
+            "cluster_id": "billing-cluster-a",
+            "metrics_identifier": "kraft-a-001",
+            "broker_count": 3,
+            "cost_model": {
+                "compute_hourly_rate": "0.10",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
+            },
+            "metrics": {"url": "http://prometheus:9090"},
+        }
+        if selector_label is not None:
+            settings["metrics_identifier_label"] = selector_label
+        cost_model = settings["cost_model"]
+        assert isinstance(cost_model, dict)
+        if field_path.startswith("region_overrides"):
+            cost_model["region_overrides"] = {"us-west-2": {field_path.rsplit(".", maxsplit=1)[1]: value}}
+        else:
+            cost_model[field_path] = value
+        tenant = _make_tenant(
+            ecosystem="self_managed_kafka",
+            tenant_id="tenant-273",
+            plugin_settings=PluginSettingsBase.model_validate(settings),
+        )
+        registry = PluginRegistry()
+        registry.register("self_managed_kafka", SelfManagedKafkaPlugin)
+        runner = WorkflowRunner(_make_settings(tenants={"kafka-prod": tenant}), registry)
+
+        with pytest.raises(ValueError) as error:
+            runner._get_or_create_runtime("kafka-prod", tenant)  # noqa: SLF001
+
+        detail = str(error.value)
+        assert "invalid_self_managed_cost_rate" in detail
+        assert "tenant=tenant-273" in detail
+        assert "cluster=billing-cluster-a" in detail
+        assert f"selector={expected_selector}" in detail
+        assert f"field=cost_model.{field_path}" in detail
+        assert f"category={category}" in detail
+        assert f"reason={reason}" in detail
+        assert "date=" not in detail
+        assert value not in detail
+        assert "http://prometheus:9090" not in detail
+        mock_create_storage.assert_not_called()
+        mock_plugin_close.assert_called_once_with()
+        import traceback
+
+        traceback_text = "".join(traceback.format_exception(error.value))
+        assert error.value.__cause__ is not None
+        assert str(error.value.__cause__).startswith("invalid_self_managed_cost_rate")
+        assert error.value.__cause__.__cause__ is None
+        assert "ValidationError" not in traceback_text
+        assert "input_value" not in traceback_text
+        assert "errors.pydantic.dev" not in traceback_text
+        assert runner._tenant_runtimes == {}

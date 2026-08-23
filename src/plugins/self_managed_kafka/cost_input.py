@@ -8,9 +8,10 @@ pricing × usage metrics.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from math import isfinite
 from typing import TYPE_CHECKING, Literal
 
 from core.metrics.protocol import MetricsQueryError
@@ -34,6 +35,47 @@ _BYTES_PER_GIB = Decimal("1073741824")
 
 class _MissingStorageEvidenceError(MetricsQueryError):
     """A retryable daily storage-evidence gap that must not abort other days."""
+
+
+_PoolMetricCategory = Literal["network_ingress", "network_egress", "storage"]
+_InvalidPoolValueReason = Literal["non_finite", "negative"]
+
+
+def _invalid_pool_value_reason(value: float) -> _InvalidPoolValueReason | None:
+    """Classify invalid self-managed cost-pool telemetry without changing the value."""
+    if not isfinite(value):
+        return "non_finite"
+    if value < 0:
+        return "negative"
+    return None
+
+
+def _validate_pool_metric_rows(
+    *,
+    tenant_id: str,
+    config: SelfManagedKafkaConfig,
+    day_start: datetime,
+    metric_categories: Sequence[tuple[_PoolMetricCategory, Sequence[MetricRow]]],
+) -> bool:
+    """Validate every selected cost-pool sample before producing any billing line."""
+    for category, rows in metric_categories:
+        for row in rows:
+            reason = _invalid_pool_value_reason(row.value)
+            if reason is None:
+                continue
+            logger.error(
+                "invalid_self_managed_cost_pool_input "
+                "tenant=%s cluster=%s selector=%s=%s date=%s category=%s reason=%s",
+                tenant_id,
+                config.cluster_id,
+                config.metrics_identifier_label,
+                config.metrics_identifier,
+                day_start.date(),
+                category,
+                reason,
+            )
+            return False
+    return True
 
 
 def _cost_queries(
@@ -258,6 +300,18 @@ class ConstructedCostInput(CostInput):
                 day_start.date(),
             )
             raise _MissingStorageEvidenceError("Missing required storage metric family: kafka_log_log_size")
+
+        if not _validate_pool_metric_rows(
+            tenant_id=tenant_id,
+            config=self._config,
+            day_start=day_start,
+            metric_categories=(
+                ("network_ingress", bytes_in_rows),
+                ("network_egress", bytes_out_rows),
+                ("storage", storage_rows),
+            ),
+        ):
+            return
 
         cost_model = self._config.get_effective_cost_model()
         hours = Decimal(str((day_end - day_start).total_seconds() / 3600))

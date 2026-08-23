@@ -191,7 +191,10 @@ def _validate_plugin_configs(settings: AppSettings) -> None:
         try:
             validate_fn(tenant_config.plugin_settings.model_dump())
         except Exception as exc:
-            errors.append(f"tenant {tenant_name!r} ({ecosystem}): {exc}")
+            detail = str(exc)
+            if detail.startswith("invalid_self_managed_cost_rate"):
+                detail = f"tenant={tenant_config.tenant_id} {detail}"
+            errors.append(f"tenant {tenant_name!r} ({ecosystem}): {detail}")
     if errors:
         raise ValueError("\n".join(errors))
 
@@ -327,6 +330,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.check_self_managed_telemetry:
         from plugins.self_managed_kafka import (
+            SelfManagedKafkaPlugin,
             TelemetryCheckState,
             TelemetryFamilyCheck,
             check_self_managed_telemetry,
@@ -346,15 +350,20 @@ def main(argv: list[str] | None = None) -> None:
         validated: list[tuple[str, SelfManagedKafkaConfig]] = []
         config_errors: list[str] = []
         for tenant_name, tenant_config in selected:
+            raw_settings = tenant_config.plugin_settings.model_dump()
             try:
+                SelfManagedKafkaPlugin().validate_plugin_settings(raw_settings)
                 validated.append(
                     (
                         tenant_name,
-                        SelfManagedKafkaConfig.from_plugin_settings(tenant_config.plugin_settings.model_dump()),
+                        SelfManagedKafkaConfig.from_plugin_settings(raw_settings),
                     )
                 )
-            except ValidationError as exc:
-                config_errors.append(f"tenant {tenant_name!r}: {exc}")
+            except (ValidationError, ValueError) as exc:
+                detail = str(exc)
+                if detail.startswith("invalid_self_managed_cost_rate"):
+                    detail = f"tenant={tenant_config.tenant_id} {detail}"
+                config_errors.append(f"tenant {tenant_name!r}: {detail}")
         if config_errors:
             print("Telemetry check configuration failed:\n" + "\n".join(config_errors), file=sys.stderr)
             sys.exit(1)

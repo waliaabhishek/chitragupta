@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr, StrictInt, field_validator, model_validator
 
@@ -20,22 +20,25 @@ from plugins.self_managed_kafka.telemetry_aliases import (
 logger = logging.getLogger(__name__)
 
 
+NonNegativeCostRate = Annotated[Decimal, Field(ge=0)]
+
+
 class CostRateOverride(BaseModel):
     """Override cost rates for a specific region."""
 
-    compute_hourly_rate: Decimal | None = None
-    storage_per_gib_hourly: Decimal | None = None
-    network_ingress_per_gib: Decimal | None = None
-    network_egress_per_gib: Decimal | None = None
+    compute_hourly_rate: NonNegativeCostRate | None = None
+    storage_per_gib_hourly: NonNegativeCostRate | None = None
+    network_ingress_per_gib: NonNegativeCostRate | None = None
+    network_egress_per_gib: NonNegativeCostRate | None = None
 
 
 class CostModelConfig(BaseModel):
     """Infrastructure cost model for self-managed Kafka."""
 
-    compute_hourly_rate: Decimal  # Per broker-hour
-    storage_per_gib_hourly: Decimal  # Per GiB-hour (1 GiB = 2^30 bytes)
-    network_ingress_per_gib: Decimal  # Per GiB
-    network_egress_per_gib: Decimal  # Per GiB
+    compute_hourly_rate: NonNegativeCostRate  # Per broker-hour
+    storage_per_gib_hourly: NonNegativeCostRate  # Per GiB-hour (1 GiB = 2^30 bytes)
+    network_ingress_per_gib: NonNegativeCostRate  # Per GiB
+    network_egress_per_gib: NonNegativeCostRate  # Per GiB
     region_overrides: dict[str, CostRateOverride] = {}
 
 
