@@ -47,6 +47,7 @@ tenants:
         type: prometheus
         url: http://prometheus:9090
         auth_type: none
+      historical_acquisition_chunk_days: 5
       # Omit topic_attribution to leave the topic-level overlay disabled.
       # topic_attribution:
       #   enabled: true
@@ -90,6 +91,7 @@ tenants:
 | `resource_source.sasl_password` | secret | optional | SASL password (required when `sasl_mechanism` is set) |
 | `resource_source.security_protocol` | enum | `PLAINTEXT` | `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT`, `SASL_SSL` |
 | `discovery_window_hours` | int | 1 | Hours of Prometheus data to scan for broker/topic discovery (must be > 0) |
+| `historical_acquisition_chunk_days` | int | 5 | Maximum closed UTC days in one historical response and reduced workload chunk; valid range `1..30`, with `30` an explicit operator-selected maximum |
 | `metrics.url` | string | required | Prometheus URL |
 | `metrics.auth_type` | enum | `none` | `basic`, `bearer`, or `none` |
 | `topic_attribution.enabled` | bool | `false` | Enable the independent topic-level analytical overlay. It does not change principal chargebacks. |
@@ -100,10 +102,12 @@ tenants:
 | `allocator_overrides` | dict | `{}` | Replace allocator for specific product types (see [Advanced Scenarios](advanced-scenarios.md)) |
 | `identity_resolution_overrides` | dict | `{}` | Replace identity resolver for specific product types |
 
-## Required Prometheus metrics
+## Prometheus metric inventory
 
-The cost model and target-scope check require these Prometheus metrics on every
-scraped broker target:
+Prometheus scrapes Kafka through JMX Exporter. Chitragupta queries Prometheus;
+it does not scrape brokers directly.
+
+### Always queried
 
 | Metric | Type | Used for |
 |---|---|---|
@@ -112,15 +116,16 @@ scraped broker target:
 | `kafka_log_log_size` | gauge | Cluster storage cost pool and, when topic attribution is enabled, per-topic storage evidence. |
 | `up` | gauge | Required target-scope validation for every billing window |
 
-With `resource_source.source: prometheus`, export the topic-labelled ingress
-counter for resource discovery. When `topic_attribution.enabled` is `true`,
-export both topic-labelled counters. They are allocation evidence, not the cost
-pools themselves:
+### Queried when a feature is enabled
 
-| Metric | Type | Used for |
-|---|---|---|
-| `kafka_server_brokertopicmetrics_bytesin_total` | counter | Topic ingress ratio |
-| `kafka_server_brokertopicmetrics_bytesout_total` | counter | Topic egress ratio |
+| Metric | Type | Queried when | Used for |
+|---|---|---|---|
+| `kafka_server_brokertopicmetrics_bytesin_total` | counter | `resource_source.source` is `prometheus`, or topic attribution is enabled | Topic discovery and ingress allocation evidence |
+| `kafka_server_brokertopicmetrics_bytesout_total` | counter | Topic attribution is enabled | Topic discovery and egress allocation evidence |
+| `kafka_server_quota_byte_rate` | gauge | `identity_source.source` is `prometheus` or `both` | Quota readiness; measured ingress and egress weights when principal attribution is enabled |
+| `kafka_server_quota_throttle_time_ms` | gauge | Principal attribution is disabled and `identity_source.source` is `prometheus` or `both` | Quota readiness diagnostic |
+
+Topic-labelled counters are allocation evidence, not cluster cost pools.
 
 Each series must carry the configured `metrics_identifier_label`. The broker-wide
 `alltopics` counters also need `broker` and must not carry `topic`; topic counters
@@ -128,17 +133,11 @@ need `broker` and `topic`. For topic attribution, `kafka_log_log_size` also need
 `broker`, `topic`, and `partition`. `up` must carry the configured selector label
 on every target.
 
-When `principal_attribution.enabled` is `true`, the plugin requires this quota
-metric for measured network allocation:
-
-| Metric | Type | Used for |
-|---|---|---|
-| `kafka_server_quota_byte_rate` | gauge | Quota-backed principal weights for ingress and egress |
-
 Every quota series must carry `broker`, the configured
 `metrics_identifier_label`, `quota_type`, `quota_scope`, `user`, and `client_id`.
-The runtime accepts only finite, non-negative byte-rate samples. `Produce` is
-ingress and `Fetch` is egress. The accepted scope/label combinations are:
+Measured allocation accepts only finite, non-negative byte-rate samples.
+`Produce` is ingress and `Fetch` is egress. The accepted scope/label combinations
+are:
 
 | `quota_scope` | `user` | `client_id` |
 |---|---|---|
@@ -238,6 +237,104 @@ workload. Once healthy, it recovers the still-available windows in chronological
 order, bounded by the configured lookback range. If the earliest blocked windows are
 no longer available, the retained gap is reported as a retention gap; the engine does
 not fabricate billing for it.
+
+## Bounded historical acquisition and recovery behavior
+
+`historical_acquisition_chunk_days` is a self-managed Kafka setting. It controls the
+maximum closed-UTC-day span requested from Prometheus for scope and workload history:
+
+- Omit the setting to use `5` days.
+- Values from `1` through `30` are valid. `30` is an explicit operator-selected
+  maximum, not the default.
+- Smaller values reduce response size and the amount of reduced evidence retained in
+  memory, but increase the number of Prometheus requests.
+- Every cluster or topic workload response spans at most `H` days, where `H` is the
+  configured value. Only one reduced workload chunk is retained while the next chunk
+  is acquired; the chunk is released after success, failure, or shutdown.
+
+The engine reuses exact scope evidence within one run when tenant, target identifier,
+target-label name, step, start, and end are identical. A failed open breaker performs
+one newest-point health probe and no workload, billing, topic, write, or progress
+activity. A successful probe is persisted as recovery state, then the complete
+bounded scope is validated again before workload queries, progress, or writes start.
+Billing windows remain owned by calculation; acquisition does not invent or widen
+them.
+
+Counters are evaluated at each UTC day end and own the preceding half-open day
+`[day_start, day_end)`. Gauge samples retain the daily start-anchored grid and the
+same half-open filter, including when the configured step does not divide a day.
+Missing and present-zero evidence remain distinct. A failed family or day is isolated
+from successful families and later days; residual rows, monetary reconciliation,
+retryable dates, and terminal topic visibility are preserved.
+
+### Measured request and transport bounds
+
+The following cold-cache measurements use the default one-hour divisor step and the
+existing retry ceiling `R=4`. A logical query is one PromQL family; a transport
+attempt is one HTTP request. The normal one-day path batches three cluster families
+in one client call, but still has three logical cluster families.
+
+| Scenario | H and date sets | Logical families by source | Cold HTTP attempts | Retry ceiling |
+|---|---|---|---:|---:|
+| Normal one day | `H=5`, one cluster/topic day | target `1`; cluster ingress/egress/storage `1` each; topic ingress/egress/storage `1` each (`L=7`) | 7 | `R×L=28` |
+| 31-day backfill | `H=5`, `C_cluster=C_topic=7` | target `7`; each of the six workload families `7` (`L=49`) | 49 | `R×L=196` |
+| Unequal, gapped recovery workload | `H=5`; cluster `9` days (`C_cluster=2`), topic runs `2+1+1` days (`C_topic=3`) | target `2`; each cluster family `2`; each topic family `3` (`L=17`) | 17 | `R×L=68` |
+| Family-local fallback | `H=5`, six cluster/topic days; one five-day cluster ingress chunk fails | target `2`; cluster ingress `7`; other cluster and topic families `2` (`L=19`, workload `B+F=17`) | 22 (`10` ingress attempts plus first-attempt remainder) | `R×L=76` |
+| Failed open probe | `H=5`, newest point only | target `1`; no workload families (`L=1`) | 4 when all transient attempts are exhausted | `R×L=4` |
+| Successful recovery | `H=5`, six cluster and six topic days (`C_cluster=C_topic=2`) | target `3` (point probe plus two bounded validation requests); each workload family `2` (`L=15`) | 15 | `R×L=60` |
+| Warm raw-response cache | same logical target query twice | target `2` logical families | 1 | cache hits can reduce attempts, never logical count |
+
+For independent cluster and topic date sets, let `C_cluster` and `C_topic` be the
+sum of `ceil(run_length / H)` over each contiguous run. If the step divides one UTC
+day, successful workload counts are:
+
+```
+B_cluster = 3 × C_cluster
+B_topic   = 3 × C_topic
+B_total   = B_cluster + B_topic
+```
+
+For exact gauge bounds, use `D = 86,400` seconds per UTC day, `S` equal to the
+positive `metrics_step_seconds`, and `h` equal to the number of days in one actual
+chunk. For one actual chunk `j`, `g(h_j, S)` is the exact number of residue-group
+requests for that gauge family:
+
+```
+g(h, S) = min(h, S / gcd(S, D))
+G_family = sum_j g(h_j, S)  # sum once over the actual chunks j
+```
+
+`G_cluster` and `G_topic` are the corresponding sums for their independent date
+sets. Each returned series contains at most `floor(H × D / S) + 1` evaluation
+timestamps before ordinary daily filtering; the half-open day filter may retain
+fewer. The shorthand `6C` is valid only when cluster and topic date sets have the
+same contiguous runs, use the same `H`, and `S` divides `D`, so each side is exactly
+`3C`.
+
+For the documented twelve-day coincident example with the default `H=5`, both sides
+have `C=3`, so the workload is `9 + 9 = 18` logical families. With explicit `H=30`,
+the same workload is `3 + 3 = 6`.
+
+For a non-divisor step, use `G_cluster` and `G_topic` from the exact per-family sums
+above:
+
+```
+B_cluster = 2 × C_cluster + G_cluster
+B_topic   = 2 × C_topic   + G_topic
+```
+
+For example, six days with `H=5` and a 3,601-second step have `C=2`, `G=6`, and
+`B=10` workload families per side. If a bounded family request fails, `F` is the
+number of days retried with daily fallback queries, so the workload is `B + F`; a
+successful family adds no fallback. In the measured fallback row above,
+`B_cluster=6`, `F_cluster=5`, and `B_topic=6`, giving `17` workload families before
+the two target-scope families. In all cases, cold attempts are at most `R×L`,
+transient recovery uses between two and `R` attempts, and a warm cache hit uses zero
+transport attempts for that logical query.
+
+These bounded-history settings apply only to `self_managed_kafka`. Confluent Cloud
+keeps its existing configuration, query, progress, and topic-attribution behavior;
+the `generic_metrics_only` path is likewise unchanged.
 
 ## Produced product types
 

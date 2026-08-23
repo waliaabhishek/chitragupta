@@ -14,6 +14,11 @@ from core.engine.topic_attribution_models import (
 from core.engine.topic_attribution_provider import TopicAttributionClusterOutcome
 from core.metrics.protocol import MetricsQueryError
 from core.models import MetricQuery
+from plugins.self_managed_kafka.historical_metrics import (
+    bounded_window_chunks,
+    collect_daily_evidence,
+    validate_utc_day_windows,
+)
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
@@ -58,6 +63,7 @@ class SelfManagedKafkaTopicAttributionProvider:
         self._config = config
         self._metrics_source = metrics_source
         self._inventory_is_partitionless = inventory_is_partitionless
+        self._prepared_evidence: dict[tuple[datetime, datetime], dict[str, list[MetricRow]]] = {}
 
     @property
     def config(self) -> SelfManagedTopicAttributionConfig:
@@ -73,6 +79,57 @@ class SelfManagedKafkaTopicAttributionProvider:
     def replace_date_on_completion(self) -> bool:
         """Replace the date snapshot once every line reaches a terminal outcome."""
         return True
+
+    def iter_evidence_chunks(
+        self,
+        windows: Sequence[tuple[datetime, datetime]],
+    ) -> tuple[tuple[tuple[datetime, datetime], ...], ...]:
+        """Yield bounded contiguous windows in chronological order."""
+        validate_utc_day_windows(windows)
+        return bounded_window_chunks(windows, self._config.historical_acquisition_chunk_days)
+
+    def prepare_evidence_chunk(
+        self,
+        windows: Sequence[tuple[datetime, datetime]],
+        metrics_step: timedelta,
+    ) -> None:
+        """Acquire and retain reduced evidence for one bounded chunk."""
+        self.clear_evidence_chunk()
+        try:
+            validate_utc_day_windows(windows)
+            queries = [
+                MetricQuery(
+                    key=key,
+                    query_expression=f"sum by (topic) (increase({metric_name}{{}}[86400s]))",
+                    label_keys=("topic",),
+                    resource_label=self._config.metrics_identifier_label,
+                    query_mode="instant",
+                )
+                for key, metric_name in _NETWORK_PRODUCT_QUERIES.values()
+            ]
+            queries.append(
+                MetricQuery(
+                    key="topic_storage_bytes",
+                    query_expression="sum by (topic) (kafka_log_log_size{})",
+                    label_keys=("topic",),
+                    resource_label=self._config.metrics_identifier_label,
+                )
+            )
+            self._prepared_evidence = collect_daily_evidence(
+                self._metrics_source,
+                queries,
+                windows,
+                step=metrics_step,
+                chunk_days=self._config.historical_acquisition_chunk_days,
+                resource_id_filter=self._config.metrics_identifier,
+            )
+        except Exception:
+            self.clear_evidence_chunk()
+            raise
+
+    def clear_evidence_chunk(self) -> None:
+        """Release reduced evidence retained for the active chunk."""
+        self._prepared_evidence.clear()
 
     def attribute_cluster(
         self,
@@ -156,6 +213,9 @@ class SelfManagedKafkaTopicAttributionProvider:
             resource_label=self._config.metrics_identifier_label,
             query_mode="instant",
         )
+        prepared = self._prepared_evidence.get((day_start, day_end))
+        if prepared is not None and key in prepared:
+            return _topic_values(prepared[key])
         results = self._metrics_source.query(
             queries=[query],
             start=day_start,
@@ -173,6 +233,12 @@ class SelfManagedKafkaTopicAttributionProvider:
             label_keys=("topic",),
             resource_label=self._config.metrics_identifier_label,
         )
+        prepared = self._prepared_evidence.get((day_start, day_end))
+        if prepared is not None and query.key in prepared:
+            rows = [row for row in prepared[query.key] if day_start <= row.timestamp < day_end]
+            if not rows and not self._inventory_is_partitionless():
+                raise MetricsQueryError("Missing required storage metric family: kafka_log_log_size")
+            return _average_partition_storage(rows)
         results = self._metrics_source.query(
             queries=[query],
             start=day_start,

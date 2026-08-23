@@ -336,6 +336,45 @@ class TestSelfManagedKafkaConfig:
         config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
         assert config.discovery_window_hours == 1
 
+    @pytest.mark.parametrize(
+        ("configured_days", "expected_days"),
+        [
+            (None, 5),
+            (1, 1),
+            (17, 17),
+            (30, 30),
+        ],
+    )
+    def test_historical_acquisition_chunk_days_accepts_the_supported_range(
+        self,
+        base_settings: dict[str, object],
+        configured_days: int | None,
+        expected_days: int,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        if configured_days is not None:
+            base_settings["historical_acquisition_chunk_days"] = configured_days
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.historical_acquisition_chunk_days == expected_days
+
+    @pytest.mark.parametrize("configured_days", [0, 31, -1, 1.5, "seven"])
+    def test_historical_acquisition_chunk_days_rejects_values_outside_the_supported_integer_range(
+        self,
+        base_settings: dict[str, object],
+        configured_days: object,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["historical_acquisition_chunk_days"] = configured_days
+
+        with pytest.raises(ValidationError) as raised:
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert raised.value.errors()[0]["loc"] == ("historical_acquisition_chunk_days",)
+
 
 class TestPrincipalAttributionConfig:
     def test_omitted_or_disabled_principal_attribution_keeps_the_baseline_static_policy(

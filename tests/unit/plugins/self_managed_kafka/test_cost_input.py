@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock
 
@@ -281,26 +281,28 @@ class TestStorageCostCalculation:
         from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 
         gb = 1073741824
-        mock_metrics_source.query.side_effect = [
-            {
-                "cluster_bytes_in": [make_metric_row("cluster_bytes_in", gb)],
-                "cluster_bytes_out": [make_metric_row("cluster_bytes_out", gb)],
-                "cluster_storage_bytes": [
+
+        def query(
+            *,
+            queries: list[object],
+            start: datetime,
+            end: datetime,
+            **_: object,
+        ) -> dict[str, list[MetricRow]]:
+            key = queries[0].key
+            if key == "cluster_storage_bytes":
+                rows = [
                     make_metric_row("cluster_storage_bytes", gb),
-                    MetricRow(
-                        timestamp=day_end,
-                        metric_key="cluster_storage_bytes",
-                        value=gb * 100,
-                        labels={"kafka_cluster_id": "kraft-a-001", "broker": "1"},
-                    ),
-                ],
-            },
-            {
-                "cluster_bytes_in": [MetricRow(day_end, "cluster_bytes_in", gb, {})],
-                "cluster_bytes_out": [MetricRow(day_end, "cluster_bytes_out", gb, {})],
-                "cluster_storage_bytes": [MetricRow(day_end, "cluster_storage_bytes", gb * 100, {})],
-            },
-        ]
+                    MetricRow(day_end, "cluster_storage_bytes", gb * 100, {}),
+                ]
+            else:
+                rows = [
+                    MetricRow(start, key, gb, {}),
+                    MetricRow(end, key, gb, {}),
+                ]
+            return {key: rows}
+
+        mock_metrics_source.query.side_effect = query
         cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
 
         items = list(cost_input.gather("tenant-1", day_start, day_end + (day_end - day_start), MagicMock()))
@@ -507,28 +509,29 @@ class TestEdgeCases:
         start = datetime(2026, 2, 1, tzinfo=UTC)
         end = datetime(2026, 2, 4, tzinfo=UTC)  # 3 days
 
-        # Batch query returns rows with timestamps spread across all 3 days
+        # Counter range samples are exact UTC day-end evaluations; gauge rows
+        # remain on the legacy per-day grid.
         mock_metrics_source.query.return_value = {
             "cluster_bytes_in": [
                 MetricRow(
-                    timestamp=datetime(2026, 2, 1, 12, tzinfo=UTC), metric_key="cluster_bytes_in", value=gb, labels={}
+                    timestamp=datetime(2026, 2, 2, tzinfo=UTC), metric_key="cluster_bytes_in", value=gb, labels={}
                 ),
                 MetricRow(
-                    timestamp=datetime(2026, 2, 2, 12, tzinfo=UTC), metric_key="cluster_bytes_in", value=gb, labels={}
+                    timestamp=datetime(2026, 2, 3, tzinfo=UTC), metric_key="cluster_bytes_in", value=gb, labels={}
                 ),
                 MetricRow(
-                    timestamp=datetime(2026, 2, 3, 12, tzinfo=UTC), metric_key="cluster_bytes_in", value=gb, labels={}
+                    timestamp=datetime(2026, 2, 4, tzinfo=UTC), metric_key="cluster_bytes_in", value=gb, labels={}
                 ),
             ],
             "cluster_bytes_out": [
                 MetricRow(
-                    timestamp=datetime(2026, 2, 1, 12, tzinfo=UTC), metric_key="cluster_bytes_out", value=gb, labels={}
+                    timestamp=datetime(2026, 2, 2, tzinfo=UTC), metric_key="cluster_bytes_out", value=gb, labels={}
                 ),
                 MetricRow(
-                    timestamp=datetime(2026, 2, 2, 12, tzinfo=UTC), metric_key="cluster_bytes_out", value=gb, labels={}
+                    timestamp=datetime(2026, 2, 3, tzinfo=UTC), metric_key="cluster_bytes_out", value=gb, labels={}
                 ),
                 MetricRow(
-                    timestamp=datetime(2026, 2, 3, 12, tzinfo=UTC), metric_key="cluster_bytes_out", value=gb, labels={}
+                    timestamp=datetime(2026, 2, 4, tzinfo=UTC), metric_key="cluster_bytes_out", value=gb, labels={}
                 ),
             ],
             "cluster_storage_bytes": [
@@ -601,22 +604,19 @@ class TestEdgeCases:
 
 
 def _make_batch_metrics_3days() -> dict:
-    """3-day batch response: rows with timestamps in Feb 1, Feb 2, Feb 3."""
+    """3-day batch response with counters evaluated at each UTC day end."""
     gb = 1073741824
-    days = [
-        datetime(2026, 2, 1, 12, tzinfo=UTC),
-        datetime(2026, 2, 2, 12, tzinfo=UTC),
-        datetime(2026, 2, 3, 12, tzinfo=UTC),
-    ]
+    counter_days = [datetime(2026, 2, day, tzinfo=UTC) for day in (2, 3, 4)]
+    gauge_days = [datetime(2026, 2, day, 12, tzinfo=UTC) for day in (1, 2, 3)]
     return {
         "cluster_bytes_in": [
-            MetricRow(timestamp=d, metric_key="cluster_bytes_in", value=gb * 10, labels={}) for d in days
+            MetricRow(timestamp=d, metric_key="cluster_bytes_in", value=gb * 10, labels={}) for d in counter_days
         ],
         "cluster_bytes_out": [
-            MetricRow(timestamp=d, metric_key="cluster_bytes_out", value=gb * 20, labels={}) for d in days
+            MetricRow(timestamp=d, metric_key="cluster_bytes_out", value=gb * 20, labels={}) for d in counter_days
         ],
         "cluster_storage_bytes": [
-            MetricRow(timestamp=d, metric_key="cluster_storage_bytes", value=gb * 100, labels={}) for d in days
+            MetricRow(timestamp=d, metric_key="cluster_storage_bytes", value=gb * 100, labels={}) for d in gauge_days
         ],
     }
 
@@ -668,66 +668,39 @@ class TestDailyPrometheusQuery:
         end = datetime(2026, 2, 4, tzinfo=UTC)
 
         gb = 1073741824
-        first_day = {
-            "cluster_bytes_in": [
-                MetricRow(
-                    timestamp=datetime(2026, 2, 1, 12, tzinfo=UTC),
-                    metric_key="cluster_bytes_in",
-                    value=gb * 10,
-                    labels={},
-                )
-            ],
-            "cluster_bytes_out": [
-                MetricRow(
-                    timestamp=datetime(2026, 2, 1, 12, tzinfo=UTC),
-                    metric_key="cluster_bytes_out",
-                    value=gb * 20,
-                    labels={},
-                )
-            ],
-            "cluster_storage_bytes": [
-                MetricRow(
-                    timestamp=datetime(2026, 2, 1, 12, tzinfo=UTC),
-                    metric_key="cluster_storage_bytes",
-                    value=gb * 100,
-                    labels={},
-                )
-            ],
-        }
-        third_day = {
-            key: [
-                MetricRow(
-                    timestamp=datetime(2026, 2, 3, 12, tzinfo=UTC),
-                    metric_key=key,
-                    value=gb * (10 if key == "cluster_bytes_in" else 20 if key == "cluster_bytes_out" else 100),
-                    labels={},
-                )
-            ]
-            for key in ("cluster_bytes_in", "cluster_bytes_out", "cluster_storage_bytes")
-        }
-        mock_metrics_source.query.side_effect = [
-            first_day,
-            {
-                "cluster_bytes_in": [
+
+        def query(*, queries: list[object], **_: object) -> dict[str, list[MetricRow]]:
+            key = queries[0].key
+            if key == "cluster_storage_bytes":
+                return {
+                    key: [
+                        MetricRow(
+                            timestamp=datetime(2026, 2, 1, 12, tzinfo=UTC),
+                            metric_key=key,
+                            value=gb * 100,
+                            labels={},
+                        ),
+                        MetricRow(
+                            timestamp=datetime(2026, 2, 3, 12, tzinfo=UTC),
+                            metric_key=key,
+                            value=gb * 100,
+                            labels={},
+                        ),
+                    ]
+                }
+            return {
+                key: [
                     MetricRow(
-                        timestamp=datetime(2026, 2, 2, 12, tzinfo=UTC),
-                        metric_key="cluster_bytes_in",
-                        value=gb * 10,
+                        timestamp=datetime(2026, 2, day, tzinfo=UTC),
+                        metric_key=key,
+                        value=gb * (10 if key == "cluster_bytes_in" else 20),
                         labels={},
                     )
-                ],
-                "cluster_bytes_out": [
-                    MetricRow(
-                        timestamp=datetime(2026, 2, 2, 12, tzinfo=UTC),
-                        metric_key="cluster_bytes_out",
-                        value=gb * 20,
-                        labels={},
-                    )
-                ],
-                "cluster_storage_bytes": [],
-            },
-            third_day,
-        ]
+                    for day in (2, 3, 4)
+                ]
+            }
+
+        mock_metrics_source.query.side_effect = query
         cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
         uow = MagicMock()
 
@@ -745,9 +718,26 @@ class TestDailyPrometheusQuery:
         start = datetime(2026, 2, 1, tzinfo=UTC)
         end = datetime(2026, 2, 4, tzinfo=UTC)  # 3 days
 
-        mock_metrics_source.query.side_effect = [
-            _make_single_day_metrics(datetime(2026, 2, day, 12, tzinfo=UTC)) for day in (1, 2, 3)
-        ]
+        def query(*, queries: list[object], **_: object) -> dict[str, list[MetricRow]]:
+            key = queries[0].key
+            timestamps = (
+                [datetime(2026, 2, day, 12, tzinfo=UTC) for day in (1, 2, 3)]
+                if key == "cluster_storage_bytes"
+                else [datetime(2026, 2, day, tzinfo=UTC) for day in (2, 3, 4)]
+            )
+            return {
+                key: [
+                    MetricRow(
+                        timestamp=timestamp,
+                        metric_key=key,
+                        value=1073741824,
+                        labels={},
+                    )
+                    for timestamp in timestamps
+                ]
+            }
+
+        mock_metrics_source.query.side_effect = query
         cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
         uow = MagicMock()
 
@@ -766,14 +756,42 @@ class TestDailyPrometheusQuery:
         start = datetime(2026, 2, 1, tzinfo=UTC)
         end = datetime(2026, 2, 4, tzinfo=UTC)  # 3 days
 
-        day1_data = _make_single_day_metrics(datetime(2026, 2, 1, 12, tzinfo=UTC))
-        day3_data = _make_single_day_metrics(datetime(2026, 2, 3, 12, tzinfo=UTC))
+        def query(
+            *,
+            queries: list[object],
+            start: datetime,
+            end: datetime,
+            **_: object,
+        ) -> dict[str, list[MetricRow]]:
+            key = queries[0].key
+            if key == "cluster_bytes_in" and end - start > timedelta(days=1):
+                raise MetricsQueryError("bounded counter response failed")
+            if key == "cluster_bytes_in" and start.date() == datetime(2026, 2, 2, tzinfo=UTC).date():
+                raise MetricsQueryError("day 2 prometheus down")
+            if key == "cluster_storage_bytes":
+                return {
+                    key: [
+                        MetricRow(datetime(2026, 2, day, 12, tzinfo=UTC), key, 1073741824, {})
+                        for day in (1, 3)
+                        for _ in range(24)
+                    ]
+                }
+            if end - start > timedelta(days=1):
+                return {
+                    key: [
+                        MetricRow(
+                            timestamp=datetime(2026, 2, day, tzinfo=UTC),
+                            metric_key=key,
+                            value=1073741824,
+                            labels={},
+                        )
+                        for day in (2, 3, 4)
+                        if start <= datetime(2026, 2, day, tzinfo=UTC) <= end
+                    ]
+                }
+            return {key: [MetricRow(end, key, 1073741824, {})]}
 
-        mock_metrics_source.query.side_effect = [
-            day1_data,
-            MetricsQueryError("day 2 prometheus down"),
-            day3_data,
-        ]
+        mock_metrics_source.query.side_effect = query
         cost_input = ConstructedCostInput(sample_config, mock_metrics_source)
         uow = MagicMock()
 
@@ -781,7 +799,7 @@ class TestDailyPrometheusQuery:
 
         # 8 items: days 1 and 3 succeed (4 each), day 2 skipped
         assert len(items) == 8
-        assert mock_metrics_source.query.call_count == 3
+        assert mock_metrics_source.query.call_count == 6
 
 
 class TestDayStarts:
@@ -803,3 +821,149 @@ class TestDayStarts:
         assert result[1] == (datetime(2026, 2, 2, tzinfo=UTC), datetime(2026, 2, 2, 12, tzinfo=UTC))
         # Second window is less than a full day
         assert result[1][1] - result[1][0] < timedelta(hours=24)
+
+
+class TestBoundedHistoricalCostAcquisition:
+    def test_divisor_step_backfill_uses_three_logical_family_queries_per_bounded_chunk(self) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        config = _historical_config(chunk_days=3)
+        source = MagicMock()
+        source.query.side_effect = _historical_cluster_response
+        first_day = datetime(2026, 2, 1, tzinfo=UTC)
+
+        items = list(
+            ConstructedCostInput(config, source).gather(
+                "tenant-1",
+                first_day,
+                first_day + timedelta(days=4),
+                MagicMock(),
+            )
+        )
+
+        assert len(items) == 16
+        assert _logical_family_queries(source) == 6
+        assert all(
+            call.kwargs["end"] - call.kwargs["start"] <= timedelta(days=3) for call in source.query.call_args_list
+        )
+
+    def test_failed_counter_chunk_retries_only_its_owned_days_without_discarding_later_days(self) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        source = MagicMock()
+
+        def response(
+            *,
+            queries: list[object],
+            start: datetime,
+            end: datetime,
+            step: timedelta,
+            **kwargs: object,
+        ) -> dict[str, list[MetricRow]]:
+            if queries[0].key == "cluster_bytes_in" and end - start > timedelta(days=1):
+                raise MetricsQueryError("bounded counter response failed")
+            return _historical_cluster_response(queries=queries, start=start, end=end, step=step, **kwargs)
+
+        source.query.side_effect = response
+        first_day = datetime(2026, 2, 1, tzinfo=UTC)
+
+        items = list(
+            ConstructedCostInput(_historical_config(chunk_days=3), source).gather(
+                "tenant-1",
+                first_day,
+                first_day + timedelta(days=4),
+                MagicMock(),
+            )
+        )
+
+        assert {item.timestamp for item in items} == {first_day + timedelta(days=index) for index in range(4)}
+        assert _logical_family_queries(source) == 9
+
+    def test_non_divisor_step_preserves_bounded_gauge_request_groups(self) -> None:
+        from plugins.self_managed_kafka.cost_input import ConstructedCostInput
+
+        source = MagicMock()
+        source.query.side_effect = _historical_cluster_response
+        first_day = datetime(2026, 2, 1, tzinfo=UTC)
+
+        items = list(
+            ConstructedCostInput(_historical_config(chunk_days=3, metrics_step_seconds=3601), source).gather(
+                "tenant-1",
+                first_day,
+                first_day + timedelta(days=4),
+                MagicMock(),
+            )
+        )
+
+        assert len(items) == 16
+        assert _logical_family_queries(source) == 8
+        storage_calls = [
+            call for call in source.query.call_args_list if call.kwargs["queries"][0].key == "cluster_storage_bytes"
+        ]
+        assert len(storage_calls) == 4
+
+
+def _historical_config(*, chunk_days: int, metrics_step_seconds: int = 3600):
+    from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+    return SelfManagedKafkaConfig.from_plugin_settings(
+        {
+            "cluster_id": "kafka-cluster-001",
+            "metrics_identifier": "kraft-a-001",
+            "broker_count": 3,
+            "historical_acquisition_chunk_days": chunk_days,
+            "metrics_step_seconds": metrics_step_seconds,
+            "cost_model": {
+                "compute_hourly_rate": "0.10",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
+            },
+            "metrics": {"url": "http://prom:9090"},
+        }
+    )
+
+
+def _historical_cluster_response(
+    *,
+    queries: list[object],
+    start: datetime,
+    end: datetime,
+    step: timedelta,
+    **_: object,
+) -> dict[str, list[MetricRow]]:
+    values: dict[str, list[MetricRow]] = {}
+    for query in queries:
+        timestamps = _grid(start, end, step) if query.key == "cluster_storage_bytes" else _counter_grid(start, end)
+        values[query.key] = [
+            MetricRow(
+                timestamp=timestamp,
+                metric_key=query.key,
+                value=1073741824,
+                labels={},
+            )
+            for timestamp in timestamps
+        ]
+    return values
+
+
+def _counter_grid(start: datetime, end: datetime) -> tuple[datetime, ...]:
+    timestamps: list[datetime] = []
+    timestamp = start
+    while timestamp <= end:
+        timestamps.append(timestamp)
+        timestamp += timedelta(days=1)
+    return tuple(timestamps)
+
+
+def _grid(start: datetime, end: datetime, step: timedelta) -> tuple[datetime, ...]:
+    timestamps: list[datetime] = []
+    timestamp = start
+    while timestamp <= end:
+        timestamps.append(timestamp)
+        timestamp += step
+    return tuple(timestamps)
+
+
+def _logical_family_queries(source: MagicMock) -> int:
+    return sum(len(call.kwargs["queries"]) for call in source.query.call_args_list)

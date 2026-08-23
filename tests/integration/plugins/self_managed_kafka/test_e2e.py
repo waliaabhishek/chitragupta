@@ -88,35 +88,43 @@ class _QuotaBackedMetricsSource:
                     for timestamp in timestamps
                 ]
             elif definition.key in {"cluster_bytes_in", "cluster_bytes_out"}:
+                timestamps = _range_grid(start, end, step) if definition.query_mode == "range" else (end,)
                 rows[definition.key] = [
-                    MetricRow(end, definition.key, 1073741824.0, {"kafka_cluster_id": "kraft-a-001"})
+                    MetricRow(timestamp, definition.key, 1073741824.0, {"kafka_cluster_id": "kraft-a-001"})
+                    for timestamp in timestamps
                 ]
             elif definition.key == "cluster_storage_bytes":
+                timestamps = _range_grid(start, end, step)
                 rows[definition.key] = [
                     MetricRow(
-                        start + (end - start) / 2,
+                        timestamp,
                         definition.key,
                         1073741824.0,
                         {"kafka_cluster_id": "kraft-a-001"},
                     )
+                    for timestamp in timestamps
                 ]
             elif definition.key in {"topic_bytes_in", "topic_bytes_out"}:
+                timestamps = _range_grid(start, end, step) if definition.query_mode == "range" else (end,)
                 rows[definition.key] = [
                     MetricRow(
-                        end,
+                        timestamp,
                         definition.key,
                         1073741824.0,
                         {"kafka_cluster_id": "kraft-a-001", "broker": "1", "topic": "orders"},
                     )
+                    for timestamp in timestamps
                 ]
             elif definition.key == "topic_storage_bytes":
+                timestamps = _range_grid(start, end, step)
                 rows[definition.key] = [
                     MetricRow(
-                        start + (end - start) / 2,
+                        timestamp,
                         definition.key,
                         1073741824.0,
                         {"kafka_cluster_id": "kraft-a-001", "broker": "1", "topic": "orders", "partition": "0"},
                     )
+                    for timestamp in timestamps
                 ]
             elif "kafka_server_quota_byte_rate" in definition.query_expression:
                 quota_type = "Produce" if 'quota_type="Produce"' in definition.query_expression else "Fetch"
@@ -157,6 +165,16 @@ class _QuotaBackedMetricsSource:
             else:
                 rows[definition.key] = []
         return rows
+
+
+def _range_grid(start: datetime, end: datetime, step: timedelta) -> tuple[datetime, ...]:
+    """Return inclusive range samples for range-capable metrics fakes."""
+    timestamps: list[datetime] = []
+    current = start
+    while current <= end:
+        timestamps.append(current)
+        current += step
+    return tuple(timestamps)
 
 
 def _unit_of_work() -> UnitOfWork:
@@ -618,8 +636,13 @@ def test_orchestrator_persists_open_probe_recovery_and_close_with_real_scope_sto
         if key in {"topic_bytes_in", "topic_bytes_out", "topic_storage_bytes"}:
             if not topic_overlay_available:
                 raise MetricsQueryError("topic telemetry is temporarily unavailable")
-            timestamp = kwargs["start"]
-            assert isinstance(timestamp, datetime)
+            start = kwargs["start"]
+            end = kwargs["end"]
+            step = kwargs["step"]
+            assert isinstance(start, datetime)
+            assert isinstance(end, datetime)
+            assert isinstance(step, timedelta)
+            timestamps = _range_grid(start, end, step)
             return {
                 key: [
                     MetricRow(
@@ -628,15 +651,33 @@ def test_orchestrator_persists_open_probe_recovery_and_close_with_real_scope_sto
                         1073741824.0,
                         {"kafka_cluster_id": "kraft-a-001", "topic": "orders"},
                     )
+                    for timestamp in timestamps
                 ]
             }
-        timestamp = kwargs["start"]
-        assert isinstance(timestamp, datetime)
-        return {
-            "cluster_bytes_in": [MetricRow(timestamp, "cluster_bytes_in", 4096.0, {})],
-            "cluster_bytes_out": [MetricRow(timestamp, "cluster_bytes_out", 2048.0, {})],
-            "cluster_storage_bytes": [MetricRow(timestamp, "cluster_storage_bytes", 8192.0, {})],
-        }
+        start = kwargs["start"]
+        end = kwargs["end"]
+        step = kwargs["step"]
+        assert isinstance(start, datetime)
+        assert isinstance(end, datetime)
+        assert isinstance(step, timedelta)
+        rows: dict[str, list[MetricRow]] = {}
+        for definition in queries:
+            if definition.key == "cluster_storage_bytes" or definition.query_mode == "range":
+                timestamps = _range_grid(start, end, step)
+            else:
+                timestamps = (end,)
+            rows[definition.key] = [
+                MetricRow(
+                    timestamp,
+                    definition.key,
+                    8192.0
+                    if definition.key == "cluster_storage_bytes"
+                    else (4096.0 if definition.key == "cluster_bytes_in" else 2048.0),
+                    {},
+                )
+                for timestamp in timestamps
+            ]
+        return rows
 
     source.query.side_effect = query
     settings = _settings()
@@ -727,6 +768,12 @@ def test_orchestrator_persists_open_probe_recovery_and_close_with_real_scope_sto
         uow.pipeline_state.mark_needs_recalculation("self_managed_kafka", "tenant-1", tracking_date)
         uow.commit()
 
+    # Keep this calculation rollback probe focused on the calculation scope gate;
+    # the normal overlay phase can otherwise run afterward and legitimately
+    # advance the same recovery state.
+    topic_overlay_phase = orchestrator._topic_overlay_phase
+    orchestrator._topic_overlay_phase = None
+
     from core.plugin.protocols import ScopeBlockedError, ScopeGateDecision, ScopeGateResult
     from core.storage.backends.sqlmodel.unit_of_work import SQLModelUnitOfWork
 
@@ -747,6 +794,7 @@ def test_orchestrator_persists_open_probe_recovery_and_close_with_real_scope_sto
     monkeypatch.setattr(SQLModelUnitOfWork, "commit", flush_then_block_commit)
     orchestrator._gather_phase._last_resource_gather_at = datetime(2026, 9, 22, tzinfo=UTC)
     failed = run_at(datetime(2026, 9, 22, tzinfo=UTC))
+    orchestrator._topic_overlay_phase = topic_overlay_phase
 
     assert failed.dates_calculated == 0
     assert any("forced post-write scope block" in error for error in failed.errors)
@@ -835,6 +883,37 @@ def test_orchestrator_rolls_back_gather_writes_when_second_scope_check_blocks(
     )
     orchestrator = ChargebackOrchestrator("tenant", tenant, plugin, backend, source)
 
+    original_prepare_gather_scope = plugin.prepare_gather_scope
+    scope_gate_calls = 0
+
+    def prepare_gather_scope_with_durable_failure(*args: object, **kwargs: object):
+        nonlocal scope_gate_calls
+        scope_gate_calls += 1
+        result = original_prepare_gather_scope(*args, **kwargs)
+        if scope_gate_calls == 1:
+            start = args[1]
+            end = args[2]
+            assert isinstance(start, datetime)
+            assert isinstance(end, datetime)
+            injected_uow = args[3]
+            injected_uow.self_managed_kafka_scope_state.open(
+                ecosystem="self_managed_kafka",
+                tenant_id="tenant-1",
+                cluster_id="billing-cluster-a",
+                metrics_identifier_label="kafka_cluster_id",
+                metrics_identifier="kraft-a-001",
+                window_start=start,
+                window_end=end,
+                reason="target_scope_validation",
+                status="target_down",
+                detail="injected durable scope failure",
+                opened_at=datetime(2026, 8, 20, tzinfo=UTC),
+            )
+            injected_uow.commit()
+        return result
+
+    monkeypatch.setattr(plugin, "prepare_gather_scope", prepare_gather_scope_with_durable_failure)
+
     with patch("core.engine.orchestrator.datetime") as patched_datetime:
         patched_datetime.now.return_value = datetime(2026, 8, 20, tzinfo=UTC)
         patched_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
@@ -843,6 +922,7 @@ def test_orchestrator_rolls_back_gather_writes_when_second_scope_check_blocks(
     tracking_date = datetime(2026, 8, 14).date()
     assert target_values == [1.0, 0.0]
     assert query_keys == ["target_up", "broker_topic_discovery", "target_up"]
+    assert source.query.call_args_list[2].kwargs["start"] == source.query.call_args_list[2].kwargs["end"]
     assert resource_writes == ["billing-cluster-a"]
     assert result.dates_gathered == 0
     assert result.dates_calculated == 0
@@ -1191,11 +1271,12 @@ def test_configured_plugin_keeps_pending_overlay_when_inventory_is_skipped_or_ad
 
     skipped = run_at(now)
     assert skipped.errors == []
-    assert observed_query_keys == []
+    assert observed_query_keys
+    assert all(keys == {"target_up"} for keys in observed_query_keys)
     with backend.create_read_only_unit_of_work() as uow:
         scope_state = uow.self_managed_kafka_scope_state.get("self_managed_kafka", "tenant-1", "billing-cluster-a")
         assert scope_state is not None
-        assert scope_state.status == "open"
+        assert scope_state.status == "recovering"
 
     orchestrator._gather_phase._last_resource_gather_at = None
     failed_discovery = run_at(now + timedelta(days=1))
@@ -1209,7 +1290,7 @@ def test_configured_plugin_keeps_pending_overlay_when_inventory_is_skipped_or_ad
         assert uow.topic_attributions.find_by_date("self_managed_kafka", "tenant-1", pending_date) == []
         scope_state = uow.self_managed_kafka_scope_state.get("self_managed_kafka", "tenant-1", "billing-cluster-a")
         assert scope_state is not None
-        assert scope_state.status == "retention_gap"
+        assert scope_state.status == "recovering"
 
     admin_client.list_topics.side_effect = None
     admin_client.list_topics.return_value = []
@@ -1230,6 +1311,150 @@ def test_configured_plugin_keeps_pending_overlay_when_inventory_is_skipped_or_ad
             "deleted-during-window",
         }
         scope_state = uow.self_managed_kafka_scope_state.get("self_managed_kafka", "tenant-1", "billing-cluster-a")
+        assert scope_state is not None
+        assert scope_state.status == "closed"
+    backend.dispose()
+
+
+def test_initialized_plugin_closes_durable_overlay_recovery_only_after_overlay_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.config.models import PluginSettingsBase, TenantConfig
+    from core.engine.orchestrator import ChargebackOrchestrator
+    from core.models import CoreBillingLineItem, CoreResource, PipelineState
+    from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+    from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+    from plugins.self_managed_kafka.storage.module import SelfManagedKafkaStorageModule
+
+    settings = _settings()
+    settings["topic_attribution"] = {"enabled": True, "compute_policy": "shared_even_v1"}
+    source = _QuotaBackedMetricsSource()
+    plugin = SelfManagedKafkaPlugin()
+    with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+        plugin.initialize(settings)
+    # The inventory was durably discovered before this throttled run.  Keep that
+    # prerequisite true while isolating the recovery-close behavior under test.
+    monkeypatch.setattr(plugin, "topic_attribution_inventory_ready", lambda _shared_context: True)
+
+    backend = SQLModelBackend(
+        f"sqlite:///{tmp_path / 'overlay-recovery-close.db'}",
+        SelfManagedKafkaStorageModule(),
+        use_migrations=False,
+    )
+    backend.create_tables()
+    pending_date = datetime(2026, 8, 10, tzinfo=UTC).date()
+    pending_start = datetime.combine(pending_date, datetime.min.time(), UTC)
+    blocked_start = datetime(2026, 8, 1, tzinfo=UTC)
+    with backend.create_unit_of_work() as uow:
+        uow.resources.upsert(
+            CoreResource(
+                ecosystem="self_managed_kafka",
+                tenant_id="tenant-1",
+                resource_id="billing-cluster-a:topic:orders",
+                resource_type="topic",
+                display_name="orders",
+                parent_id="billing-cluster-a",
+                created_at=blocked_start,
+            )
+        )
+        uow.billing.upsert(
+            CoreBillingLineItem(
+                ecosystem="self_managed_kafka",
+                tenant_id="tenant-1",
+                timestamp=pending_start,
+                resource_id="billing-cluster-a",
+                product_category="kafka",
+                product_type="SELF_KAFKA_NETWORK_INGRESS",
+                quantity=Decimal("1"),
+                unit_price=Decimal("10"),
+                total_cost=Decimal("10"),
+            )
+        )
+        uow.pipeline_state.upsert(
+            PipelineState(
+                ecosystem="self_managed_kafka",
+                tenant_id="tenant-1",
+                tracking_date=pending_date,
+                billing_gathered=True,
+                resources_gathered=True,
+                chargeback_calculated=True,
+                topic_overlay_gathered=True,
+            )
+        )
+        scope_state = uow.self_managed_kafka_scope_state
+        scope_state.open(
+            ecosystem="self_managed_kafka",
+            tenant_id="tenant-1",
+            cluster_id="billing-cluster-a",
+            metrics_identifier_label="kafka_cluster_id",
+            metrics_identifier="kraft-a-001",
+            window_start=blocked_start,
+            window_end=blocked_start + timedelta(days=1),
+            reason="target_scope_validation",
+            status="target_down",
+            detail="previous scope outage",
+            opened_at=blocked_start + timedelta(days=1),
+        )
+        scope_state.mark_recovering(
+            "self_managed_kafka",
+            "tenant-1",
+            "billing-cluster-a",
+            recovered_at=datetime(2026, 8, 19, tzinfo=UTC),
+            recovery_cursor_date=pending_date,
+        )
+        scope_state.mark_retention_gap(
+            "self_managed_kafka",
+            "tenant-1",
+            "billing-cluster-a",
+            gap_start=blocked_start,
+            gap_end=pending_start,
+        )
+        uow.commit()
+
+    tenant = TenantConfig(
+        ecosystem="self_managed_kafka",
+        tenant_id="tenant-1",
+        lookback_days=2,
+        cutoff_days=1,
+        plugin_settings=PluginSettingsBase.model_validate(settings),
+    )
+    orchestrator = ChargebackOrchestrator("tenant", tenant, plugin, backend, source)
+    overlay_phase = orchestrator._topic_overlay_phase
+    assert overlay_phase is not None
+    now = datetime(2026, 8, 20, tzinfo=UTC)
+    orchestrator._gather_phase._last_resource_gather_at = now
+
+    def run_at(run_time: datetime):
+        with patch("core.engine.orchestrator.datetime") as patched_datetime:
+            patched_datetime.now.return_value = run_time
+            patched_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            return orchestrator.run()
+
+    with patch.object(overlay_phase, "run", return_value=0):
+        pending = run_at(now)
+
+    assert pending.errors == []
+    assert pending.dates_gathered == 0
+    assert pending.dates_calculated == 0
+    with backend.create_read_only_unit_of_work() as uow:
+        pending_state = uow.pipeline_state.get("self_managed_kafka", "tenant-1", pending_date)
+        scope_state = uow.self_managed_kafka_scope_state.get("self_managed_kafka", "tenant-1", "billing-cluster-a")
+        assert pending_state is not None
+        assert pending_state.topic_attribution_calculated is False
+        assert scope_state is not None
+        assert scope_state.status == "retention_gap"
+
+    completed = run_at(now + timedelta(minutes=10))
+
+    assert completed.errors == []
+    assert completed.dates_gathered == 0
+    assert completed.dates_calculated == 0
+    with backend.create_read_only_unit_of_work() as uow:
+        completed_state = uow.pipeline_state.get("self_managed_kafka", "tenant-1", pending_date)
+        scope_state = uow.self_managed_kafka_scope_state.get("self_managed_kafka", "tenant-1", "billing-cluster-a")
+        assert completed_state is not None
+        assert completed_state.topic_attribution_calculated is True
         assert scope_state is not None
         assert scope_state.status == "closed"
     backend.dispose()

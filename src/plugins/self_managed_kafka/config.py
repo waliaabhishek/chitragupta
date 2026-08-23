@@ -6,7 +6,7 @@ import logging
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, StrictInt, field_validator, model_validator
 
 from core.config.models import EmitterSpec, PluginSettingsBase
 from core.metrics.config import MetricsConnectionConfig  # noqa: TC001 — Pydantic evaluates field annotations at runtime
@@ -122,6 +122,7 @@ class SelfManagedKafkaConfig(PluginSettingsBase):
     resource_source: ResourceSourceConfig = Field(default_factory=ResourceSourceConfig)
     metrics: MetricsConnectionConfig  # Required for cost construction + allocation
     discovery_window_hours: int = Field(default=1, gt=0)
+    historical_acquisition_chunk_days: StrictInt = Field(default=5, ge=1, le=30)
     topic_attribution: SelfManagedTopicAttributionConfig = Field(default_factory=SelfManagedTopicAttributionConfig)
 
     @field_validator("metrics_identifier", "metrics_identifier_label")

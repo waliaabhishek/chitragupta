@@ -364,3 +364,121 @@ def test_absent_storage_evidence_is_valid_only_with_current_partitionless_invent
     assert [(row.topic_name, row.attribution_method, row.amount) for row in result.rows] == [
         ("__UNATTRIBUTED__", "zero_cluster_usage", Decimal("0.0000")),
     ]
+
+
+def test_provider_exposes_bounded_chunk_capability_without_changing_the_one_day_interface() -> None:
+    from core.engine.topic_attribution_provider import ChunkedTopicEvidenceProvider
+
+    source = MagicMock()
+    provider = _provider(source)
+    first_day = datetime(2026, 2, 1, tzinfo=UTC)
+    windows = tuple((first_day + timedelta(days=index), first_day + timedelta(days=index + 1)) for index in range(31))
+
+    assert isinstance(provider, ChunkedTopicEvidenceProvider)
+    assert tuple(provider.iter_evidence_chunks(windows)) == (
+        windows[:5],
+        windows[5:10],
+        windows[10:15],
+        windows[15:20],
+        windows[20:25],
+        windows[25:30],
+        windows[30:],
+    )
+
+
+def test_prepared_chunk_reuses_exact_day_evidence_without_another_topic_query() -> None:
+    source = MagicMock()
+
+    def query(
+        *,
+        queries: list[object],
+        start: datetime,
+        end: datetime,
+        step: timedelta,
+        **_: object,
+    ) -> dict[str, list[MetricRow]]:
+        rows: dict[str, list[MetricRow]] = {}
+        for metric in queries:
+            if metric.key == "topic_storage_bytes":
+                rows[metric.key] = [
+                    MetricRow(
+                        timestamp=timestamp,
+                        metric_key=metric.key,
+                        value=1073741824,
+                        labels={"topic": "orders", "partition": "0"},
+                    )
+                    for timestamp in _query_grid(start, end, step)
+                ]
+            else:
+                rows[metric.key] = [
+                    MetricRow(
+                        timestamp=end,
+                        metric_key=metric.key,
+                        value=1073741824,
+                        labels={"topic": "orders"},
+                    )
+                ]
+        return rows
+
+    source.query.side_effect = query
+    provider = _provider(source)
+    day_start = datetime(2026, 2, 1, tzinfo=UTC)
+    window = (day_start, day_start + timedelta(days=1))
+
+    provider.prepare_evidence_chunk((window,), timedelta(hours=1))
+    calls_after_preparation = source.query.call_count
+    outcome = provider.attribute_cluster(
+        tenant_id="tenant-1",
+        cluster_resource_id="billing-cluster-a",
+        env_id="cluster-a",
+        billing_lines=[_billing_line("SELF_KAFKA_NETWORK_INGRESS", Decimal("1"), Decimal("10"))],
+        resource_topics=frozenset({"orders"}),
+        metrics_step=timedelta(hours=1),
+    )
+
+    assert source.query.call_count == calls_after_preparation == 3
+    assert [(row.topic_name, row.amount) for row in outcome.rows] == [("orders", Decimal("10.0000"))]
+
+
+def test_non_divisor_chunk_uses_one_counter_request_per_family_and_one_gauge_group_per_day() -> None:
+    source = MagicMock()
+
+    def query(
+        *,
+        queries: list[object],
+        start: datetime,
+        end: datetime,
+        step: timedelta,
+        **_: object,
+    ) -> dict[str, list[MetricRow]]:
+        return {
+            metric.key: [
+                MetricRow(
+                    timestamp=timestamp if metric.key == "topic_storage_bytes" else end,
+                    metric_key=metric.key,
+                    value=1073741824,
+                    labels={"topic": "orders", "partition": "0"},
+                )
+                for timestamp in _query_grid(start, end, step)
+            ]
+            for metric in queries
+        }
+
+    source.query.side_effect = query
+    provider = _provider(source)
+    first_day = datetime(2026, 2, 1, tzinfo=UTC)
+    windows = tuple((first_day + timedelta(days=index), first_day + timedelta(days=index + 1)) for index in range(3))
+
+    provider.prepare_evidence_chunk(windows, timedelta(seconds=3601))
+
+    assert source.query.call_count == 5
+    assert all(call.kwargs["end"] - call.kwargs["start"] <= timedelta(days=30) for call in source.query.call_args_list)
+
+
+def _query_grid(start: datetime, end: datetime, step: timedelta) -> tuple[datetime, ...]:
+    timestamps: list[datetime] = []
+    timestamp = start
+    while timestamp <= end:
+        timestamps.append(timestamp)
+        timestamp += step
+    return tuple(timestamps)

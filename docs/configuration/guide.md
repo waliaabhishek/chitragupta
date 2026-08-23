@@ -311,6 +311,38 @@ Those pool counters have no `topic` label and exclude replication traffic.
 Topic-labelled counters are attribution evidence only; they never construct the
 network cost pool.
 
+### Bounded Prometheus history (self-managed only)
+
+Self-managed Kafka bounds historical Prometheus responses with
+`historical_acquisition_chunk_days`:
+
+```yaml
+plugin_settings:
+  historical_acquisition_chunk_days: 5  # omit for the default; valid range 1–30
+```
+
+The omitted/default value is `5`; `30` is the explicit operator-selected maximum.
+Each scope, cluster, and topic workload response spans no more than `H` closed UTC
+days, and only one reduced workload chunk is retained while the next is acquired.
+Smaller values reduce response size and memory but increase request count. See the
+[self-managed reference](self-managed-reference.md#bounded-historical-acquisition-and-recovery-behavior)
+for measured logical-family versus HTTP-attempt tables and formulas.
+
+Within a run, identical target-scope evidence is reused by its exact tenant, target
+identifier and label, step, start, and end. An open breaker makes one newest-point
+probe; a failed probe starts no work, progress, or writes. A successful probe is
+persisted, followed by complete bounded validation before workload, progress, or
+writes begin. Billing windows remain calculation-owned. Counters use exact UTC
+day-end samples for the preceding half-open day; gauges preserve each daily
+start-anchored grid and half-open filter. Zero versus missing evidence, family/day
+failure isolation, residual and reconciliation rows, retries, and terminal topic
+visibility remain unchanged, and reduced chunks are cleaned up on success, failure,
+or shutdown.
+
+This setting and bounded-history behavior do not apply to Confluent Cloud or generic
+metrics. Their existing configuration, query, progress, and attribution paths are
+unchanged.
+
 See [How Costs Work](../architecture/cost-model.md) for the complete mathematical
 model including allocation.
 

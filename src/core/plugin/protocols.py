@@ -296,6 +296,26 @@ class ScopeGatePlugin(Protocol):
 
 
 @runtime_checkable
+class ScopeGateRunLifecycle(Protocol):
+    """Optional per-pipeline lifecycle for run-local scope evidence."""
+
+    def begin_scope_gate_run(self) -> None: ...
+
+
+@runtime_checkable
+class PostRecoveryGatherScopeValidator(Protocol):
+    """Optional full gather-scope validation after recovery persistence."""
+
+    def prepare_post_recovery_gather_scope(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        uow: UnitOfWork,
+    ) -> ScopeGateResult: ...
+
+
+@runtime_checkable
 class SupplementalResourceGatherer(Protocol):
     """Optional plugin capability for isolated, non-billing resource inventory."""
 

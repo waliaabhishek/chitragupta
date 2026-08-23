@@ -253,6 +253,11 @@ tenants:
       # Default 3600 = 1-hour resolution. Lower = finer-grained data at higher load.
       # metrics_step_seconds: 3600
 
+      # Maximum closed UTC days in each historical Prometheus response and reduced
+      # workload chunk. Omit this setting to use 5; valid values are 1–30.
+      # Smaller values reduce response size and memory at the cost of more queries.
+      historical_acquisition_chunk_days: 5
+
       # chargeback_granularity: granularity of billing data produced by the plugin.
       # Controls emitter aggregation — emitters may not request finer granularity
       # than the chargeback data provides. Options: hourly, daily, monthly.

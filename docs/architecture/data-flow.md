@@ -75,8 +75,11 @@ flowchart TD
    both paths. Consecutive zero-gather thresholds prevent transient bulk
    deletion.
 
-5. **Fetch metrics** — `metrics_source.query_range(...)` per handler
-   Prometheus range queries for the billing period. Returns `MetricRow` objects.
+5. **Fetch metrics** — Prometheus range queries for the billing period return
+   metric rows. Self-managed Kafka bounds each scope, cluster, and topic response to
+   at most `H` closed UTC days (`H=5` when omitted, valid `1..30`) and reduces one
+   workload chunk before requesting the next. Identical target-scope evidence is
+   reused within a run by its exact tenant, selector, step, start, and end.
 
 6. **Resolve identities** — `handler.resolve_identities(tenant_id, resource_id, ...)`
    Maps billing line items to identities using metrics data.
@@ -109,6 +112,62 @@ The pipeline loop ends at step 8. Topic overlay (step 9) is a separate pass over
    each emitter's `lookback_days` window) and dispatches to each configured emitter.
    Outcome records (`emitted`, `failed`, `skipped`) are persisted per tenant/emitter/date,
    so already-emitted dates are not re-sent on the next cycle.
+
+### Self-managed bounded history and recovery
+
+Self-managed Kafka validates target scope before workload, progress, or writes. An
+open breaker issues one newest-point health probe; a failed probe performs no gather,
+calculation, topic, or progress work. A successful probe is persisted as recovery
+state, then the complete bounded scope is validated again before work resumes.
+Calculation remains the owner of billing windows, so acquisition never widens or
+invents a date set.
+
+Counter evidence is evaluated at exact UTC day ends for the preceding half-open
+`[day_start, day_end)` day. Gauge evidence keeps each daily start-anchored grid and
+the same half-open filter, including non-divisor steps. Present zero remains distinct
+from missing data; one failed family or day does not discard successful families or
+later dates. Reduced chunk evidence is cleared after success, failure, or shutdown,
+and existing residual, reconciliation, retry, and terminal-topic behavior is
+preserved.
+
+The optional self-managed topic overlay is a separate plugin-specific path. Confluent
+Cloud keeps its existing configuration, query, progress, and topic behavior, and
+generic metrics keeps its existing path; neither consumes the self-managed chunk
+setting.
+
+### Stable scope-gate capability contract (developer-facing)
+
+`ScopeGatePlugin` remains the unchanged scope-gate contract. Two independent,
+optional capabilities extend the self-managed lifecycle without changing that
+existing shape:
+
+- `ScopeGateRunLifecycle` resets run-local scope/evidence state. It affects progress
+  ordering only when the plugin also implements the unchanged `ScopeGatePlugin`.
+- `PostRecoveryGatherScopeValidator` performs the complete bounded gather-scope
+  validation after recovery persistence and before downstream gather activity.
+
+For an opted-in self-managed recovery, the stable order is:
+
+```text
+point probe
+  → isolated recovery persistence
+  → full bounded gather validation
+  → authorized gathering progress
+  → preview-source preparation
+  → shared context
+  → handlers and discovery
+  → workload and writes
+```
+
+If full revalidation fails, the block is persisted in its own isolated unit of work
+and none of the downstream calls in that sequence occur. For an opted-in throttled
+gather, no gathering callback is emitted at all. A failed open probe is terminal for
+all remaining gated stages in that run and is not repeated; calculation and
+topic-overlay progress callbacks occur only after their complete applicable
+preflights. If no stage callback is authorized, no final-clear callback is emitted.
+Old-shape `ScopeGatePlugin` implementations retain their existing ordering and do
+not receive either optional call. Confluent Cloud and generic metrics retain their
+existing progress, query, and recovery ordering as well.
 
 ## Storage schema
 

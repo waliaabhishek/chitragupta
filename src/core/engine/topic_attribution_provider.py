@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -44,3 +44,21 @@ class TopicAttributionProvider(Protocol):
         resource_topics: frozenset[str],
         metrics_step: timedelta,
     ) -> TopicAttributionClusterOutcome: ...
+
+
+@runtime_checkable
+class ChunkedTopicEvidenceProvider(Protocol):
+    """Optional bounded historical evidence capability."""
+
+    def iter_evidence_chunks(
+        self,
+        windows: Sequence[tuple[datetime, datetime]],
+    ) -> Iterable[tuple[tuple[datetime, datetime], ...]]: ...
+
+    def prepare_evidence_chunk(
+        self,
+        windows: Sequence[tuple[datetime, datetime]],
+        metrics_step: timedelta,
+    ) -> None: ...
+
+    def clear_evidence_chunk(self) -> None: ...

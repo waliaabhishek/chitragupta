@@ -161,6 +161,15 @@ def _healthy_target_rows(query: object, query_kwargs: dict[str, object]) -> list
     return rows
 
 
+def _expected_timestamps(start: datetime, end: datetime, step: timedelta) -> tuple[datetime, ...]:
+    timestamps: list[datetime] = []
+    timestamp = start
+    while timestamp <= end:
+        timestamps.append(timestamp)
+        timestamp += step
+    return tuple(timestamps)
+
+
 class TestPrincipalTelemetryEvidence:
     @pytest.mark.parametrize("identity_source", [{"source": "prometheus"}, {"source": "both"}])
     @pytest.mark.parametrize("principal_attribution", [None, {"enabled": False}])
@@ -719,6 +728,311 @@ class TestMetricContractTypes:
 
 
 class TestTargetScopeEvidence:
+    def test_scope_validation_uses_bounded_queries_for_a_long_historical_window(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        settings = _settings()
+        settings["historical_acquisition_chunk_days"] = 30
+
+        def response(
+            queries: Sequence[MetricQuery],
+            start: datetime,
+            end: datetime,
+            step: timedelta,
+            resource_id_filter: str | None,
+        ) -> dict[str, list[MetricRow]]:
+            assert resource_id_filter == "kraft-a-001"
+            return {
+                query.key: [
+                    MetricRow(
+                        timestamp=timestamp,
+                        metric_key=query.key,
+                        value=1.0,
+                        labels={"kafka_cluster_id": "kraft-a-001"},
+                    )
+                    for timestamp in _expected_timestamps(start, end, step)
+                ]
+                for query in queries
+            }
+
+        source = _MetricsSource(response)
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+            plugin.initialize(settings)
+        uow = MagicMock()
+        uow.self_managed_kafka_scope_state.get.return_value = None
+        start = datetime(2025, 8, 1, tzinfo=UTC)
+        end = start + timedelta(days=364)
+
+        plugin.begin_scope_gate_run()
+        result = plugin.prepare_gather_scope("tenant-1", start, end, uow)
+
+        assert result.decision is ScopeGateDecision.ALLOW
+        assert len(source.calls) == 13
+        assert all(call[2] - call[1] <= timedelta(days=30) for call in source.calls)
+        assert all(len(_expected_timestamps(call[1], call[2], call[3])) <= 721 for call in source.calls)
+
+    def test_scope_validation_reuses_only_an_exact_run_local_scope_key(self) -> None:
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        source = _MetricsSource(
+            lambda queries, start, end, step, resource_id_filter: {
+                query.key: [
+                    MetricRow(
+                        timestamp=timestamp,
+                        metric_key=query.key,
+                        value=1.0,
+                        labels={"kafka_cluster_id": "kraft-a-001"},
+                    )
+                    for timestamp in _expected_timestamps(start, end, step)
+                ]
+                for query in queries
+            }
+        )
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+            plugin.initialize(_settings())
+        uow = MagicMock()
+        uow.self_managed_kafka_scope_state.get.return_value = None
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        end = start + timedelta(days=1)
+
+        plugin.begin_scope_gate_run()
+        plugin.prepare_gather_scope("tenant-1", start, end, uow)
+        plugin.prepare_gather_scope("tenant-1", start, end, uow)
+
+        assert len(source.calls) == 1
+        assert uow.self_managed_kafka_scope_state.get.call_count == 2
+
+    def test_scope_validation_key_changes_when_each_scope_component_changes(self) -> None:
+        from plugins.self_managed_kafka.telemetry_contract import MetricsScopeRequest
+
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        base = MetricsScopeRequest(
+            tenant_id="tenant-a",
+            metrics_identifier="kraft-a-001",
+            metrics_identifier_label="kafka_cluster_id",
+            step=timedelta(hours=1),
+            start=start,
+            end=start + timedelta(days=1),
+        )
+        variants = (
+            MetricsScopeRequest(
+                "tenant-b", base.metrics_identifier, base.metrics_identifier_label, base.step, base.start, base.end
+            ),
+            MetricsScopeRequest(
+                base.tenant_id, "kraft-b-002", base.metrics_identifier_label, base.step, base.start, base.end
+            ),
+            MetricsScopeRequest(base.tenant_id, base.metrics_identifier, "deployment", base.step, base.start, base.end),
+            MetricsScopeRequest(
+                base.tenant_id,
+                base.metrics_identifier,
+                base.metrics_identifier_label,
+                timedelta(minutes=30),
+                base.start,
+                base.end,
+            ),
+            MetricsScopeRequest(
+                base.tenant_id,
+                base.metrics_identifier,
+                base.metrics_identifier_label,
+                base.step,
+                base.start + timedelta(hours=1),
+                base.end,
+            ),
+            MetricsScopeRequest(
+                base.tenant_id,
+                base.metrics_identifier,
+                base.metrics_identifier_label,
+                base.step,
+                base.start,
+                base.end + timedelta(hours=1),
+            ),
+        )
+
+        assert len({base, *variants}) == 7
+
+    def test_scope_cache_behavior_includes_each_request_component(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        def response(
+            queries: Sequence[MetricQuery],
+            start: datetime,
+            end: datetime,
+            step: timedelta,
+            resource_id_filter: str | None,
+        ) -> dict[str, list[MetricRow]]:
+            assert resource_id_filter is not None
+            return {
+                query.key: [
+                    MetricRow(
+                        timestamp=timestamp,
+                        metric_key=query.key,
+                        value=1.0,
+                        labels={query.resource_label: resource_id_filter} if query.resource_label is not None else {},
+                    )
+                    for timestamp in _expected_timestamps(start, end, step)
+                ]
+                for query in queries
+            }
+
+        source = _MetricsSource(response)
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+            plugin.initialize(_settings())
+        uow = MagicMock()
+        uow.self_managed_kafka_scope_state.get.return_value = None
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        end = start + timedelta(days=1)
+        config = plugin._config
+        assert config is not None
+
+        plugin.begin_scope_gate_run()
+        baseline = plugin.prepare_gather_scope("tenant-a", start, end, uow)
+        plugin.prepare_gather_scope("tenant-a", start, end, uow)
+        config.metrics_identifier = "kraft-b-002"
+        identifier_variant = plugin.prepare_gather_scope("tenant-a", start, end, uow)
+        config.metrics_identifier = "kraft-a-001"
+        config.metrics_identifier_label = "deployment"
+        label_variant = plugin.prepare_gather_scope("tenant-a", start, end, uow)
+        config.metrics_identifier_label = "kafka_cluster_id"
+        config.metrics_step_seconds = 1800
+        step_variant = plugin.prepare_gather_scope("tenant-a", start, end, uow)
+        config.metrics_step_seconds = 3600
+        start_variant = plugin.prepare_gather_scope("tenant-a", start + timedelta(hours=1), end, uow)
+        end_variant = plugin.prepare_gather_scope("tenant-a", start, end + timedelta(hours=1), uow)
+        tenant_variant = plugin.prepare_gather_scope("tenant-b", start, end, uow)
+
+        assert baseline.decision is ScopeGateDecision.ALLOW
+        assert all(
+            result.decision is ScopeGateDecision.ALLOW
+            for result in (identifier_variant, label_variant, step_variant, start_variant, end_variant, tenant_variant)
+        )
+        assert len(source.calls) == 7
+
+    def test_open_scope_uses_a_single_newest_point_probe_before_full_recovery_validation(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        source = _MetricsSource(
+            lambda queries, start, end, step, resource_id_filter: {
+                query.key: [
+                    MetricRow(
+                        timestamp=start,
+                        metric_key=query.key,
+                        value=1.0,
+                        labels={"kafka_cluster_id": "kraft-a-001"},
+                    )
+                ]
+                for query in queries
+            }
+        )
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+            plugin.initialize(_settings())
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        end = start + timedelta(days=1)
+        uow = MagicMock()
+        uow.self_managed_kafka_scope_state.get.return_value = MagicMock(
+            status="open",
+            first_blocked_window_start=start,
+            recovery_cursor_date=start.date(),
+        )
+
+        plugin.begin_scope_gate_run()
+        result = plugin.prepare_gather_scope("tenant-1", start, end, uow)
+
+        assert result.decision is ScopeGateDecision.RECOVERY_READY
+        assert source.calls == [
+            (
+                source.calls[0][0],
+                end,
+                end,
+                timedelta(hours=1),
+                "kraft-a-001",
+            )
+        ]
+
+    def test_open_calculation_scope_probes_newest_point_once_for_multiple_windows(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        source = _MetricsSource(
+            lambda queries, start, end, step, resource_id_filter: {
+                query.key: [
+                    MetricRow(
+                        timestamp=end,
+                        metric_key=query.key,
+                        value=1.0,
+                        labels={"kafka_cluster_id": "kraft-a-001"},
+                    )
+                ]
+                for query in queries
+            }
+        )
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+            plugin.initialize(_settings())
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        windows = (
+            (start, start + timedelta(days=1)),
+            (start + timedelta(days=3), start + timedelta(days=4)),
+        )
+        uow = MagicMock()
+        uow.self_managed_kafka_scope_state.get.return_value = MagicMock(
+            status="open",
+            first_blocked_window_start=start,
+            recovery_cursor_date=start.date(),
+        )
+
+        plugin.begin_scope_gate_run()
+        result = plugin.prepare_calculation_scope("tenant-1", windows, uow)
+
+        assert result.decision is ScopeGateDecision.RECOVERY_READY
+        assert len(source.calls) == 1
+        assert source.calls[0][1:] == (
+            windows[1][1],
+            windows[1][1],
+            timedelta(hours=1),
+            "kraft-a-001",
+        )
+
+    def test_one_point_recovery_evidence_is_reused_by_full_validation(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision
+        from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin
+
+        source = _MetricsSource(
+            lambda queries, start, end, step, resource_id_filter: {
+                query.key: [
+                    MetricRow(
+                        timestamp=end,
+                        metric_key=query.key,
+                        value=1.0,
+                        labels={"kafka_cluster_id": "kraft-a-001"},
+                    )
+                ]
+                for query in queries
+            }
+        )
+        plugin = SelfManagedKafkaPlugin()
+        with patch("plugins.self_managed_kafka.plugin.create_metrics_source", return_value=source):
+            plugin.initialize(_settings())
+        point = datetime(2026, 8, 1, tzinfo=UTC)
+        state = MagicMock(status="open", first_blocked_window_start=point, recovery_cursor_date=point.date())
+        recovering = MagicMock(status="recovering", first_blocked_window_start=point, recovery_cursor_date=point.date())
+        uow = MagicMock()
+        uow.self_managed_kafka_scope_state.get.side_effect = [state, recovering, recovering]
+
+        plugin.begin_scope_gate_run()
+        probe = plugin.prepare_gather_scope("tenant-1", point, point, uow)
+        validated = plugin.prepare_calculation_scope("tenant-1", [(point, point)], uow)
+
+        assert probe.decision is ScopeGateDecision.RECOVERY_READY
+        assert validated.decision is ScopeGateDecision.ALLOW
+        assert len(source.calls) == 1
+
     def test_target_scope_query_is_cluster_scoped_and_allows_a_healthy_target(self) -> None:
         from core.plugin.protocols import ScopeGateDecision
         from plugins.self_managed_kafka.plugin import SelfManagedKafkaPlugin

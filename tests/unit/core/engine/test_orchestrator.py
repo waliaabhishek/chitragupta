@@ -14,6 +14,7 @@ from core.engine.orchestrator import (
     ChargebackOrchestrator,
     GatherFailureThresholdError,
     GatherPhase,
+    GatherResult,
     PipelineRunResult,
     _ensure_utc,
     billing_window,
@@ -4232,3 +4233,527 @@ class TestScopeGateIsolation:
         ]
         assert plugin.closed == 1
         assert state.topic_attribution_calculated is True
+
+    @pytest.mark.parametrize("exit_mode", ["normal", "shutdown", "prepare", "overlay", "progress"])
+    def test_chunked_overlay_evidence_clears_on_every_orchestration_exit(self, exit_mode: str) -> None:
+        from core.engine.topic_attribution_provider import TopicAttributionClusterOutcome
+        from core.plugin.protocols import ScopeGateDecision, ScopeGateResult
+
+        class TrackingProvider:
+            config = type("OverlayConfig", (), {"enabled": True})()
+            replace_date_on_completion = False
+            supported_product_types = frozenset({"KAFKA_CKU"})
+
+            def __init__(self) -> None:
+                self.prepared: tuple[tuple[datetime, datetime], ...] | None = None
+                self.clear_calls = 0
+
+            def iter_evidence_chunks(
+                self,
+                windows: Sequence[tuple[datetime, datetime]],
+            ) -> tuple[tuple[tuple[datetime, datetime], ...], ...]:
+                return tuple((window,) for window in windows)
+
+            def prepare_evidence_chunk(
+                self,
+                windows: Sequence[tuple[datetime, datetime]],
+                metrics_step: timedelta,
+            ) -> None:
+                self.prepared = tuple(windows)
+                if exit_mode == "prepare":
+                    raise RuntimeError("evidence preparation failed")
+
+            def clear_evidence_chunk(self) -> None:
+                self.clear_calls += 1
+                self.prepared = None
+
+            def attribute_cluster(self, **_: Any) -> TopicAttributionClusterOutcome:
+                if exit_mode == "overlay":
+                    raise RuntimeError("overlay failed")
+                return TopicAttributionClusterOutcome(rows=())
+
+        class OverlayPipelineStateRepo(MockPipelineStateRepo):
+            def find_needing_topic_attribution(self, ecosystem: str, tenant_id: str) -> list[PipelineState]:
+                return sorted(
+                    [
+                        state
+                        for state in self._data.values()
+                        if state.ecosystem == ecosystem
+                        and state.tenant_id == tenant_id
+                        and state.chargeback_calculated
+                        and state.topic_overlay_gathered
+                        and not state.topic_attribution_calculated
+                    ],
+                    key=lambda state: state.tracking_date,
+                )
+
+            def mark_topic_attribution_calculated(
+                self,
+                ecosystem: str,
+                tenant_id: str,
+                tracking_date: date,
+            ) -> None:
+                state = self.get(ecosystem, tenant_id, tracking_date)
+                assert state is not None
+                state.topic_attribution_calculated = True
+
+        class OverlayPlugin(MockPlugin):
+            def __init__(self, provider: TrackingProvider) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()})
+                self._provider = provider
+
+            def get_overlay_config(self, name: str) -> Any:
+                assert name == "topic_attribution"
+                return self._provider.config
+
+            def get_topic_attribution_provider(self) -> TrackingProvider:
+                return self._provider
+
+            def reset_topic_attribution_inventory_proof(self) -> None:
+                return None
+
+            def topic_attribution_inventory_ready(self, shared_context: object | None) -> bool:
+                return True
+
+            def begin_scope_gate_run(self) -> None:
+                return None
+
+            def prepare_gather_scope(
+                self,
+                tenant_id: str,
+                start: datetime,
+                end: datetime,
+                uow: Any,
+            ) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "scope", "valid")
+
+            def prepare_calculation_scope(
+                self,
+                tenant_id: str,
+                windows: Sequence[tuple[datetime, datetime]],
+                uow: Any,
+            ) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "scope", "valid")
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+        storage = MockStorageBackend()
+        storage._uow.pipeline_state = OverlayPipelineStateRepo()
+        dates = (
+            (TODAY - timedelta(days=2), TODAY - timedelta(days=1))
+            if exit_mode in {"shutdown", "progress"}
+            else (TODAY - timedelta(days=1),)
+        )
+        for tracking_date in dates:
+            timestamp = datetime.combine(tracking_date, datetime.min.time(), UTC)
+            storage._uow.resources.upsert(_make_resource())
+            storage._uow.billing.upsert(_make_billing_line(timestamp=timestamp))
+            storage._uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem=ECOSYSTEM,
+                    tenant_id=TENANT_ID,
+                    tracking_date=tracking_date,
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=True,
+                    topic_overlay_gathered=True,
+                )
+            )
+
+        provider = TrackingProvider()
+        plugin = OverlayPlugin(provider)
+        progress_calls = 0
+
+        def progress_callback(stage: str | None, tracking_date: date | None) -> None:
+            nonlocal progress_calls
+            if exit_mode != "progress" or stage != "topic_overlay":
+                return
+            progress_calls += 1
+            if progress_calls == 2:
+                raise RuntimeError("progress callback failed")
+
+        shutdown_calls = 0
+
+        def shutdown_check() -> bool:
+            nonlocal shutdown_calls
+            if exit_mode != "shutdown":
+                return False
+            shutdown_calls += 1
+            return shutdown_calls == 2
+
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(),
+            plugin,
+            storage,
+            None,
+            shutdown_check=shutdown_check,
+            progress_callback=progress_callback,
+        )
+        orchestrator._gather_phase._last_resource_gather_at = NOW
+
+        if exit_mode in {"prepare", "progress"}:
+            with pytest.raises(RuntimeError):
+                orchestrator.run()
+        else:
+            result = orchestrator.run()
+            if exit_mode in {"normal", "shutdown"}:
+                assert result.errors == []
+            else:
+                assert any("overlay failed" in error for error in result.errors)
+
+        assert provider.prepared is None
+        assert provider.clear_calls >= 1
+        if exit_mode == "normal":
+            assert all(
+                storage._uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, tracking_date).topic_attribution_calculated
+                for tracking_date in dates
+            )
+        if exit_mode == "shutdown":
+            assert storage._uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, dates[0]).topic_attribution_calculated
+            assert not storage._uow.pipeline_state.get(ECOSYSTEM, TENANT_ID, dates[1]).topic_attribution_calculated
+
+
+class TestOptionalScopeLifecycle:
+    def test_old_shape_scope_gate_remains_a_scope_gate_and_new_capabilities_are_independent(self) -> None:
+        from core.plugin.protocols import (
+            PostRecoveryGatherScopeValidator,
+            ScopeGateDecision,
+            ScopeGatePlugin,
+            ScopeGateResult,
+            ScopeGateRunLifecycle,
+        )
+
+        class OldShapeScopeGate(MockPlugin):
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "scope", "valid")
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "scope", "valid")
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+        class LifecycleOnly(MockPlugin):
+            def begin_scope_gate_run(self) -> None:
+                return None
+
+        class PostRecoveryOnly(MockPlugin):
+            def prepare_post_recovery_gather_scope(
+                self, tenant_id: str, start: datetime, end: datetime, uow: Any
+            ) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "scope", "valid")
+
+        assert isinstance(OldShapeScopeGate(), ScopeGatePlugin)
+        assert not isinstance(OldShapeScopeGate(), ScopeGateRunLifecycle)
+        assert not isinstance(OldShapeScopeGate(), PostRecoveryGatherScopeValidator)
+        assert isinstance(LifecycleOnly(), ScopeGateRunLifecycle)
+        assert not isinstance(LifecycleOnly(), ScopeGatePlugin)
+        assert isinstance(PostRecoveryOnly(), PostRecoveryGatherScopeValidator)
+        assert not isinstance(PostRecoveryOnly(), ScopeGatePlugin)
+
+    def test_initialized_ccloud_and_generic_plugins_remain_outside_self_managed_scope_lifecycle(self) -> None:
+        from core.plugin.protocols import PostRecoveryGatherScopeValidator, ScopeGatePlugin, ScopeGateRunLifecycle
+        from plugins.confluent_cloud.plugin import ConfluentCloudPlugin
+        from plugins.generic_metrics_only.plugin import GenericMetricsOnlyPlugin
+
+        ccloud = ConfluentCloudPlugin()
+        ccloud.initialize({"ccloud_api": {"key": "key", "secret": "secret"}})  # pragma: allowlist secret
+        generic = GenericMetricsOnlyPlugin()
+        generic.initialize(
+            {
+                "cluster_id": "metrics-cluster-a",
+                "metrics": {"url": "http://prometheus.test"},
+                "identity_source": {"source": "static"},
+                "cost_types": [
+                    {
+                        "name": "COMPUTE",
+                        "product_category": "generic",
+                        "rate": "1",
+                        "cost_quantity": {"type": "fixed", "count": 1},
+                        "allocation_strategy": "even_split",
+                    }
+                ],
+            }
+        )
+
+        for plugin in (ccloud, generic):
+            assert not isinstance(plugin, ScopeGatePlugin)
+            assert not isinstance(plugin, ScopeGateRunLifecycle)
+            assert not isinstance(plugin, PostRecoveryGatherScopeValidator)
+
+    def test_throttled_gather_failed_probe_blocks_calculation_and_overlay_without_progress(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision, ScopeGateResult
+
+        class OverlayPipelineStateRepo(MockPipelineStateRepo):
+            def find_needing_topic_attribution(self, ecosystem: str, tenant_id: str) -> list[PipelineState]:
+                return [
+                    state
+                    for state in self._data.values()
+                    if state.ecosystem == ecosystem
+                    and state.tenant_id == tenant_id
+                    and state.chargeback_calculated
+                    and state.topic_overlay_gathered
+                    and not state.topic_attribution_calculated
+                ]
+
+        class LifecycleProbePlugin(MockPlugin):
+            def __init__(self) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()})
+                self.begin_calls = 0
+                self.calculation_scope_calls = 0
+                self.probe_uows: list[MockUnitOfWork] = []
+
+            def begin_scope_gate_run(self) -> None:
+                self.begin_calls += 1
+
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                raise AssertionError("throttled gathering must not request scope")
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                self.calculation_scope_calls += 1
+                return ScopeGateResult(
+                    ScopeGateDecision.BLOCKED,
+                    "billing-cluster-a",
+                    "point probe failed",
+                    probe_only=True,
+                )
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                raise AssertionError("a point probe must use probe persistence")
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.probe_uows.append(uow)
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def reset_topic_attribution_inventory_proof(self) -> None:
+                return None
+
+            def topic_attribution_inventory_ready(self, shared_context: object | None) -> bool:
+                return True
+
+        storage = MockStorageBackend()
+        storage._uow.pipeline_state = OverlayPipelineStateRepo()
+        calculation_date = (NOW - timedelta(days=2)).date()
+        overlay_date = (NOW - timedelta(days=1)).date()
+        for tracking_date, calculated, overlay_gathered in (
+            (calculation_date, False, False),
+            (overlay_date, True, True),
+        ):
+            storage._uow.pipeline_state.upsert(
+                PipelineState(
+                    ecosystem=ECOSYSTEM,
+                    tenant_id=TENANT_ID,
+                    tracking_date=tracking_date,
+                    billing_gathered=True,
+                    resources_gathered=True,
+                    chargeback_calculated=calculated,
+                    topic_overlay_gathered=overlay_gathered,
+                )
+            )
+            storage._uow.billing.upsert(
+                _make_billing_line(timestamp=datetime.combine(tracking_date, datetime.min.time(), UTC))
+            )
+        storage._uow.resources.upsert(_make_resource())
+        progress: list[tuple[str | None, date | None]] = []
+        plugin = LifecycleProbePlugin()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(plugin_settings={"min_refresh_gap_seconds": 3600}),
+            plugin,
+            storage,
+            None,
+            progress_callback=lambda stage, tracking_date: progress.append((stage, tracking_date)),
+        )
+        orchestrator._gather_phase._last_resource_gather_at = NOW
+        overlay_phase = MagicMock()
+        orchestrator._topic_overlay_phase = overlay_phase
+        orchestrator._topic_overlay_provider_enabled = True
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert result.dates_calculated == 0
+        assert plugin.begin_calls == 1
+        assert plugin.calculation_scope_calls == 1
+        assert len(plugin.probe_uows) == 1
+        assert plugin.probe_uows[0]._committed is True
+        assert progress == []
+        overlay_phase.run.assert_not_called()
+
+    def test_recovered_gather_validates_full_scope_before_progress_or_preview(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision, ScopeGateResult
+
+        class RecoveringLifecyclePlugin(MockPlugin):
+            def __init__(self) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()})
+                self.events: list[str] = []
+
+            def begin_scope_gate_run(self) -> None:
+                self.events.append("begin")
+
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                self.events.append("point_probe")
+                return ScopeGateResult(
+                    ScopeGateDecision.RECOVERY_READY,
+                    "billing-cluster-a",
+                    "point probe recovered",
+                    recovery_start=start,
+                    recovery_end=end,
+                )
+
+            def prepare_post_recovery_gather_scope(
+                self, tenant_id: str, start: datetime, end: datetime, uow: Any
+            ) -> ScopeGateResult:
+                self.events.append("full_validation")
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "full scope valid")
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "valid")
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.events.append("blocked")
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.events.append("recovery")
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+        plugin = RecoveringLifecyclePlugin()
+        storage = MockStorageBackend()
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(),
+            plugin,
+            storage,
+            None,
+            progress_callback=lambda stage, tracking_date: plugin.events.append(stage) if stage else None,
+        )
+        orchestrator._prepare_preview_source_state = lambda plan: plugin.events.append("preview") or None
+        orchestrator._gather_phase.run = MagicMock(
+            side_effect=lambda uow, plan, source_attempt: (
+                plugin.events.append("gather") or GatherResult(dates_gathered=0, errors=[])
+            )
+        )
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            orchestrator.run()
+
+        assert plugin.events == [
+            "begin",
+            "point_probe",
+            "recovery",
+            "full_validation",
+            "gathering",
+            "preview",
+            "gather",
+        ]
+
+    def test_failed_post_recovery_validation_blocks_before_preview_or_gather_work(self) -> None:
+        from core.plugin.protocols import ScopeGateDecision, ScopeGateResult
+
+        class FailingRecoveryPlugin(MockPlugin):
+            def __init__(self) -> None:
+                super().__init__(handlers={"kafka": MockServiceHandler()})
+                self.events: list[str] = []
+
+            def begin_scope_gate_run(self) -> None:
+                self.events.append("begin")
+
+            def prepare_gather_scope(self, tenant_id: str, start: datetime, end: datetime, uow: Any) -> ScopeGateResult:
+                self.events.append("point_probe")
+                return ScopeGateResult(
+                    ScopeGateDecision.RECOVERY_READY,
+                    "billing-cluster-a",
+                    "point probe recovered",
+                    recovery_start=start,
+                    recovery_end=end,
+                )
+
+            def prepare_post_recovery_gather_scope(
+                self, tenant_id: str, start: datetime, end: datetime, uow: Any
+            ) -> ScopeGateResult:
+                self.events.append("full_validation")
+                return ScopeGateResult(ScopeGateDecision.BLOCKED, "billing-cluster-a", "historical scope failed")
+
+            def prepare_calculation_scope(
+                self, tenant_id: str, windows: Sequence[tuple[datetime, datetime]], uow: Any
+            ) -> ScopeGateResult:
+                return ScopeGateResult(ScopeGateDecision.ALLOW, "billing-cluster-a", "valid")
+
+            def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.events.append("blocked")
+
+            def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+            def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                self.events.append("recovery")
+
+            def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: Any) -> None:
+                return None
+
+        plugin = FailingRecoveryPlugin()
+        storage = MockStorageBackend()
+        progress: list[tuple[str | None, date | None]] = []
+        orchestrator = ChargebackOrchestrator(
+            TENANT_NAME,
+            _make_tenant_config(),
+            plugin,
+            storage,
+            None,
+            progress_callback=lambda stage, tracking_date: progress.append((stage, tracking_date)),
+        )
+        preview = MagicMock()
+        gather = MagicMock()
+        orchestrator._prepare_preview_source_state = preview
+        orchestrator._gather_phase.run = gather
+
+        with patch("core.engine.orchestrator.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = NOW
+            mocked_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+            result = orchestrator.run()
+
+        assert result.dates_gathered == 0
+        assert plugin.events == ["begin", "point_probe", "recovery", "full_validation", "blocked"]
+        assert progress == []
+        preview.assert_not_called()
+        gather.assert_not_called()

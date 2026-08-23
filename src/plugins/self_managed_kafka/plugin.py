@@ -12,11 +12,19 @@ from core.logging_context import safe_exception_context, safe_log_context
 from core.metrics.config import create_metrics_source
 from core.metrics.protocol import MetricsQueryError
 from core.models import MetricQuery
-from core.plugin.protocols import ScopeBlockedError, ScopeGateDecision, ScopeGateResult
+from core.plugin.protocols import (
+    ScopeBlockedError,
+    ScopeGateDecision,
+    ScopeGateResult,
+)
 from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
 from plugins.self_managed_kafka.cost_input import ConstructedCostInput
 from plugins.self_managed_kafka.handlers.kafka import SelfManagedKafkaHandler
-from plugins.self_managed_kafka.telemetry_contract import MetricsScopeEvidence, MetricsScopeStatus
+from plugins.self_managed_kafka.telemetry_contract import (
+    MetricsScopeEvidence,
+    MetricsScopeRequest,
+    MetricsScopeStatus,
+)
 
 if TYPE_CHECKING:
     from core.engine.topic_attribution_provider import TopicAttributionProvider
@@ -47,6 +55,8 @@ class SelfManagedKafkaPlugin:
         self._handler: SelfManagedKafkaHandler | None = None
         self._topic_attribution_provider: TopicAttributionProvider | None = None
         self._scope_evidence_by_window: dict[tuple[str, datetime, datetime], MetricsScopeEvidence] = {}
+        self._scope_evidence_by_request: dict[MetricsScopeRequest, MetricsScopeEvidence] = {}
+        self._scope_query_evidence: dict[MetricsScopeRequest, MetricsScopeEvidence] = {}
 
     @property
     def ecosystem(self) -> str:
@@ -66,6 +76,9 @@ class SelfManagedKafkaPlugin:
         )
         self._topic_attribution_provider = None
         self._config = SelfManagedKafkaConfig.from_plugin_settings(config)
+        self._scope_evidence_by_window.clear()
+        self._scope_evidence_by_request.clear()
+        self._scope_query_evidence.clear()
         # Always create MetricsSource (required for cost construction)
         self._metrics_source = create_metrics_source(self._config.metrics)
 
@@ -233,8 +246,28 @@ class SelfManagedKafkaPlugin:
         end: datetime,
         uow: UnitOfWork,
     ) -> ScopeGateResult:
-        self._scope_evidence_by_window.clear()
         return self._prepare_scope(tenant_id, start, end, uow)
+
+    def begin_scope_gate_run(self) -> None:
+        """Reset ephemeral scope and workload evidence for one pipeline run."""
+        self._scope_evidence_by_window.clear()
+        self._scope_evidence_by_request.clear()
+        self._scope_query_evidence.clear()
+        if self._handler is not None:
+            self._handler.clear_principal_telemetry_evidence()
+        provider = self._topic_attribution_provider
+        if provider is not None and hasattr(provider, "clear_evidence_chunk"):
+            provider.clear_evidence_chunk()
+
+    def prepare_post_recovery_gather_scope(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        uow: UnitOfWork,
+    ) -> ScopeGateResult:
+        """Validate the complete gather scope after durable recovery state."""
+        return self._prepare_scope(tenant_id, start, end, uow, force_full=True)
 
     def prepare_calculation_scope(
         self,
@@ -242,11 +275,12 @@ class SelfManagedKafkaPlugin:
         windows: Sequence[tuple[datetime, datetime]],
         uow: UnitOfWork,
     ) -> ScopeGateResult:
-        self._scope_evidence_by_window.clear()
-        if self._handler is not None:
-            self._handler.clear_principal_telemetry_evidence()
         if not windows:
             return ScopeGateResult(ScopeGateDecision.ALLOW, self._require_config().cluster_id, "no billing windows")
+        config = self._require_config()
+        state = self._scope_state_repository(uow).get(self.ecosystem, tenant_id, config.cluster_id)
+        if getattr(state, "status", None) == "open":
+            return self._prepare_open_calculation_probe(tenant_id, windows, uow, state)
         recovery_result: ScopeGateResult | None = None
         for start, end in windows:
             result = self._prepare_scope(tenant_id, start, end, uow)
@@ -257,6 +291,60 @@ class SelfManagedKafkaPlugin:
         if recovery_result is not None:
             return recovery_result
         return ScopeGateResult(ScopeGateDecision.ALLOW, self._require_config().cluster_id, "target scope valid")
+
+    def _prepare_open_calculation_probe(
+        self,
+        tenant_id: str,
+        windows: Sequence[tuple[datetime, datetime]],
+        uow: UnitOfWork,
+        state: object,
+    ) -> ScopeGateResult:
+        """Probe the newest required calculation point once for an open scope."""
+        config = self._require_config()
+        metrics_source = self._require_metrics_source()
+        step = timedelta(seconds=config.metrics_step_seconds)
+        available_start = min(start for start, _ in windows)
+        available_end = max(end for _, end in windows)
+        newest = max(self._latest_scope_timestamp(start, end, step) for start, end in windows)
+        detail_prefix = (
+            f"expected Prometheus target label {config.metrics_identifier_label}={config.metrics_identifier}"
+        )
+        request = MetricsScopeRequest(
+            tenant_id,
+            config.metrics_identifier,
+            config.metrics_identifier_label,
+            step,
+            newest,
+            newest,
+        )
+        evidence = self._scope_query_evidence.get(request)
+        if evidence is None:
+            evidence = self._query_scope_request(
+                request,
+                metrics_source,
+                detail_prefix,
+                max_points=1,
+            )
+            self._scope_query_evidence[request] = evidence
+        if evidence.status is not MetricsScopeStatus.VALID:
+            return self._blocked_scope_result(evidence, state)
+        recovery_start, retention_gap_start, retention_gap_end = self._recovery_window(
+            state,
+            available_start,
+            available_end,
+        )
+        return ScopeGateResult(
+            ScopeGateDecision.RECOVERY_READY,
+            config.cluster_id,
+            "target scope recovered",
+            recovery_start=recovery_start,
+            recovery_end=available_end,
+            retention_gap_start=retention_gap_start,
+            retention_gap_end=retention_gap_end,
+            status=evidence.status.value,
+            reason="target_scope_recovered",
+            evidence=evidence,
+        )
 
     def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: UnitOfWork) -> None:
         config = self._require_config()
@@ -314,53 +402,47 @@ class SelfManagedKafkaPlugin:
             recovery_cursor_date=result.recovery_end.date() if result.recovery_end is not None else None,
         )
 
-    def _prepare_scope(self, tenant_id: str, start: datetime, end: datetime, uow: UnitOfWork) -> ScopeGateResult:
+    def _prepare_scope(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        uow: UnitOfWork,
+        *,
+        force_full: bool = False,
+    ) -> ScopeGateResult:
         config = self._require_config()
         metrics_source = self._require_metrics_source()
         state = self._scope_state_repository(uow).get(self.ecosystem, tenant_id, config.cluster_id)
-        query = MetricQuery(
-            key="target_up",
-            query_expression="up{}",
-            label_keys=(config.metrics_identifier_label,),
-            resource_label=config.metrics_identifier_label,
-        )
+        step = timedelta(seconds=config.metrics_step_seconds)
+        state_status = getattr(state, "status", None)
         detail_prefix = (
             f"expected Prometheus target label {config.metrics_identifier_label}={config.metrics_identifier}"
         )
-        try:
-            rows = metrics_source.query(
-                queries=[query],
-                start=start,
-                end=end,
-                step=timedelta(seconds=config.metrics_step_seconds),
-                resource_id_filter=config.metrics_identifier,
-            ).get(query.key, [])
-        except MetricsQueryError as exc:
-            evidence = MetricsScopeEvidence(
-                label=config.metrics_identifier_label,
-                identifier=config.metrics_identifier,
-                window_start=start,
-                window_end=end,
-                status=MetricsScopeStatus.TRANSIENT_FAILURE,
-                detail=f"{detail_prefix}: {type(exc).__name__}",
-            )
-            self._record_scope_evidence(tenant_id, evidence)
-            return self._blocked_scope_result(evidence, state)
 
-        evidence = self._scope_evidence(
-            rows=rows,
-            label=config.metrics_identifier_label,
-            identifier=config.metrics_identifier,
-            start=start,
-            end=end,
-            step=timedelta(seconds=config.metrics_step_seconds),
-            detail_prefix=detail_prefix,
-        )
-        self._record_scope_evidence(tenant_id, evidence)
-        if evidence.status is not MetricsScopeStatus.VALID:
-            return self._blocked_scope_result(evidence, state)
-        state_status = getattr(state, "status", None)
-        if state_status == "open":
+        # An open breaker gets one newest-point probe.  The probe is deliberately
+        # not promoted to aggregate evidence for the requested historical range.
+        if state_status == "open" and not force_full:
+            newest = self._latest_scope_timestamp(start, end, step)
+            request = MetricsScopeRequest(
+                tenant_id,
+                config.metrics_identifier,
+                config.metrics_identifier_label,
+                step,
+                newest,
+                newest,
+            )
+            evidence = self._scope_query_evidence.get(request)
+            if evidence is None:
+                evidence = self._query_scope_request(
+                    request,
+                    metrics_source,
+                    detail_prefix,
+                    max_points=1,
+                )
+                self._scope_query_evidence[request] = evidence
+            if evidence.status is not MetricsScopeStatus.VALID:
+                return self._blocked_scope_result(evidence, state)
             recovery_start, retention_gap_start, retention_gap_end = self._recovery_window(state, start, end)
             return ScopeGateResult(
                 ScopeGateDecision.RECOVERY_READY,
@@ -374,6 +456,29 @@ class SelfManagedKafkaPlugin:
                 reason="target_scope_recovered",
                 evidence=evidence,
             )
+
+        aggregate_request = MetricsScopeRequest(
+            tenant_id,
+            config.metrics_identifier,
+            config.metrics_identifier_label,
+            step,
+            start,
+            end,
+        )
+        cached_evidence = self._scope_evidence_by_request.get(aggregate_request)
+        if cached_evidence is None:
+            evidence = self._query_bounded_scope(
+                aggregate_request,
+                metrics_source,
+                detail_prefix,
+                config.historical_acquisition_chunk_days,
+            )
+            self._scope_evidence_by_request[aggregate_request] = evidence
+        else:
+            evidence = cached_evidence
+        self._record_scope_evidence(tenant_id, evidence)
+        if evidence.status is not MetricsScopeStatus.VALID:
+            return self._blocked_scope_result(evidence, state)
         if state_status in {"recovering", "retention_gap"}:
             recovery_start, _, _ = self._recovery_window(state, start, end)
             return ScopeGateResult(
@@ -393,6 +498,147 @@ class SelfManagedKafkaPlugin:
             status=evidence.status.value,
             reason="target_scope_valid",
             evidence=evidence,
+        )
+
+    def _query_bounded_scope(
+        self,
+        request: MetricsScopeRequest,
+        metrics_source: MetricsSource,
+        detail_prefix: str,
+        chunk_days: int,
+    ) -> MetricsScopeEvidence:
+        total_points = self._scope_point_count(request.start, request.end, request.step)
+        if total_points <= 0:
+            return MetricsScopeEvidence(
+                request.metrics_identifier_label,
+                request.metrics_identifier,
+                request.start,
+                request.end,
+                MetricsScopeStatus.NOT_OBSERVED,
+                f"{detail_prefix}: target coverage incomplete",
+            )
+        max_points = max(1, int(timedelta(days=chunk_days) // request.step) + 1)
+        observed_points = 0
+        saw_rows = False
+        for offset in range(0, total_points, max_points):
+            point_count = min(max_points, total_points - offset)
+            group_start = request.start + offset * request.step
+            group_end = group_start + (point_count - 1) * request.step
+            physical = MetricsScopeRequest(
+                request.tenant_id,
+                request.metrics_identifier,
+                request.metrics_identifier_label,
+                request.step,
+                group_start,
+                group_end,
+            )
+            physical_evidence = self._scope_query_evidence.get(physical)
+            if physical_evidence is None:
+                physical_evidence = self._query_scope_request(
+                    physical,
+                    metrics_source,
+                    detail_prefix,
+                    max_points=max_points,
+                )
+                self._scope_query_evidence[physical] = physical_evidence
+            if physical_evidence.status is MetricsScopeStatus.TRANSIENT_FAILURE:
+                return MetricsScopeEvidence(
+                    request.metrics_identifier_label,
+                    request.metrics_identifier,
+                    request.start,
+                    request.end,
+                    MetricsScopeStatus.TRANSIENT_FAILURE,
+                    physical_evidence.detail,
+                )
+            if physical_evidence.status is MetricsScopeStatus.MISMATCH:
+                return MetricsScopeEvidence(
+                    request.metrics_identifier_label,
+                    request.metrics_identifier,
+                    request.start,
+                    request.end,
+                    MetricsScopeStatus.MISMATCH,
+                    physical_evidence.detail,
+                )
+            if physical_evidence.status is MetricsScopeStatus.TARGET_DOWN:
+                return MetricsScopeEvidence(
+                    request.metrics_identifier_label,
+                    request.metrics_identifier,
+                    request.start,
+                    request.end,
+                    MetricsScopeStatus.TARGET_DOWN,
+                    physical_evidence.detail,
+                )
+            if physical_evidence.status is MetricsScopeStatus.NOT_OBSERVED:
+                return MetricsScopeEvidence(
+                    request.metrics_identifier_label,
+                    request.metrics_identifier,
+                    request.start,
+                    request.end,
+                    MetricsScopeStatus.NOT_OBSERVED,
+                    physical_evidence.detail,
+                )
+            saw_rows = saw_rows or physical_evidence.observed_target_count > 0
+            observed_points += point_count
+
+        if not saw_rows or observed_points != total_points:
+            return MetricsScopeEvidence(
+                request.metrics_identifier_label,
+                request.metrics_identifier,
+                request.start,
+                request.end,
+                MetricsScopeStatus.NOT_OBSERVED,
+                f"{detail_prefix}: target coverage incomplete",
+                observed_target_count=observed_points,
+            )
+        return MetricsScopeEvidence(
+            request.metrics_identifier_label,
+            request.metrics_identifier,
+            request.start,
+            request.end,
+            MetricsScopeStatus.VALID,
+            f"{detail_prefix}: target healthy",
+            observed_target_count=observed_points,
+        )
+
+    def _query_scope_request(
+        self,
+        request: MetricsScopeRequest,
+        metrics_source: MetricsSource,
+        detail_prefix: str,
+        *,
+        max_points: int,
+    ) -> MetricsScopeEvidence:
+        query = MetricQuery(
+            key="target_up",
+            query_expression="up{}",
+            label_keys=(request.metrics_identifier_label,),
+            resource_label=request.metrics_identifier_label,
+        )
+        try:
+            rows = metrics_source.query(
+                queries=[query],
+                start=request.start,
+                end=request.end,
+                step=request.step,
+                resource_id_filter=request.metrics_identifier,
+            ).get(query.key, [])
+        except MetricsQueryError as exc:
+            return MetricsScopeEvidence(
+                request.metrics_identifier_label,
+                request.metrics_identifier,
+                request.start,
+                request.end,
+                MetricsScopeStatus.TRANSIENT_FAILURE,
+                f"{detail_prefix}: {type(exc).__name__}",
+            )
+        return self._scope_evidence(
+            rows=rows,
+            label=request.metrics_identifier_label,
+            identifier=request.metrics_identifier,
+            start=request.start,
+            end=request.end,
+            step=request.step,
+            detail_prefix=detail_prefix,
         )
 
     def _blocked_scope_result(
@@ -432,14 +678,14 @@ class SelfManagedKafkaPlugin:
             detail = f"{detail_prefix}: target label not observed" if rows else f"{detail_prefix}: target not observed"
             return MetricsScopeEvidence(label, identifier, start, end, status, detail)
 
-        expected = SelfManagedKafkaPlugin._expected_scope_timestamps(start, end, step)
         observed: dict[datetime, list[float]] = {}
         for row in matching:
             timestamp = getattr(row, "timestamp", None)
             value = getattr(row, "value", None)
             if isinstance(timestamp, datetime) and isinstance(value, (int, float)):
                 observed.setdefault(timestamp, []).append(float(value))
-        if any(timestamp not in observed for timestamp in expected):
+        expected_count = SelfManagedKafkaPlugin._scope_point_count(start, end, step)
+        if expected_count <= 0:
             return MetricsScopeEvidence(
                 label,
                 identifier,
@@ -447,9 +693,23 @@ class SelfManagedKafkaPlugin:
                 end,
                 MetricsScopeStatus.NOT_OBSERVED,
                 f"{detail_prefix}: target coverage incomplete",
-                observed_target_count=len(observed),
             )
-        values = [value for timestamp in expected for value in observed[timestamp]]
+        expected_values: list[float] = []
+        for offset in range(expected_count):
+            timestamp = start + offset * step
+            values_at_timestamp = observed.get(timestamp)
+            if values_at_timestamp is None:
+                return MetricsScopeEvidence(
+                    label,
+                    identifier,
+                    start,
+                    end,
+                    MetricsScopeStatus.NOT_OBSERVED,
+                    f"{detail_prefix}: target coverage incomplete",
+                    observed_target_count=len(observed),
+                )
+            expected_values.extend(values_at_timestamp)
+        values = expected_values
         if any(not isfinite(value) or value <= 0 for value in values):
             return MetricsScopeEvidence(
                 label,
@@ -472,12 +732,21 @@ class SelfManagedKafkaPlugin:
 
     @staticmethod
     def _expected_scope_timestamps(start: datetime, end: datetime, step: timedelta) -> tuple[datetime, ...]:
-        timestamps: list[datetime] = []
-        current = start
-        while current <= end:
-            timestamps.append(current)
-            current += step
-        return tuple(timestamps)
+        count = SelfManagedKafkaPlugin._scope_point_count(start, end, step)
+        return tuple(start + offset * step for offset in range(count))
+
+    @staticmethod
+    def _scope_point_count(start: datetime, end: datetime, step: timedelta) -> int:
+        if step <= timedelta(0) or end < start:
+            return 0
+        return int((end - start) // step) + 1
+
+    @staticmethod
+    def _latest_scope_timestamp(start: datetime, end: datetime, step: timedelta) -> datetime:
+        count = SelfManagedKafkaPlugin._scope_point_count(start, end, step)
+        if count <= 0:
+            raise ValueError("scope window must contain at least one positive-step timestamp")
+        return start + (count - 1) * step
 
     def _record_scope_evidence(self, tenant_id: str, evidence: MetricsScopeEvidence) -> None:
         self._scope_evidence_by_window[(tenant_id, evidence.window_start, evidence.window_end)] = evidence

@@ -207,6 +207,69 @@ daily_cost = 50.0 × $0.01 = $0.50
     bytes transferred during the closed day. It does not average the counter or
     reconstruct the pool from topic-labelled series.
 
+### Self-managed historical request bounds
+
+Self-managed Kafka uses `historical_acquisition_chunk_days` to cap each scope,
+cluster, and topic workload response at `H` closed UTC days. The omitted/default
+value is `H=5`; `1..30` is valid, and `30` is an explicit operator-selected maximum.
+Smaller `H` values reduce response size and reduced-evidence memory while increasing
+request count. One reduced chunk is retained at a time and is released before the
+next chunk is acquired.
+
+Within a run, exact target-scope evidence is reused for the same tenant, target
+identifier and label, step, start, and end. An open scope executes one newest-point
+probe. A failed probe permits no workload, progress, or writes; a successful probe
+is persisted before complete bounded validation is rerun. Billing windows remain
+calculation-owned.
+
+Let `C_cluster` and `C_topic` be the sums of `ceil(run_length / H)` over the
+independent contiguous cluster and topic date runs. With a step that divides one
+UTC day, successful workload family counts are:
+
+```
+B_cluster = 3 × C_cluster
+B_topic   = 3 × C_topic
+```
+
+For a non-divisor step, the exact per-family residue-request sums add `G` requests:
+
+```
+B_cluster = 2 × C_cluster + G_cluster
+B_topic   = 2 × C_topic   + G_topic
+```
+
+Use `D = 86,400` seconds per UTC day, `S = metrics_step_seconds`, and `h_j` for
+the days in one actual chunk `j`. For one actual chunk, `g(h_j, S)` is the exact
+number of residue-group requests for that gauge family. Sum it once across actual
+chunks:
+
+```
+g(h, S) = min(h, S / gcd(S, D))
+G_family = sum_j g(h_j, S)
+```
+
+Each returned series is bounded by `floor(H × D / S) + 1` evaluation timestamps
+before half-open daily filtering. The shorthand `6C` applies only when cluster and
+topic date sets coincide and the step divides one day, yielding `3C` on each side.
+The [self-managed reference](../configuration/self-managed-reference.md#measured-request-and-transport-bounds)
+defines the symbols, measured values, and fallback examples in one operator-readable
+table.
+
+If bounded family requests fail, `F` is the number of owned days retried with daily
+fallback queries, so the affected workload is `B + F`. A logical family is one
+PromQL family; a transport attempt is one HTTP request. With the existing retry
+ceiling `R`, cold attempts are at most `R×L` for `L` logical families. Warm raw
+cache hits can reduce attempts but never logical-family counts. The measured
+one-day, 31-day, unequal recovery, failed-open, successful recovery, and warm-cache
+values are listed in the [self-managed configuration reference](../configuration/self-managed-reference.md#measured-request-and-transport-bounds).
+
+Daily semantics remain unchanged: counters use exact UTC day-end ownership of the
+preceding half-open day, gauges preserve the daily start-anchored grid and half-open
+filter, zero and missing evidence remain distinct, and family/day failures remain
+isolated. Residual, reconciliation, retry, and terminal topic behavior is
+unchanged. These bounds apply only to self-managed Kafka; CCloud and generic metrics
+keep their existing configuration, query, progress, and attribution behavior.
+
 ### Self-managed Kafka topic-attribution overlay
 
 Self-managed Kafka can optionally produce a topic-level analytical view without

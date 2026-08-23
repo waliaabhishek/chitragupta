@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -43,6 +43,18 @@ class MetricsScopeEvidence:
     status: MetricsScopeStatus
     detail: str
     observed_target_count: int = 0
+
+
+@dataclass(frozen=True)
+class MetricsScopeRequest:
+    """Exact key for one run-local scope request or bounded physical query."""
+
+    tenant_id: str
+    metrics_identifier: str
+    metrics_identifier_label: str
+    step: timedelta
+    start: datetime
+    end: datetime
 
 
 @dataclass(frozen=True)

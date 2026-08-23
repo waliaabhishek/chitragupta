@@ -39,8 +39,8 @@
 - (Optional) **Prometheus with CCloud topic-level metrics** — required for [topic attribution](../configuration/ccloud-reference.md#topic-attribution). The Prometheus instance must scrape `received_bytes`, `sent_bytes`, and `retained_bytes` per topic from the CCloud Metrics API.
 
 ### Self-managed Kafka
-- Prometheus endpoint scraping Kafka JMX metrics
-  (kafka_server_brokertopicmetrics_bytesin_total, etc.)
+- Prometheus endpoint scraping Kafka through JMX Exporter. See the
+  [required metric names and labels](../configuration/self-managed-reference.md#prometheus-metric-inventory).
 - (Optional) Kafka admin API access for resource discovery
 
 ### Generic metrics

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from core.metrics.protocol import MetricsQueryError
 from core.models import BillingLineItem, CoreBillingLineItem, MetricQuery
 from core.plugin.protocols import CostInput
+from plugins.self_managed_kafka.historical_metrics import iter_daily_evidence
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
@@ -115,7 +116,37 @@ class ConstructedCostInput(CostInput):
             return
 
         queries = _cost_queries(self._config.metrics_identifier_label)
-        for day_start, day_end in _day_starts(normalized_start, normalized_end):
+        windows = tuple(_day_starts(normalized_start, normalized_end))
+        if len(windows) > 1:
+            for chunk, daily_metrics in iter_daily_evidence(
+                self._metrics_source,
+                queries,
+                windows,
+                step=timedelta(seconds=self._config.metrics_step_seconds),
+                chunk_days=self._config.historical_acquisition_chunk_days,
+                resource_id_filter=self._config.metrics_identifier,
+            ):
+                for day_start, day_end in chunk:
+                    try:
+                        yield from self._process_day(
+                            tenant_id,
+                            day_start,
+                            day_end,
+                            daily_metrics[(day_start, day_end)],
+                        )
+                    except _MissingStorageEvidenceError:
+                        continue
+                    except MetricsQueryError:
+                        logger.warning(
+                            "Bounded historical evidence incomplete for tenant=%s date=%s — skipping",
+                            tenant_id,
+                            day_start.date(),
+                        )
+                        continue
+                del daily_metrics
+            return
+
+        for day_start, day_end in windows:
             try:
                 metrics = self._metrics_source.query(
                     queries=queries,

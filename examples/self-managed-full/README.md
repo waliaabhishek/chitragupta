@@ -16,7 +16,10 @@ Full stack for self-managed Kafka: chargeback engine (pipeline + REST API), Graf
 
 - Docker Engine 24+ and Docker Compose v2+
 - A Prometheus instance reachable from the Docker network, scraping Kafka brokers via [prometheus-jmx-exporter](https://github.com/prometheus/jmx_exporter)
-- See `examples/shared/scripts/collector.sh` for a helper that configures the required JMX metrics
+- Configure JMX Exporter with the
+  [required metric names and labels](../../docs/configuration/self-managed-reference.md#prometheus-metric-inventory).
+  The bundled `collector.sh` backfills Chitragupta output metrics; it does not
+  configure Kafka scraping.
 
 ## Quick start
 
@@ -159,36 +162,9 @@ its own `cluster_id`, `metrics_identifier`, `broker_count`, `cost_model`, and
 
 ## Prometheus requirements
 
-The engine requires these metrics from Prometheus on every broker target:
-
-- `up` — target health for each billing window
-- `kafka_server_brokertopicmetrics_alltopics_bytesin_total` — broker-wide client ingress pool
-- `kafka_server_brokertopicmetrics_alltopics_bytesout_total` — broker-wide client egress pool
-- `kafka_log_log_size` — storage pool and per-topic partition storage evidence
-
-The `alltopics` counters build the network cost pools and exclude replication
-traffic. The Prometheus resource source also uses
-`kafka_server_brokertopicmetrics_bytesin_total` with a `topic` label for discovery.
-When topic attribution is enabled, export both that counter and
-`kafka_server_brokertopicmetrics_bytesout_total`. They divide the client pools
-among topics; they do not construct the pools themselves.
-
-`kafka_log_log_size` must carry topic and partition evidence. A reported zero is a
-valid storage value. A missing storage family leaves the day retryable unless a
-successful Admin API inventory proves the cluster has no topics or partitions.
-
-Every one of those series must carry the configured `metrics_identifier_label`.
-The `alltopics` counters need a `broker` label and no `topic` label; topic counters
-need `broker` and `topic`; for topic attribution `kafka_log_log_size` needs
-`broker`, `topic`, and `partition`.
-
-When `principal_attribution.enabled` is `true`, also export
-`kafka_server_quota_byte_rate` as a gauge. It must carry `broker`, the configured
-cluster label, `quota_type` (`Produce` or `Fetch`), `quota_scope` (`user`,
-`user-client`, or `client-id`), `user`, and `client_id`. Export the corresponding
-Kafka JMX quota MBeans for user, client-ID, and user/client scopes. Configure Kafka
-quotas for the authenticated users and client IDs you intend to observe;
-Chitragupta reads those metrics and does not configure broker quotas.
+Prometheus scrapes Kafka through JMX Exporter. Chitragupta queries Prometheus; it
+does not scrape brokers. See the [canonical metric inventory](../../docs/configuration/self-managed-reference.md#prometheus-metric-inventory)
+for exact metric names, feature conditions, and required labels.
 
 Ensure every target carries the configured `metrics_identifier_label` and
 `metrics_identifier` value. Chitragupta applies that selector to `up`, resource
