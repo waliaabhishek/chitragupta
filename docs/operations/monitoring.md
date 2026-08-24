@@ -50,47 +50,14 @@ GET /health
 
 ## Readiness check
 
-```
+```http
 GET /api/v1/readiness
-→ {
-    "status": "ready",           // ready | initializing | no_data | error
-    "version": "<version>",
-    "mode": "both",
-    "tenants": [
-      {
-        "tenant_name": "my-org",
-        "tables_ready": true,
-        "has_data": true,
-        "pipeline_running": false,
-        "pipeline_stage": null,
-        "pipeline_current_date": null,
-        "last_run_status": "completed",
-        "last_run_at": "2026-03-17T12:00:00Z",
-        "permanent_failure": null,
-        "focus_preview_state": "degraded",
-        "focus_preview_completed_repair_dates": 12,
-        "focus_preview_total_repair_dates": 31,
-        "focus_preview_message": "Retention cleanup needs attention while historical repair is in progress. Existing valid Preview data remains available.",
-        "focus_preview_ordinary_retention": {
-          "attempted_at": "2026-03-17T12:05:00Z",
-          "status": "failure",
-          "diagnostic": {
-            "code": "focus_preview_ordinary_retention_failed",
-            "message": "Ordinary tenant retention cleanup failed. Review worker logs and restore tenant storage; existing valid Preview data remains available.",
-            "error_type": "OperationalError"
-          }
-        },
-        "focus_preview_evidence_retention": {
-          "attempted_at": "2026-03-16T12:05:00Z",
-          "status": "success",
-          "diagnostic": null
-        }
-      }
-    ]
-  }
 ```
 
-Response is TTL-cached for 2 seconds.
+The response is cached for two seconds. See the
+[API reference](../api-reference.md#get-apiv1readiness) for the complete
+response schema.
+
 
 FOCUS Preview readiness is tenant-scoped:
 

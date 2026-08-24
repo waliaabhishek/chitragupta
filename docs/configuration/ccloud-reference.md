@@ -245,7 +245,8 @@ For bytes_ratio product types, if Prometheus returns all-zero values, the
 
 ### Topic attribution retry behavior
 
-When Prometheus is unreachable for a cluster, the pipeline leaves that date pending and retries on the next run. The per-billing-line attempt count is stored in `billing.topic_attribution_attempts` (migration 016).
+When Prometheus is unreachable for a cluster, the pipeline leaves that date
+pending and retries on the next run. Retry state is preserved across restarts.
 
 Once all billing lines for a cluster reach `topic_attribution_retry_limit` attempts without a successful metrics fetch, the pipeline produces sentinel rows instead of retrying indefinitely:
 

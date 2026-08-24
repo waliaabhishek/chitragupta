@@ -505,102 +505,47 @@ The `tags` column is serialized as `key=value;key=value` pairs (e.g. `team=platf
 
 ## FOCUS Mapping Preview
 
-FOCUS Mapping Preview is an asynchronous, Confluent Cloud-only exposition API.
-Package requests and publication read persisted calculation and source evidence;
-they never call the provider, trigger the pipeline, rerun allocation, or edit
-data. A separate historical-repair API explicitly reacquires provider evidence
-and runs canonical calculation for eligible retained dates. Package requests
-support Daily or Monthly grain and Full, Summary, or Custom column profiles. The
-tenant's optional `focus_preview`
-block must establish a `direct_payg` commercial profile over the complete
-request interval. `billing_currency` defaults to normalized `USD`; any other
-configured currency fails closed without conversion. Eligible rows copy that
-normalized setting into `BillingCurrency` as scope authority. The Confluent
-Costs API does not provide a per-record currency field, and Preview does not
-infer the value from individual records.
+FOCUS Mapping Preview is an asynchronous, Confluent Cloud-only API under
+`/api/v1/tenants/{tenant_name}/focus-preview`. Requested packages and monthly
+revisions read persisted calculation and source evidence. Historical repair is
+the only Preview operation that reacquires provider data and runs calculation.
 
-For setup and complete UI/CLI workflows, start with
-[FOCUS Mapping Preview](focus-mapping-preview.md). This section is the HTTP
-contract reference.
+The tenant must enable `focus_preview` for the requested interval. Disabled
+tenants receive HTTP 409 `preview_commercial_profile_unavailable`; unrelated
+billing, chargeback, and export endpoints remain available.
 
-The API is opt-in per tenant. When `focus_preview` is absent, every Preview
-route returns HTTP 409 with the structured
-`preview_commercial_profile_unavailable` diagnostic before initializing
-Preview runtime, artifact, or evidence storage. Other billing, chargeback, and
-generic export routes remain available.
-
-The API has no built-in authentication. Protect the entire Preview route prefix
-behind an authenticated reverse proxy or API gateway, including profile,
-repair submission/status, package submission, recent history, status, manifest,
-individual-file, and archive routes. The remote CLI's repeatable
-`--header NAME=VALUE` option forwards the deployment's external authentication
-headers on every request.
-
-Requested-package submission, recent-history, status, and artifact routes
-recover the tenant's artifact owner after their existing tenant, input,
-feature-enablement, runtime, and storage checks and before requested-package
-metadata actions. Recovery removes interrupted staging work, retries incomplete
-terminal transitions and expiry cleanup, and reconciles finalized packages
-against all persisted request and revision references. An apparent orphan is
-deleted only after a fresh authoritative reference check while holding its
-stable package lock. Recovery is safe to repeat in the same process or after
-restart. A failed reference check preserves the candidate; a failed delete or
-filesystem synchronization is logged and retried rather than reported as
-complete. If recovery cannot complete, the requested-package operation returns
-HTTP 503 with exact detail `FOCUS Mapping Preview recovery is unavailable`.
-Published-revision history, detail, and artifact routes do not invoke this
-requested-package owner-recovery step.
+The API has no built-in authentication. Protect the complete Preview prefix with
+an authenticated reverse proxy or API gateway. For configuration and UI/CLI
+workflows, use [FOCUS Mapping Preview](focus-mapping-preview.md). This section
+defines only the HTTP contract.
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/profile`
 
-Return static metadata for the first-release `focus-1.4-preview-v1` mapping
-profile. The response requires `mapping_profile_version`,
-`target_focus_version: "1.4"`, `conformance_status: "non_conforming"`, the
-ordered `full_columns` allowlist, and the ordered 20-column `summary_columns`
-subset. The mapping profile and `chitragupta.preview-manifest.v1` are the first
-release contracts. The response also contains `known_gaps`, the same canonical
-ordered public value used by Requested Preview Package and Published Preview
-Revision manifests. Each gap contains exactly `code`, customer-facing
-`description`, and ordered affected `columns`; internal ownership and delivery
-process metadata are excluded. The pre-submission UI renders its
-target-version warning, non-conformance status, and **Current authority gaps**
-from this response. See the manifest contract below for the complete current
-gap catalog, which is not repeated here.
+Return static capability metadata for `focus-1.4-preview-v1`:
 
-For the eligible Direct-billed PAYG scope, the mapping profile supplies
-`Confluent Cloud` as the participating-entity value for both
-`ServiceProviderName` and `InvoiceIssuerName`. `InvoiceIssuerName` is not a
-per-record field supplied by the Confluent Costs API. Invoice-issuer-assigned
-`InvoiceId` and `InvoiceDetailId` remain unavailable and null; Preview does not
-fabricate them or perform invoice reconciliation.
+- `mapping_profile_version`;
+- `target_focus_version: "1.4"`;
+- `conformance_status: "non_conforming"`;
+- ordered `full_columns` and `summary_columns`; and
+- ordered `known_gaps`, each containing `code`, `description`, and
+  affected `columns`.
 
-For eligible priced Direct-billed PAYG rows, the profile applies the
-no-negotiated-unit-price default: `ContractedUnitPrice` equals `ListUnitPrice`,
-and `PricingCurrencyContractedUnitPrice` equals
-`PricingCurrencyListUnitPrice`. Provider discounts remain in the final
-`BilledCost` and `EffectiveCost` values and in
-`x_ConfluentDiscountAmount`; they are not negotiated contracted-price savings.
-The projection preserves provider price and quantity values exactly. Credit and
-promotional rows without `SkuPriceId` keep these unit-price fields null.
+The current authority gaps are:
 
-This correction changes no endpoint, HTTP status, request or response shape,
-manifest schema version, or Full-profile column order/count. Newly generated
-manifests no longer list `ContractedUnitPrice` or
-`PricingCurrencyContractedUnitPrice` in `profile_not_applicable_columns`.
-Unexpired requested packages generated with the immediately preceding exact
-canonical list remain downloadable; other manifest drift still fails closed.
+| Code | Description | Affected columns |
+|---|---|---|
+| `invoice_identity_unavailable` | Post-issuance invoice identity is unavailable. | `InvoiceDetailId`, `InvoiceId` |
+| `provider_host_display_name_unavailable` | `HostProviderName` contains the raw provider cloud code, not a provider display name. | `HostProviderName` |
+| `provider_region_display_name_unavailable` | Confluent inventory does not provide a distinct region display name. | `RegionName` |
+| `derived_sku_identity_not_provider_authoritative` | SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers. | `SkuId`, `SkuMeter`, `SkuPriceDetails`, `SkuPriceId`, `x_ChitraguptaSkuComponents` |
 
-This endpoint validates tenant existence and the Confluent Cloud ecosystem but
-does not initialize Preview storage or the worker runtime.
-
-These target and conformance fields are additions only to the profile, request,
-and revision metadata described below. Repair operations, readiness responses,
-and unrelated API responses are unchanged.
+The endpoint validates tenant existence and the Confluent Cloud ecosystem but
+does not initialize Preview storage or workers.
 
 ### `POST /api/v1/tenants/{tenant_name}/focus-preview/repairs`
 
-Create a durable asynchronous historical repair. This operator surface is
-REST-only and accepts new work only in `both` mode.
+Create an asynchronous historical repair. New repairs are accepted only in
+`both` mode.
 
 ```json
 {
@@ -609,88 +554,47 @@ REST-only and accepts new work only in `both` mode.
 }
 ```
 
-The dates are UTC with inclusive-start/exclusive-end semantics and must contain
-1–364 dates. The complete range must fit within the intersection of the
-tenant's `focus_preview` effective interval, current `lookback_days` and
-`cutoff_days` acquisition window, and complete `retention_days` interval. It
-cannot include future dates. Validation of tenant, ecosystem, enablement, and
-range occurs before repair changes pipeline data.
+Dates use inclusive-start/exclusive-end UTC semantics. The 1–364 date range must
+fit inside the tenant's commercial, acquisition, cutoff, and retention
+intervals and cannot include future dates.
 
-A valid submission returns HTTP 202 with the durable queued operation and a
-`Location` header identifying its status URL. The operation fields are:
-`repair_id`, `tenant_name`, `start_date`, `end_date`, `status`, `created_at`,
-nullable `started_at`, nullable `completed_at`, nullable `diagnostic`, and
-date-ordered `dates`. Operation status is `queued`, `running`, `completed`,
-`completed_with_failures`, or `failed`.
+A valid request returns HTTP 202, a `Location` header, and these operation
+fields: `repair_id`, `tenant_name`, `start_date`, `end_date`, `status`,
+`created_at`, nullable `started_at`, nullable `completed_at`, nullable
+`diagnostic`, and date-ordered `dates`. Operation status is `queued`, `running`,
+`completed`, `completed_with_failures`, or `failed`.
 
-Each date contains `tracking_date`, `status`, nullable `started_at`,
+Each date contains `tracking_date`, `status`, and nullable `started_at`,
 `completed_at`, `calculation_id`, `calculation_completed_at`, `rows_written`,
 `failure_stage`, and `diagnostic`. Date status is `queued`, `running`,
-`daily_validated`, `succeeded`, or `failed`. `daily_validated` is nonterminal:
-Daily Full validation passed with calculation metadata, but validation of the
-wholly selected UTC month has not completed. Failure stages are
-`retained_state`, `provider_source`, `calculation`, `evidence`,
-`preview_validation`, and `worker`. Diagnostics contain `code`, `message`,
-`retryable`, and `source_correlation_ids`.
+`daily_validated`, `succeeded`, or `failed`. Failure stage is `retained_state`,
+`provider_source`, `calculation`, `evidence`, `preview_validation`, or `worker`.
+`daily_validated` is nonterminal: Daily validation passed, but validation of the
+selected UTC month has not completed. Diagnostics contain `code`, `message`,
+`retryable`, and optional `source_correlation_ids`.
 
-The worker processes every date in ascending order and continues after expected
-date failures. It reacquires authoritative provider billing data and may query
-historical metrics through the configured canonical allocators. The exact
-tenant/date billing scope is replaced even when the provider authoritatively
-returns no rows, then canonical calculation and evidence persistence rebuild
-chargebacks, pipeline state, source evidence, and allocation lineage. Repair
-never copies or infers calculation metadata or evidence from legacy aggregates.
+Repair reacquires billing data and runs the ordinary calculation for the
+selected tenant/date scope. It can replace billing, chargebacks, pipeline state,
+source evidence, and allocation lineage in that range. It creates no requested
+package or published revision.
 
-The selected range can change billing, chargebacks, and generic exports; other
-dates and tenants are preserved. Repair creates no requested package or
-published revision. After successful repair, create a normal Daily or Monthly
-Preview request.
-
-Submitting the same range again creates a new operation. Exact-date replacement
-makes retry deterministic without duplicate current lineage. On restart,
-interrupted operations and unfinished `queued`, `running`, or
-`daily_validated` dates are marked failed and are not automatically resumed.
-After successful recovery, readiness reports the interrupted repair as
-`degraded` with explicit retry guidance. If recovery for a tenant cannot
-complete at startup, that tenant's next repair submission retries recovery
-first. Recovery success continues normal submission checks; recovery failure
-returns HTTP 503 with exact detail
-`FOCUS Mapping Preview repair worker is unavailable` and creates no new repair.
-
-Repair admission is process-local. At most `preview.max_workers` repairs run
-and at most `preview.max_queued_repairs` additional repairs wait in each
-process. The existing one-active-repair-per-tenant rule still applies.
-Generation and repair have separate capacity bounds and can run concurrently.
-When repair capacity is full, submission returns HTTP 429:
-
-```json
-{
-  "detail": {
-    "code": "focus_preview_repair_capacity_exhausted",
-    "message": "FOCUS Mapping Preview repair capacity is exhausted.",
-    "retryable": true
-  }
-}
-```
-
-No repair operation is persisted for this response. Wait for admitted repair
-work to finish, then submit again; the API does not retry automatically.
+Only one repair can be active per tenant. Process-wide repair admission uses
+`preview.max_workers` and `preview.max_queued_repairs`. A rejected capacity
+request creates no operation and is not retried automatically.
 
 | Condition | Status | Detail |
 |---|---:|---|
 | Malformed, missing, or extra body field | 422 | FastAPI validation body |
 | Unknown tenant | 404 | `Tenant '<tenant_name>' not found` |
 | Unsupported ecosystem | 400 | `FOCUS Mapping Preview currently supports only Confluent Cloud tenants` |
-| Disabled tenant | 409 | `preview_commercial_profile_unavailable` diagnostic |
-| Start is not before end | 400 | `focus_preview_repair_range_invalid` diagnostic |
-| Future date included | 400 | `focus_preview_repair_future_range` diagnostic |
-| Outside effective/acquisition/retention interval or over 364 dates | 400 | `focus_preview_repair_range_ineligible` diagnostic |
-| API-only mode or missing repair runtime | 503 | `FOCUS Mapping Preview repair worker is unavailable` |
-| Repair storage unavailable | 503 | `FOCUS Mapping Preview repair storage is unavailable` |
-| Queued/running repair already exists for tenant | 409 | `focus_preview_repair_in_progress` diagnostic |
-| Target tenant is executing pipeline or maintenance work | 409 | `focus_preview_repair_tenant_busy` diagnostic |
-| Target tenant recovery cannot complete | 503 | `FOCUS Mapping Preview repair worker is unavailable`; no new repair |
-| Process-local repair capacity is full | 429 | `focus_preview_repair_capacity_exhausted` diagnostic; no new repair |
+| Disabled tenant | 409 | `preview_commercial_profile_unavailable` |
+| Invalid or future range | 400 | `focus_preview_repair_range_invalid` or `focus_preview_repair_future_range` |
+| Outside the eligible interval or over 364 dates | 400 | `focus_preview_repair_range_ineligible` |
+| Worker unavailable | 503 | `FOCUS Mapping Preview repair worker is unavailable` |
+| Storage unavailable | 503 | `FOCUS Mapping Preview repair storage is unavailable` |
+| Repair already active | 409 | `focus_preview_repair_in_progress` |
+| Tenant busy | 409 | `focus_preview_repair_tenant_busy` |
+| Capacity full | 429 | `focus_preview_repair_capacity_exhausted` |
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/repairs/{repair_id}`
 
@@ -776,121 +680,38 @@ exists. A missing cursor and a cursor owned by another tenant both return 400
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}`
 
-Return the tenant-scoped request. The lifecycle is `queued`, `running`, then
+Return a tenant-scoped request. Lifecycle is `queued`, `running`, then
 `ready` or `failed`; a ready request becomes `expired` at its fixed cutoff.
 
-Common response fields are `request_id`, `tenant_name`,
-`target_focus_version: "1.4"`, `conformance_status: "non_conforming"`, `grain`,
-`start_date`, `end_date`, derived nullable `month`, `column_profile`, ordered
-`effective_columns`, `status`, `created_at`, `started_at`, `completed_at`,
-`expires_at`, `diagnostic`, `source_snapshot`, and `package`.
+The response fields are `request_id`, `tenant_name`, `target_focus_version`,
+`conformance_status`, `grain`, `start_date`, `end_date`, nullable `month`,
+`column_profile`, ordered `effective_columns`, `status`, `created_at`, nullable
+`started_at`, nullable `completed_at`, nullable `expires_at`, nullable
+`diagnostic`, nullable `source_snapshot`, and nullable `package`.
 
-- Queued/running responses have no diagnostic, source snapshot, or package.
-- Failed responses contain `{code, message, retryable}` and no package. Source-
-  related failures can also contain `source_correlation_ids`, a sorted, unique,
-  maximum-20 list of opaque `src:v1:<64 lowercase hex>` values. These values do
-  not reveal provider record IDs, tenant IDs, raw fields, secrets, or paths.
-- Ready responses contain a source snapshot and package metadata.
-- Expired responses retain source snapshot and expiry metadata but return
+- Queued and running requests have no diagnostic, source snapshot, or package.
+- Failed requests contain `{code, message, retryable}` and no package. Source
+  failures may also contain `source_correlation_ids`: at most 20 sorted, unique,
+  opaque `src:v1:<64 lowercase hex>` values.
+- Ready requests contain source coverage and package download metadata.
+- Expired requests retain their source snapshot and expiry but return
   `package: null`.
 
-The source snapshot contains nullable `calculation_timestamp`, date-ordered
-`calculation_coverage` entries, nullable `source_through`,
+`source_snapshot` contains nullable `calculation_timestamp`, date-ordered
+`calculation_coverage`, nullable `source_through`,
 `effective_coverage_start_date`, `effective_coverage_end_date`, nullable
 `evidence_through_date`, nullable `availability_cutoff_end_date`, and nullable
-`monthly_status`. Each coverage entry has
-`tracking_date`, `calculation_id`, `calculation_completed_at`, and optional
-`calculation_run_id`. A ready package contains `manifest`, ordered `files`,
-`download_all_name`, and `download_all_url`. Each artifact contains public
-`name`, `media_type`, `size_bytes`, `sha256`, optional `order`, and
-`download_url`. It contains no artifact root, storage key, or server path.
+`monthly_status`. Each coverage entry contains `tracking_date`, `calculation_id`,
+`calculation_completed_at`, and nullable `calculation_run_id`. `monthly_status`
+is `provisional`, `settled`, or null.
 
-A ready package stores `focus-1.4-preview-v1` output using the exact ordered
-effective columns. Full is the current 65 ordered FOCUS columns plus 12 custom
-evidence columns; Summary and Custom are projections of those same validated
-rows. The stored manifest uses the first-release
-`chitragupta.preview-manifest.v1` schema and declares `conformance_status:
-non_conforming`, profile version, grain, requested bounds, derived month,
-column profile, effective columns,
-calculation/source coverage, exact known gaps, validation status/counts, cost
-and quantity reconciliation, seven-day lifecycle, and ordered file checksums.
-Mapping/profile validation completes before atomic publication. Requested
-manifests validate the complete current request identity, tenant, interval,
-effective columns, target, status, canonical gaps, snapshot, evidence,
-lifecycle, validation, reconciliation, and file checks. Revision manifests
-validate current revision identity, snapshot, Full-profile authority, material
-digest, validation summary, and file correlation. Both use the same current
-schema and mapping authority and enforce canonical gaps plus file order, size,
-and checksums where applicable. A pre-release development package is unsupported
-and fails closed.
-Before any artifact response starts, the API incrementally validates the stored
-manifest against persisted package metadata and incrementally verifies the
-selected artifact's size and SHA-256. Manifest, CSV, and ZIP bodies are then
-streamed in fixed chunks rather than loaded as complete response bodies. The
-API, UI, and CLI do not remap the verified bytes.
+A ready `package` contains `manifest`, ordered `files`, `download_all_name`, and
+`download_all_url`. The files include the data parts and metadata file. Each
+artifact includes `name`, `media_type`, `size_bytes`, `sha256`, optional `order`,
+and `download_url`. Storage paths and keys are never returned.
 
-Both requested-package and published-revision manifests contain the same
-complete ordered `known_gaps` array. Each object contains exactly `code`,
-`description`, and ordered `columns`; internal ownership and delivery-process
-metadata have no public field or alias. Fallback classification adds no
-fallback-specific manifest fields, and does not change the schema or canonical
-gap catalog:
-
-```json
-[
-  {
-    "code": "invoice_identity_unavailable",
-    "description": "Post-issuance invoice identity is unavailable.",
-    "columns": ["InvoiceDetailId", "InvoiceId"]
-  },
-  {
-    "code": "provider_host_display_name_unavailable",
-    "description": "HostProviderName contains the raw provider cloud code, not a provider display name.",
-    "columns": ["HostProviderName"]
-  },
-  {
-    "code": "provider_region_display_name_unavailable",
-    "description": "Confluent inventory does not provide a distinct region display name.",
-    "columns": ["RegionName"]
-  },
-  {
-    "code": "derived_sku_identity_not_provider_authoritative",
-    "description": "SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.",
-    "columns": [
-      "SkuId",
-      "SkuMeter",
-      "SkuPriceDetails",
-      "SkuPriceId",
-      "x_ChitraguptaSkuComponents"
-    ]
-  }
-]
-```
-
-These provider-authority gaps remain unresolved, and
-`conformance_status` remains `non_conforming`.
-
-With `preview.max_csv_file_bytes: null`, the package has one
-`cost-and-usage.csv`. A positive byte limit may produce ordered names such as
-`cost-and-usage-part-00001-of-00003.csv`. Every part repeats the header, no row
-is split, and the limit includes the header and LF record terminators. A header
-or single row that cannot fit fails generation with
-`preview_csv_row_exceeds_file_size_limit`.
-
-The package may contain multiple persisted billing origins and multiple actual
-allocation portions per origin. `CCloudBillingLineItem` remains the sole
-allocation origin; raw Cost rows remain classification/coverage evidence linked
-to that existing billing key. Actual `UNALLOCATED` portions have null allocated
-resource/name/tag fields. Origin `Tags` and target `AllocatedTags` are resolved
-separately at package time and frozen into the stored bytes.
-
-Monthly requests preserve the full requested calendar bounds while aggregating
-only the frozen effective daily evidence interval. They remain `provisional`
-until both the 72-hour post-month threshold and configured acquisition cutoff
-permit complete full-month evidence; only then can a fully validated package be
-`settled`. Monthly aggregation preserves non-additive allocation ratio/method,
-target, classification, tier, pricing, tag, SKU, and provenance distinctions.
-It does not invoke the provider or allocation code.
+For package files, lifecycle, manifest authority, and consumer handling, see
+[Package contents and lifecycle](focus-mapping-preview.md#package-contents-and-lifecycle).
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/manifest`
 
@@ -898,67 +719,28 @@ Return the exact stored `manifest.json` bytes for a ready request.
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/files/{file_name}`
 
-Return the exact stored bytes for a file enumerated by a ready request. The
-package contains one or more ordered CSV files followed by
-`focus-metadata.json`, all declared by `package.files`. The metadata file uses
-`application/json` and the CSV files use `text/csv`.
-
-`focus-metadata.json` provides nonstandard `x_ChitraguptaPreview...` Data
-Generator, Dataset Instance, Recency, exact emitted-schema, artifact-linkage,
-and delivery information. It targets the FOCUS 1.4 vocabulary but does not emit
-official FOCUS Schema metadata or `Schema.FocusVersion`, and it does not claim
-conformance. Importers that require a conforming FOCUS Export must reject the
-Preview package. The Chitragupta manifest remains the only authority for sizes,
-checksums, request expiry, revisions, known gaps, and package lifecycle.
-
-Requested metadata declares `correction_handling: not_a_correction_series` and
-`delivery_handling: one_off_download`. Metadata is validated for canonical
-bytes, freshness, schema, artifact order, internal IDs, and truthful
-non-conformance after staging and before Ready publication. API, remote CLI,
-web UI, individual-file download, and archive paths expose the same stored
-metadata bytes.
+Return exact stored bytes for a file declared by a ready package. CSV files use
+`text/csv`; `focus-metadata.json` uses `application/json`.
 
 ### `GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/archive`
 
-Stream a deterministic ZIP for a ready request. The archive contains
-`manifest.json` followed by CSV and metadata files in manifest order and is returned as
-`application/zip` with filename
-`focus-mapping-preview-{request_id}.zip`. The archive is a transport wrapper and
-is not listed as a manifest data artifact.
+Return `application/zip` named
+`focus-mapping-preview-{request_id}.zip`. The ZIP contains the manifest
+followed by its declared files.
 
-Requested packages are available from ready publication until, but not
-including, `expires_at`, exactly seven days later. At the cutoff, status remains
-available as `expired`, while manifest, file, and archive endpoints return 410.
+Requested artifacts are available until `expires_at`, exactly seven days after
+ready publication. Artifact endpoints return 410 after expiry. See
+[Package contents and lifecycle](focus-mapping-preview.md#package-contents-and-lifecycle)
+for the file and consumer contract.
 
 ### Published monthly revisions
 
-Successful periodic worker cycles automatically evaluate eligible Monthly Full
-output. Active, sub-72-hour, and acquisition-cutoff-incomplete months are
-excluded before package generation. The first automatic revision publishes only
-after complete full-month calculation and source coverage, reconciliation, and
-mapping validation produce a settled result. A later material settled correction
-atomically replaces the current revision. Failed calculation, eligibility,
-reconciliation, validation, artifact, or persistence work leaves the prior
-current revision unchanged.
+Periodic workers publish validated Settled Monthly Full revisions. A later
+material correction replaces the current revision; failed candidates leave it
+unchanged. Consumers replace superseded revisions and never aggregate them.
 
-Published monthly metadata declares FOCUS Replacement correction handling with
-Overwrite delivery. Every revision is a complete snapshot; consumers use the
-current revision and never add or merge it with superseded revisions. This
-correction-series contract does not apply to one-off requested packages.
-
-Existing persisted provisional revisions remain available under the ordinary
-supersession and retention rules. The first valid settled revision supersedes a
-current provisional revision, even when logical report content is unchanged.
-
-Material identity covers the canonical projected rows and mapping semantics.
-Physical CSV partitioning, file names, row counts, provenance, and timestamps do
-not independently trigger replacement. The first successful scheduled pass also
-seeds every settlement-ready valid month in the configured lookback, including a
-valid header-only no-cost month.
-
-Automatic publication requires `features.enable_periodic_refresh: true`. It
-runs after the ordinary pipeline cycle; `--run-once`, direct tenant runs, and
-ad-hoc request endpoints do not publish revisions.
+Publication behavior and consumer handling are documented in
+[Published monthly revisions](focus-mapping-preview.md#published-monthly-revisions).
 
 #### `GET /api/v1/tenants/{tenant_name}/focus-preview/revisions/current`
 
@@ -968,9 +750,9 @@ guard when supplied.
 
 The response contains revision identity and month bounds,
 `target_focus_version: "1.4"`, `conformance_status: "non_conforming"`,
-`monthly_status`, `published_at`, nullable predecessor/successor IDs,
-`lifecycle`, `material_sha256`, `source_snapshot`, `validation`, `self_url`, and
-`package`.
+`monthly_status`, `published_at`, nullable `supersedes_revision_id`, nullable
+`superseded_by_revision_id`, `lifecycle`, `material_sha256`, `source_snapshot`,
+`validation`, `self_url`, and `package`.
 The source snapshot reports calculation and source-through freshness, effective
 coverage, evidence-through date, availability cutoff, and Monthly status. The
 validation summary reports the mapping profile, source-record and output-row
@@ -1086,9 +868,8 @@ the report.
 | Stored bytes unavailable | 500 | `Stored preview artifact is unavailable` |
 
 The recovery 503 is retryable operationally after restoring tenant database
-and artifact-root availability. It does not expire a ready request, delete a
-referenced requested package or revision, or authorize automatic deletion of
-an unverifiable legacy finalized path.
+and artifact-root availability. Existing ready packages and revisions remain
+available when their stored data can still be verified.
 
 A generation whose temporary disk use would exceed
 `preview.max_generation_spool_bytes` terminates as a failed request with
@@ -1098,14 +879,16 @@ generation spool limit.`, and `retryable: false`. It publishes no package.
 Scheduled publication logs the same diagnostic code, publishes no revision,
 and leaves the current revision unchanged.
 
-Calculation diagnostics use these exact public meanings:
+If `preview.max_csv_file_bytes` cannot fit the repeated header and one complete
+row, generation fails with diagnostic code
+`preview_csv_row_exceeds_file_size_limit`, message `A Preview CSV header or row
+exceeds the configured file-size limit.`, and `retryable: false`. Increase the
+part limit or set it to `null`; see
+[Preview CSV part sizing](operations/troubleshooting.md#preview_csv_row_exceeds_file_size_limit).
 
-The message strings below remain unchanged for compatibility. For Daily they
-refer to the explicit requested interval; for Monthly they apply only to the
-frozen effective evidence interval, which can be shorter than the requested
-calendar month while provisional. An empty early-month effective interval
-performs no calculation lookup and therefore does not emit an unavailable or
-incomplete calculation diagnostic.
+Calculation diagnostics use these exact public meanings. Daily diagnostics
+apply to the requested interval; Monthly diagnostics apply to the effective
+evidence interval.
 
 | Code | Retryable | Message |
 |---|---:|---|
@@ -1149,26 +932,14 @@ record, provider-context, lineage, and reconciliation checks retain precedence.
 | `preview_provider_context_incomplete` | false | Authoritative resource context is absent or incompatible; all TABLEFLOW rows use this failure because current inventory cannot prove their provider context. |
 | `preview_mapping_validation_failed` | false | A generated Daily Full row or Monthly Full aggregate does not satisfy the current Full-row mapping profile before Full/Summary/Custom projection. |
 
-Known and fallback-mapped native line types use persisted calculation lineage,
-including organization-wide rows, provider-null promotional allowances, and
-signed refunds. Fallback does not recalculate allocation. TABLEFLOW still
-returns `preview_provider_context_incomplete` because current inventory cannot
-prove its provider context. Missing legacy billing association is recovered
-locally when retained legacy evidence is valid; unreadable or ambiguous legacy
-evidence remains fail-closed. A later ordinary provider gather and calculation
-can establish new current evidence. Missing or invalid lineage returns
-`preview_allocation_lineage_incomplete`; exact cost or quantity shortfall or
-overage returns `preview_source_reconciliation_failed`. These failures are
-non-retryable, carry at most 20 sorted safe correlations, and persist null
-source snapshot and package fields; manifest/file retrieval remains unavailable.
+Fallback-mapped line types still use persisted allocation results; Preview does
+not recalculate them. Missing lineage returns
+`preview_allocation_lineage_incomplete`, and reconciliation differences return
+`preview_source_reconciliation_failed`. These failures expose no package.
 
-Incomplete persisted calculation metadata has precedence over acquisition,
-commercial, currency, source, and mapping diagnostics. `lookback_days` is capped
-at 364 and classifies the current acquisition/recalculation window; it is not a
-retention or reconstruction promise. The explicit repair endpoints above
-reacquire authoritative provider history and run canonical calculation for a
-bounded retained interval; they never create correlation or evidence by editing
-legacy aggregate metadata.
+`lookback_days` defines acquisition eligibility, not retention or guaranteed
+reconstruction. Use historical repair only while the required provider and
+metrics history remains available.
 
 ---
 

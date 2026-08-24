@@ -58,93 +58,48 @@ The settings are evaluated independently.
 
 ## FOCUS Preview evidence
 
-Preview evidence retention runs only for tenants with `focus_preview` enabled.
-During scheduled retention, Chitragupta removes expired raw Cost evidence,
-source-readiness history, allocation-lineage records, and superseded
-organization-authority attempts using the tenant's `retention_days` cutoff.
-Lineage cleanup also reconciles the retained window: a run is removed when its
-calculation identity no longer matches an authoritative calculated pipeline
-state, or when any of its portions no longer has its complete billing-origin
-key. A retained zero-portion or unavailable run remains valid when its
-calculation identity still matches pipeline state. Repeating cleanup after
-success makes no additional changes.
+Preview evidence retention runs only for enabled tenants. It removes expired raw
+Cost evidence, source-readiness history, allocation lineage, and superseded
+organization authority using the tenant's `retention_days` cutoff.
 
-This cleanup is separate from ordinary tenant retention. For enabled tenants,
-readiness reports the latest recorded ordinary cleanup attempt and Preview
-evidence cleanup attempt as two independent structured outcomes. Each outcome
-includes its attempt time, success or failure status, and a redacted diagnostic
-when operator action is required.
+Ordinary tenant cleanup and Preview evidence cleanup have separate readiness
+outcomes. A failed cleanup makes Preview `degraded` without removing existing
+valid packages or blocking unrelated billing, chargeback, inventory, and
+pipeline operations. Follow the readiness diagnostic, restore the affected
+storage or cleanup dependency, and allow a later scheduled cycle to retry.
 
-If Preview evidence cleanup fails, its transaction is rolled back without
-reversing a committed ordinary cleanup. If ordinary cleanup fails, Preview
-evidence cleanup is not started for that cycle. Either recorded failure makes
-Preview `degraded`; inspect the matching readiness diagnostic and worker logs,
-restore the affected storage or cleanup dependency, and allow a later scheduled
-cycle to retry. A later success replaces only the matching failure outcome.
-The other retention outcome and any historical repair state remain unchanged.
-Existing valid Preview data and unrelated billing, chargeback, inventory, and
-pipeline operations remain available while cleanup is degraded.
-
-While disabled, tenants create or access no new Preview evidence and run no
-Preview retention work. Disabling Preview does not delete evidence that was
-already persisted. Re-enabling may reuse or revalidate retained evidence, but
-does not reconstruct evidence already outside the acquisition or retention
-windows.
+Disabling Preview stops new evidence and cleanup work but does not delete
+existing evidence. Re-enabling cannot reconstruct data already outside the
+acquisition or retention windows.
 
 ## Historical repair and retention
 
-Historical repair is limited to dates wholly inside the tenant's current
-effective, acquisition, cutoff, and complete retention intervals. It does not
-extend retention or restore data already deleted by retention. Provider billing
-history and any historical metrics needed by allocation must also remain
-available outside Chitragupta.
+Historical repair is limited to dates inside the tenant's commercial,
+acquisition, cutoff, and retention intervals. It does not extend retention or
+restore provider billing and metrics history that is no longer available.
 
-For each selected date, the authoritative provider result replaces only that
-tenant/date's billing rows. An authoritative empty result removes stale billing
-for that date and still runs the canonical zero-row calculation and validation
-path. Matching chargebacks, pipeline state, source evidence, and allocation
-lineage are updated consistently; data outside the selected tenant/date range
-is preserved. New evidence and lineage then follow the ordinary tenant
-retention policy.
+Repair replaces billing and recalculates only the selected tenant/date scope.
+The matching chargebacks, pipeline state, source evidence, and allocation
+lineage follow the ordinary retention policy. Repair creates no requested
+package or published revision.
 
-Repair operation and per-date statuses are durable. Expected date failures do
-not stop later dates. At startup, queued or running repairs for the exact
-configured tenant owner are marked failed regardless of whether they were
-created in the same whole second; work is not automatically resumed. Retrying
-creates a new operation over the requested range. Repair creates no requested
-package or published revision, so their separate retention lifecycles remain
-unchanged.
+Repair status is durable. Expected failures do not stop later dates. Interrupted
+work is not resumed automatically; submit a new bounded repair after correcting
+the cause. See [Repair retained dates](../focus-mapping-preview.md#repair-retained-dates)
+for the workflow.
 
 ## Preview artifact recovery
 
-Requested packages and published revisions share one durable artifact root but
-keep separate metadata lifecycles. New packages use an opaque versioned
-namespace derived from ecosystem, provider tenant ID, and the configured
-storage backend. The display tenant name is not part of that storage identity,
-so renaming a configured tenant does not move its packages; two databases with
-the same provider tenant ID remain isolated.
+Requested packages and published revisions share the configured artifact root
+but keep separate lifecycles. Chitragupta automatically cleans interrupted
+writes and preserves any package that is still referenced or cannot be verified
+safely.
 
-Publication writes and synchronizes a staging package, atomically finalizes it,
-and holds one package lock until the request or revision metadata commit
-finishes. Same-process retries and restart recovery remove interrupted staging
-work. Finalized packages are removed only after an owner-scoped metadata
-snapshot misses the package and a fresh authoritative reference check under the
-same stable package lock also reports it unreferenced. A live publisher,
-reference-query failure, deletion failure, or synchronization failure preserves
-or defers work for a later recovery attempt rather than treating cleanup as
-successful.
-
-Recovery preserves every package referenced by request or revision metadata,
-including referenced packages created by an older release. Legacy or otherwise
-unverifiable finalized paths are not automatically deleted. Request expiry
-still blocks downloads before deleting bytes, and revision retention still
-hides eligible revisions before package deletion and retries pending cleanup
-after later cycles or restarts.
-
-Request startup recovery uses durable worker ownership and lease state rather
-than creation-time ordering. An unowned incomplete request is recoverable even
-when it was created in the same whole second as startup; a live owned lease
-remains protected.
+Do not edit or delete files inside `preview.artifact_root` directly. If recovery
+cannot verify the database and artifact root together, affected requested-package
+operations return `FOCUS Mapping Preview recovery is unavailable`. Restore both
+from the same backup or correct storage access, then retry. See
+[Preview troubleshooting](troubleshooting.md#focus-mapping-preview-is-upgrading-degraded-or-unavailable).
 
 ## Requested FOCUS Preview packages
 
@@ -196,15 +151,8 @@ protected.
 
 Cleanup runs only as part of scheduled periodic processing. It first makes each
 eligible revision unavailable to public history and direct downloads, then
-removes its package, and finally removes its metadata. If package removal fails,
-the revision stays unavailable and pending cleanup. Later periodic runs retry
-it, including after a service restart. Pending retries are ordered by durable
-`retention_retry_count`, original `retention_pending_at`, and `revision_id`.
-Each failure increments the retry count without fabricating a later pending
-timestamp. Deferral and deletion use compare-and-set checks over the candidate
-owner, revision, storage key, pending timestamp, and retry count so stale work
-cannot delete or reorder a changed revision. An already-absent package is
-treated as success so cleanup can finish.
+removes its package, and finally removes its metadata. Failed removals remain
+unavailable and are retried by later periodic runs, including after restart.
 
 Scheduled publication does not seed months that are already outside this
 retention window. `lookback_days` still controls acquisition and recalculation;

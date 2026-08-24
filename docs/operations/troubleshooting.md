@@ -380,6 +380,15 @@ operations remain independent.
 The request diagnostic is non-retryable with the same limit. Scheduled
 publication creates no revision and leaves the current pointer unchanged.
 
+### `preview_csv_row_exceeds_file_size_limit`
+
+**Cause**: `preview.max_csv_file_bytes` is smaller than the repeated CSV header
+plus one complete row. Rows are never split across files.
+
+**Fix**: Increase `preview.max_csv_file_bytes` enough to hold the header and the
+largest row, or set it to `null` to emit one CSV file. Retry the requested
+package; scheduled publication reevaluates the month on a later periodic cycle.
+
 ### `HTTP 409 Conflict` on `POST /api/v1/tenants/{name}/pipeline/run`
 
 **Cause**: Pipeline is already running for that tenant.
