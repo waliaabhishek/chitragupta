@@ -66,7 +66,7 @@ tenants:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `cluster_id` | string | required | Logical Chitragupta resource ID for the cluster; it is not the Prometheus target selector |
-| `metrics_identifier` | string | required | Operator-defined value used to select this cluster's Prometheus targets |
+| `metrics_identifier` | string | required | Unique per-cluster Prometheus target value using only letters, digits, `.`, `_`, `-`, or `:` |
 | `metrics_identifier_label` | string | `kafka_cluster_id` | Prometheus target-label name carrying `metrics_identifier` |
 | `broker_count` | int | required | Number of brokers (for compute cost) |
 | `region` | string | optional | Region for cost override lookup |
