@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from fastapi.testclient import TestClient  # noqa: TC002
+from sqlalchemy import create_engine, inspect
 
 from core.models.chargeback import ChargebackRow, CostType
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend  # noqa: TC001
@@ -31,6 +32,36 @@ class TestListChargebacks:
         assert len(data["items"]) == 1
         assert data["items"][0]["identity_id"] == "user-1"
         assert data["items"][0]["amount"] == "10.00"
+
+    def test_ccloud_metadata_does_not_create_or_read_self_managed_team_snapshot(
+        self, app_with_ccloud_backend: TestClient, in_memory_ccloud_backend: SQLModelBackend
+    ) -> None:
+        row = ChargebackRow(
+            ecosystem="test-eco",
+            tenant_id="test-tenant",
+            timestamp=datetime(2026, 8, 1, tzinfo=UTC),
+            resource_id="lkc-1",
+            product_category="kafka",
+            product_type="KAFKA_STORAGE",
+            identity_id="sa-1",
+            cost_type=CostType.USAGE,
+            amount=Decimal("10.00"),
+            allocation_method="direct",
+            metadata={"env_id": "env-1", "team": "not-a-ccloud-field"},
+        )
+        with in_memory_ccloud_backend.create_unit_of_work() as uow:
+            uow.chargebacks.upsert(row)
+            uow.commit()
+
+        response = app_with_ccloud_backend.get("/api/v1/tenants/test-tenant/chargebacks")
+        assert response.status_code == 200
+        assert response.json()["items"][0]["metadata"] == {"env_id": "env-1"}
+
+        engine = create_engine(in_memory_ccloud_backend._connection_string)  # noqa: SLF001
+        try:
+            assert "self_managed_kafka_principal_team_snapshots" not in inspect(engine).get_table_names()
+        finally:
+            engine.dispose()
 
     def test_list_chargebacks_filter_by_identity(
         self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend

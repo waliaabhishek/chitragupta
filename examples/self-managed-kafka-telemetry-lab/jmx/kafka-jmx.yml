@@ -1,0 +1,88 @@
+---
+hostPort: __JMX_HOST__:9999
+ssl: false
+excludeJvmMetrics: true
+includeObjectNames:
+  - "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"
+  - "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec"
+  - "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec,topic=*"
+  - "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec,topic=*"
+  - "kafka.log:type=Log,name=Size,topic=*,partition=*"
+  - "kafka.server:type=Produce,user=*"
+  - "kafka.server:type=Produce,client-id=*"
+  - "kafka.server:type=Produce,user=*,client-id=*"
+  - "kafka.server:type=Fetch,user=*"
+  - "kafka.server:type=Fetch,client-id=*"
+  - "kafka.server:type=Fetch,user=*,client-id=*"
+includeObjectNameAttributes: {}
+rules:
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=BytesInPerSec><>Count: .*'
+    name: kafka_server_brokertopicmetrics_alltopics_bytesin_total
+    type: COUNTER
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=BytesOutPerSec><>Count: .*'
+    name: kafka_server_brokertopicmetrics_alltopics_bytesout_total
+    type: COUNTER
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=BytesInPerSec, topic=(.+)><>Count: .*'
+    name: kafka_server_brokertopicmetrics_bytesin_total
+    labels:
+      topic: "$1"
+    type: COUNTER
+  - pattern: 'kafka.server<type=BrokerTopicMetrics, name=BytesOutPerSec, topic=(.+)><>Count: .*'
+    name: kafka_server_brokertopicmetrics_bytesout_total
+    labels:
+      topic: "$1"
+    type: COUNTER
+  - pattern: 'kafka.log<type=Log, name=Size, topic=(.+), partition=(.+)><>Value: .*'
+    name: kafka_log_log_size
+    labels:
+      partition: "$2"
+      topic: "$1"
+    type: GAUGE
+  - pattern: 'kafka.server<type=(Produce|Fetch), user=(.+), client-id=(.+)><>byte-rate: .*'
+    name: kafka_server_quota_byte_rate
+    labels:
+      quota_type: "$1"
+      quota_scope: user-client
+      client_id: "$3"
+      user: "$2"
+    type: GAUGE
+  - pattern: 'kafka.server<type=(Produce|Fetch), user=(.+), client-id=(.+)><>throttle-time: .*'
+    name: kafka_server_quota_throttle_time_ms
+    labels:
+      quota_type: "$1"
+      quota_scope: user-client
+      client_id: "$3"
+      user: "$2"
+    type: GAUGE
+  - pattern: 'kafka.server<type=(Produce|Fetch), user=(.+)><>byte-rate: .*'
+    name: kafka_server_quota_byte_rate
+    labels:
+      quota_type: "$1"
+      quota_scope: user
+      user: "$2"
+      client_id: not_applicable
+    type: GAUGE
+  - pattern: 'kafka.server<type=(Produce|Fetch), client-id=(.+)><>byte-rate: .*'
+    name: kafka_server_quota_byte_rate
+    labels:
+      quota_type: "$1"
+      quota_scope: client-id
+      user: not_applicable
+      client_id: "$2"
+    type: GAUGE
+  - pattern: 'kafka.server<type=(Produce|Fetch), user=(.+)><>throttle-time: .*'
+    name: kafka_server_quota_throttle_time_ms
+    labels:
+      quota_type: "$1"
+      quota_scope: user
+      user: "$2"
+      client_id: not_applicable
+    type: GAUGE
+  - pattern: 'kafka.server<type=(Produce|Fetch), client-id=(.+)><>throttle-time: .*'
+    name: kafka_server_quota_throttle_time_ms
+    labels:
+      quota_type: "$1"
+      quota_scope: client-id
+      user: not_applicable
+      client_id: "$2"
+    type: GAUGE

@@ -140,7 +140,7 @@ the actual output portions keyed to each existing `CCloudBillingLineItem` origin
 Repositories without the capability retain the ordinary calculation path
 unchanged. This storage extension records calculation evidence only; it does not
 change handler selection, allocator behavior, chargeback output, or generic CSV
-export. Migration 021 owns the Confluent source-association and lineage tables.
+export.
 
 ## Lifecycle
 

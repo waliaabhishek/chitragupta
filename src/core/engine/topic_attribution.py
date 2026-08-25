@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.engine.orchestrator import RetryChecker
+    from core.engine.topic_attribution_provider import TopicAttributionProvider
     from core.metrics.protocol import MetricsSource
     from core.models.billing import BillingLineItem
     from core.models.metrics import MetricQuery
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 from core.engine.topic_attribution_models import (
     TopicAttributionConfigProtocol,
     TopicAttributionContext,
+    TopicAttributionOutputConfigProtocol,
     resolve_topic_attribution_models,
 )
 
@@ -82,9 +84,10 @@ class TopicAttributionPhase:
         ecosystem: str,
         tenant_id: str,
         metrics_source: MetricsSource | None,
-        config: TopicAttributionConfigProtocol,
+        config: TopicAttributionConfigProtocol | TopicAttributionOutputConfigProtocol,
         metrics_step: timedelta,
         retry_checker: RetryChecker | None = None,
+        provider: TopicAttributionProvider | None = None,
     ) -> None:
         self._ecosystem = ecosystem
         self._tenant_id = tenant_id
@@ -92,15 +95,25 @@ class TopicAttributionPhase:
         self._config = config
         self._metrics_step = metrics_step
         self._retry_checker = retry_checker
-        self._topic_filter = _build_topic_filter(config.exclude_topic_patterns)
-        self._attribution_models = resolve_topic_attribution_models(config.cost_mapping_overrides)
-        self._metric_queries = build_metric_queries(config.metric_name_overrides)
+        self._provider = provider
+        if provider is None:
+            assert isinstance(config, TopicAttributionConfigProtocol)
+            self._topic_filter = _build_topic_filter(config.exclude_topic_patterns)
+            self._attribution_models = resolve_topic_attribution_models(config.cost_mapping_overrides)
+            self._metric_queries = build_metric_queries(config.metric_name_overrides)
+        else:
+            self._topic_filter = lambda _topic_name: True
+            self._attribution_models = {}
+            self._metric_queries = []
 
     def run(self, uow: UnitOfWork, tracking_date: date) -> int:
         """Compute topic attribution for all Kafka clusters on tracking_date.
 
         Returns count of attribution rows written.
         """
+        if self._provider is not None:
+            return self._run_provider(uow, tracking_date)
+
         billing_lines = uow.billing.find_by_date(self._ecosystem, self._tenant_id, tracking_date)
 
         clusters: dict[tuple[str, str], list[BillingLineItem]] = {}
@@ -133,6 +146,74 @@ class TopicAttributionPhase:
                 tracking_date,
             )
         return count
+
+    def _run_provider(self, uow: UnitOfWork, tracking_date: date) -> int:
+        """Run an ecosystem-owned strategy while preserving date-level atomicity."""
+        assert self._provider is not None
+        billing_lines = uow.billing.find_by_date(self._ecosystem, self._tenant_id, tracking_date)
+
+        clusters: dict[tuple[str, str], list[BillingLineItem]] = {}
+        for line in billing_lines:
+            if line.product_type not in self._provider.supported_product_types:
+                continue
+            env_id = getattr(line, "env_id", "")
+            clusters.setdefault((line.resource_id, env_id), []).append(line)
+
+        all_rows: list[TopicAttributionRow] = []
+        any_pending = False
+        for (cluster_id, env_id), lines in clusters.items():
+            first_line = lines[0]
+            billing_start = first_line.timestamp
+            billing_end = billing_start + _granularity_to_duration(first_line.granularity)
+            resource_topics = self._get_cluster_topics(uow, cluster_id, billing_start, billing_end)
+            outcome = self._provider.attribute_cluster(
+                tenant_id=self._tenant_id,
+                cluster_resource_id=cluster_id,
+                env_id=env_id,
+                billing_lines=lines,
+                resource_topics=resource_topics,
+                metrics_step=self._metrics_step,
+            )
+            all_rows.extend(outcome.rows)
+            retry_rows, retry_pending = self._handle_retry_lines(
+                outcome.retry_lines,
+                cluster_id,
+                env_id,
+                tracking_date,
+            )
+            all_rows.extend(retry_rows)
+            any_pending = any_pending or retry_pending
+
+        if any_pending:
+            return 0
+
+        if self._provider.replace_date_on_completion:
+            uow.topic_attributions.delete_by_date(self._ecosystem, self._tenant_id, tracking_date)
+        count = uow.topic_attributions.upsert_batch(all_rows) if all_rows else 0
+        uow.pipeline_state.mark_topic_attribution_calculated(
+            self._ecosystem,
+            self._tenant_id,
+            tracking_date,
+        )
+        return count
+
+    def _handle_retry_lines(
+        self,
+        billing_lines: tuple[BillingLineItem, ...],
+        cluster_id: str,
+        env_id: str,
+        tracking_date: date,
+    ) -> tuple[list[TopicAttributionRow], bool]:
+        """Terminalize provider retries per line while retaining date-level atomicity."""
+        terminal_rows: list[TopicAttributionRow] = []
+        any_pending = False
+        for line in billing_lines:
+            rows = self._handle_cluster_metrics_failure([line], cluster_id, env_id, tracking_date)
+            if rows is None:
+                any_pending = True
+            else:
+                terminal_rows.extend(rows)
+        return terminal_rows, any_pending
 
     def _attribute_cluster(
         self,
@@ -167,6 +248,7 @@ class TopicAttributionPhase:
             )
             return []
 
+        assert isinstance(self._config, TopicAttributionConfigProtocol)
         rows: list[TopicAttributionRow] = []
         for line in billing_lines:
             model = self._attribution_models.get(line.product_type)

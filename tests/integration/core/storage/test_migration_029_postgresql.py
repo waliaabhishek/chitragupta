@@ -5,6 +5,7 @@ import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -534,6 +535,7 @@ def test_postgresql_downgrade_to_004_preserves_no_conflict_billing_data(
         env_id="env-1",
     )
 
+    config.cmd_opts = SimpleNamespace(x=["plugin_storage=disabled"])
     command.downgrade(config, "004")
 
     assert _version(postgresql_schema_url) == "004"

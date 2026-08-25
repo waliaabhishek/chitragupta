@@ -24,10 +24,11 @@ import type { TopicAttributionResponse } from "../../types/api";
 interface TopicAttributionGridProps {
   tenantName: string;
   filters: Record<string, string>;
+  showExcluded?: boolean;
   ref?: Ref<AgGridReact>;
 }
 
-const columnDefs: ColDef[] = [
+const baseColumnDefs: ColDef[] = [
   {
     field: "timestamp",
     headerName: "Date",
@@ -94,6 +95,7 @@ function createDatasource(
 export function TopicAttributionGrid({
   tenantName,
   filters,
+  showExcluded = false,
   ref,
 }: TopicAttributionGridProps): React.JSX.Element {
   const internalRef = useRef<AgGridReact>(null);
@@ -109,6 +111,18 @@ export function TopicAttributionGrid({
   const datasource = useMemo(
     () => createDatasource(tenantName, filters, abortControllerRef),
     [tenantName, filters],
+  );
+
+  const columnDefs = useMemo(
+    () =>
+      showExcluded
+        ? [
+            ...baseColumnDefs.slice(0, 3),
+            { field: "is_excluded", headerName: "Excluded", width: 100 },
+            ...baseColumnDefs.slice(3),
+          ]
+        : baseColumnDefs,
+    [showExcluded],
   );
 
   useEffect(() => {

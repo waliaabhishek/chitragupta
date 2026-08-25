@@ -77,3 +77,28 @@ def test_allocator_params_int_and_bool_parse(tmp_path: Path) -> None:
     params = cfg.tenants["t1"].plugin_settings.allocator_params
     assert params["min_bytes_threshold"] == 1073741824
     assert params["fallback_to_even_split"] is True
+
+
+class TestSelfManagedKafkaTelemetryLabIsolation:
+    LAB_DIR = Path(__file__).parents[1] / "examples" / "self-managed-kafka-telemetry-lab"
+
+    def test_self_managed_full_config_does_not_reference_lab_generated_state(self) -> None:
+        source = SELF_MANAGED_FULL.read_text(encoding="utf-8")
+
+        for unexpected_reference in (
+            "self-managed-kafka-telemetry-lab",
+            "generated/",
+            "evidence/",
+            "client.properties",
+            ".jaas",
+        ):
+            assert unexpected_reference not in source
+
+    def test_lab_gitignore_keeps_generated_credentials_and_evidence_local(self) -> None:
+        gitignore_path = self.LAB_DIR / ".gitignore"
+        assert gitignore_path.exists(), f"Expected {gitignore_path} to exist"
+
+        source = gitignore_path.read_text(encoding="utf-8")
+
+        for ignored_path in (".env", "generated/", "evidence/"):
+            assert ignored_path in source

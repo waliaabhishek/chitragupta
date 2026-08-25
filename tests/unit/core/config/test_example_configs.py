@@ -186,3 +186,110 @@ class TestCCloudExamples:
 class TestSelfManagedExamples:
     def test_self_managed_full(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _load(EXAMPLES_DIR / "self-managed-full" / "config.yaml", PROM_ENV, monkeypatch)
+
+    def test_self_managed_full_declares_a_prometheus_scope_selector_separate_from_logical_cluster_id(self) -> None:
+        source = (EXAMPLES_DIR / "self-managed-full" / "config.yaml").read_text(encoding="utf-8")
+
+        assert "metrics_identifier:" in source
+        assert "metrics_identifier_label: kafka_cluster_id" in source
+        assert "Prometheus target label" in source
+
+    def test_self_managed_operator_docs_do_not_describe_broker_topic_metrics_as_principal_evidence(self) -> None:
+        documents = (
+            Path("docs/configuration/self-managed-reference.md").read_text(encoding="utf-8"),
+            Path("docs/configuration/guide.md").read_text(encoding="utf-8"),
+            (EXAMPLES_DIR / "self-managed-full" / "README.md").read_text(encoding="utf-8"),
+        )
+        config = (EXAMPLES_DIR / "self-managed-full" / "config.yaml").read_text(encoding="utf-8")
+
+        assert all("metrics_identifier" in source for source in documents)
+        assert "metrics_identifier" in config
+        assert "metrics_identifier_label: kafka_cluster_id" in config
+        assert all("principal label on BrokerTopicMetrics" not in source for source in documents)
+        assert all("quota" in source.lower() for source in documents)
+
+    def test_self_managed_full_example_documents_a_parseable_alias_template_without_changing_default_resolution(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        config_path = EXAMPLES_DIR / "self-managed-full" / "config.yaml"
+        monkeypatch.setenv("PROMETHEUS_URL", "http://localhost:9090")
+        app_config = load_config(config_path)
+        source = config_path.read_text(encoding="utf-8")
+        tenant = app_config.tenants["kafka-dc1"]
+        plugin_config = SelfManagedKafkaConfig.from_plugin_settings(tenant.plugin_settings.model_dump())
+
+        assert plugin_config.metric_name_overrides == {}
+        assert plugin_config.label_name_overrides == {}
+        assert "metric_name_overrides:" in source
+        assert "kafka_log_log_size: company_kafka_partition_size" in source
+        assert "label_name_overrides:" in source
+        assert "partition: partition_number" in source
+
+    def test_self_managed_reference_documents_alias_scope_checker_and_unsupported_transformations(self) -> None:
+        source = Path("docs/configuration/self-managed-reference.md").read_text(encoding="utf-8")
+
+        for required_text in (
+            "metric_name_overrides",
+            "label_name_overrides",
+            "metrics_identifier_label",
+            "--check-self-managed-telemetry",
+            "not_observed",
+            "inconclusive",
+            "label-value mapping",
+            "arbitrary PromQL",
+        ):
+            assert required_text in source
+
+
+class TestSelfManagedKafkaTelemetryLabExample:
+    LAB_DIR = EXAMPLES_DIR / "self-managed-kafka-telemetry-lab"
+
+    def test_lab_example_contains_required_assets(self) -> None:
+        required_paths = (
+            self.LAB_DIR / "README.md",
+            self.LAB_DIR / ".gitignore",
+            self.LAB_DIR / ".env.example",
+            self.LAB_DIR / "docker-compose.yml",
+            self.LAB_DIR / "contracts" / "metric-contract.yaml",
+            self.LAB_DIR / "jmx" / "kafka-jmx.yml",
+            self.LAB_DIR / "prometheus" / "prometheus.yml.template",
+            self.LAB_DIR / "workloads" / "workloads.yaml",
+            self.LAB_DIR / "scripts" / "lab.sh",
+            self.LAB_DIR / "scripts" / "generate_local_config.py",
+            self.LAB_DIR / "scripts" / "setup_kafka.sh",
+            self.LAB_DIR / "scripts" / "workload.sh",
+            self.LAB_DIR / "scripts" / "JmxDump.java",
+            self.LAB_DIR / "scripts" / "capture_evidence.py",
+            self.LAB_DIR / "scripts" / "validate_evidence.py",
+        )
+
+        missing = [str(path.relative_to(self.LAB_DIR)) for path in required_paths if not path.exists()]
+
+        assert not missing, f"Missing lab assets: {missing}"
+
+    def test_lab_readme_documents_standalone_lifecycle_commands(self) -> None:
+        readme_path = self.LAB_DIR / "README.md"
+        assert readme_path.exists(), f"Expected {readme_path} to exist"
+
+        source = readme_path.read_text(encoding="utf-8")
+
+        assert "local-only" in source or "local only" in source
+        assert "docker-compose" in source
+        assert "docker compose" not in source
+
+        for command in (
+            "./scripts/lab.sh prereq",
+            "./scripts/lab.sh start",
+            "./scripts/lab.sh ready",
+            "./scripts/lab.sh workload start",
+            "./scripts/lab.sh workload stop",
+            "./scripts/lab.sh workload status",
+            "./scripts/lab.sh validate --window 5m",
+            "./scripts/lab.sh evidence",
+            "./scripts/lab.sh stop",
+            "./scripts/lab.sh cleanup",
+            "./scripts/lab.sh validate --window 5m --require-recreated-state",
+        ):
+            assert command in source, f"Expected README to document `{command}`"

@@ -1,0 +1,17 @@
+{"object_name":"kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec","attribute":"Count","value":32768}
+{"object_name":"kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec","attribute":"Count","value":24576}
+{"object_name":"kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec,topic=shared-topic","attribute":"Count","value":16384}
+{"object_name":"kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec,topic=shared-topic","attribute":"Count","value":12288}
+{"object_name":"kafka.log:type=Log,name=Size,topic=shared-topic,partition=0","attribute":"Value","value":24576}
+{"object_name":"kafka.server:type=Produce,user=user-only","attribute":"byte-rate","value":8192}
+{"object_name":"kafka.server:type=Produce,user=user-only","attribute":"throttle-time","value":0}
+{"object_name":"kafka.server:type=Fetch,user=user-only","attribute":"byte-rate","value":8192}
+{"object_name":"kafka.server:type=Fetch,user=user-only","attribute":"throttle-time","value":0}
+{"object_name":"kafka.server:type=Produce,client-id=client-only","attribute":"byte-rate","value":65536}
+{"object_name":"kafka.server:type=Produce,client-id=client-only","attribute":"throttle-time","value":0}
+{"object_name":"kafka.server:type=Fetch,client-id=client-only","attribute":"byte-rate","value":65536}
+{"object_name":"kafka.server:type=Fetch,client-id=client-only","attribute":"throttle-time","value":0}
+{"object_name":"kafka.server:type=Produce,user=shared-user,client-id=shared-client","attribute":"byte-rate","value":131072}
+{"object_name":"kafka.server:type=Produce,user=shared-user,client-id=shared-client","attribute":"throttle-time","value":9}
+{"object_name":"kafka.server:type=Fetch,user=shared-user,client-id=shared-client","attribute":"byte-rate","value":65536}
+{"object_name":"kafka.server:type=Fetch,user=shared-user,client-id=shared-client","attribute":"throttle-time","value":6}

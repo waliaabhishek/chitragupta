@@ -1,0 +1,14 @@
+{
+  "response": {
+    "status": "success",
+    "data": {
+      "resultType": "matrix",
+      "result": [
+        {
+          "metric": {"__name__": "kafka_server_quota_byte_rate", "lab_cluster": "cluster-a", "kafka_cluster_id": "kraft-a-001", "broker": "1", "quota_type": "Produce", "quota_scope": "user", "user": "user-only", "client_id": "not_applicable"},
+          "values": [[1787097540, "100"], [1787097600, "100"], [1787097660, "100"], [1787097720, "100"]]
+        }
+      ]
+    }
+  }
+}

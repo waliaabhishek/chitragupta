@@ -1,12 +1,97 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from core.metrics.protocol import MetricsQueryError
+from core.models import MetricQuery, MetricRow
 from main import parse_args
+
+
+class _CheckerSource:
+    """MetricsSource double used by production checker CLI-path tests."""
+
+    def __init__(self, *, failure_key: str | None = None) -> None:
+        self.failure_key = failure_key
+        self.closed = False
+        self.calls: list[tuple[MetricQuery, datetime, datetime, timedelta, str | None]] = []
+
+    def query(
+        self,
+        queries: Sequence[MetricQuery],
+        start: datetime,
+        end: datetime,
+        step: timedelta = timedelta(hours=1),
+        resource_id_filter: str | None = None,
+    ) -> dict[str, list[MetricRow]]:
+        assert len(queries) == 1
+        [query] = queries
+        self.calls.append((query, start, end, step, resource_id_filter))
+        if query.key == self.failure_key:
+            raise MetricsQueryError("Prometheus unavailable")
+        selector_label = query.resource_label or "deployment"
+        selector_value = resource_id_filter or ""
+        labels = {
+            label: (
+                selector_value
+                if label == selector_label
+                else "1"
+                if label == "broker"
+                else "orders"
+                if label == "topic"
+                else "0"
+                if label == "partition"
+                else "Produce"
+                if label == "quota_type"
+                else "user"
+                if label == "quota_scope"
+                else "alice"
+                if label == "user"
+                else "client-a"
+                if label == "client_id"
+                else "value"
+            )
+            for label in query.label_keys
+        }
+        metric_name = query.query_expression.split("{", 1)[0]
+        source_series = tuple(sorted({"__name__": metric_name, **labels}.items()))
+        return {
+            query.key: [
+                MetricRow(
+                    timestamp=end,
+                    metric_key=query.key,
+                    value=1.0,
+                    labels=labels,
+                    source_series=source_series,
+                )
+            ]
+        }
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _checker_tenant_settings(cluster_id: str, metrics_identifier: str) -> dict[str, object]:
+    return {
+        "cluster_id": cluster_id,
+        "metrics_identifier": metrics_identifier,
+        "metrics_identifier_label": "deployment",
+        "broker_count": 3,
+        "cost_model": {
+            "compute_hourly_rate": "0.10",
+            "storage_per_gib_hourly": "0.0001",
+            "network_ingress_per_gib": "0.01",
+            "network_egress_per_gib": "0.02",
+        },
+        "metrics": {"url": "http://prometheus:9090"},
+        "identity_source": {"source": "prometheus"},
+        "topic_attribution": {"enabled": True, "compute_policy": "shared_even_v1"},
+    }
 
 
 class TestParseArgs:
@@ -563,6 +648,564 @@ class TestNewCLIFlags:
         assert args.env_file == ".env"
         assert args.run_once is True
         assert args.mode == "api"
+
+
+class TestSelfManagedTelemetryCheckCLI:
+    @pytest.mark.parametrize(
+        ("other_args", "conflicting_option"),
+        [
+            (["--validate"], "--validate"),
+            (["--show-config"], "--show-config"),
+            (["--run-once"], "--run-once"),
+            (["--emit-once"], "--emit-once"),
+            (["--mode", "worker"], "--mode"),
+            (["--mode", "api"], "--mode"),
+            (["--mode", "both"], "--mode"),
+            (["--mode=worker"], "--mode"),
+            (["--mode=api"], "--mode"),
+            (["--mode=both"], "--mode"),
+        ],
+    )
+    def test_checker_flag_rejects_each_terminal_action_with_argparse_error_contract(
+        self,
+        other_args: list[str],
+        conflicting_option: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with pytest.raises(SystemExit) as raised:
+            parse_args(["--config-file", "config.yaml", "--check-self-managed-telemetry", *other_args])
+
+        assert raised.value.code == 2
+        assert capsys.readouterr().err.endswith(
+            f"error: --check-self-managed-telemetry cannot be combined with {conflicting_option}\n"
+        )
+
+    def test_checker_flag_allows_config_and_environment_inputs_without_an_explicit_mode(self) -> None:
+        args = parse_args(
+            [
+                "--config-file",
+                "config.yaml",
+                "--env-file",
+                ".env",
+                "--check-self-managed-telemetry",
+            ]
+        )
+
+        assert args.check_self_managed_telemetry is True
+        assert args.config_file == "config.yaml"
+        assert args.env_file == ".env"
+        assert args.mode == "worker"
+
+    def test_preexisting_flag_combinations_remain_parser_compatible_without_checker_flag(self) -> None:
+        args = parse_args(["--config-file", "config.yaml", "--run-once", "--emit-once", "--mode", "both"])
+
+        assert args.run_once is True
+        assert args.emit_once is True
+        assert args.mode == "both"
+
+    @patch("main.load_config")
+    def test_checker_exits_before_pipeline_dependencies_when_no_self_managed_tenant_exists(
+        self,
+        mock_load: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings, TenantConfig
+        from main import main
+
+        mock_load.return_value = AppSettings(
+            tenants={"cloud": TenantConfig(ecosystem="confluent_cloud", tenant_id="cloud-tenant")}
+        )
+
+        with patch("main._create_runner") as create_runner, pytest.raises(SystemExit) as raised:
+            main(["--config-file", "config.yaml", "--check-self-managed-telemetry"])
+
+        assert raised.value.code == 2
+        assert capsys.readouterr().err == "error: no self-managed Kafka tenant is configured\n"
+        create_runner.assert_not_called()
+
+    @patch("main.load_config")
+    def test_checker_validates_every_selected_tenant_before_constructing_a_prometheus_source(
+        self,
+        mock_load: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, StorageConfig, TenantConfig
+        from main import main
+
+        invalid = {
+            "cluster_id": "cluster-a",
+            "metrics_identifier": "kafka-a",
+            "metrics_identifier_label": "not-a-label",
+            "broker_count": 3,
+            "cost_model": {
+                "compute_hourly_rate": "0.10",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
+            },
+            "metrics": {"url": "http://prometheus:9090"},
+        }
+        valid = {**invalid, "cluster_id": "cluster-b", "metrics_identifier_label": "deployment"}
+        mock_load.return_value = AppSettings(
+            tenants={
+                "first": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="tenant-a",
+                    storage=StorageConfig(connection_string="sqlite:///first-check.db"),
+                    plugin_settings=PluginSettingsBase.model_validate(invalid),
+                ),
+                "second": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="tenant-b",
+                    storage=StorageConfig(connection_string="sqlite:///second-check.db"),
+                    plugin_settings=PluginSettingsBase.model_validate(valid),
+                ),
+            }
+        )
+
+        with (
+            patch("plugins.self_managed_kafka.telemetry_check.create_metrics_source") as create_source,
+            patch("main._create_runner") as create_runner,
+            pytest.raises(SystemExit) as raised,
+        ):
+            main(["--config-file", "config.yaml", "--check-self-managed-telemetry"])
+
+        assert raised.value.code == 1
+        assert "Telemetry check configuration failed:" in capsys.readouterr().err
+        create_source.assert_not_called()
+        create_runner.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("selector_label", "field_path", "value", "expected_selector", "category", "reason"),
+        [
+            (None, "compute_hourly_rate", "-0.125", "kafka_cluster_id=kafka-a", "compute", "negative"),
+            (
+                "deployment",
+                "region_overrides.us-west-2.network_egress_per_gib",
+                "Infinity",
+                "deployment=kafka-a",
+                "network_egress",
+                "non_finite",
+            ),
+        ],
+    )
+    @patch("plugins.self_managed_kafka.telemetry_check.create_metrics_source")
+    @patch("main.load_config")
+    def test_checker_invalid_rates_use_sanitized_tenant_diagnostics(
+        self,
+        mock_load: MagicMock,
+        create_source: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        selector_label: str | None,
+        field_path: str,
+        value: str,
+        expected_selector: str,
+        category: str,
+        reason: str,
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, StorageConfig, TenantConfig
+        from main import main
+
+        settings = _checker_tenant_settings("cluster-a", "kafka-a")
+        if selector_label is None:
+            settings.pop("metrics_identifier_label")
+        else:
+            settings["metrics_identifier_label"] = selector_label
+        cost_model = settings["cost_model"]
+        assert isinstance(cost_model, dict)
+        if field_path.startswith("region_overrides"):
+            cost_model["region_overrides"] = {"us-west-2": {field_path.rsplit(".", maxsplit=1)[1]: value}}
+        else:
+            cost_model[field_path] = value
+        mock_load.return_value = AppSettings(
+            tenants={
+                "kafka-prod": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="tenant-check",
+                    storage=StorageConfig(connection_string="sqlite:///checker-invalid-rate.db"),
+                    plugin_settings=PluginSettingsBase.model_validate(settings),
+                )
+            }
+        )
+
+        with pytest.raises(SystemExit) as raised:
+            main(["--config-file", "config.yaml", "--check-self-managed-telemetry"])
+
+        assert raised.value.code == 1
+        detail = capsys.readouterr().err
+        assert "Telemetry check configuration failed:" in detail
+        assert "invalid_self_managed_cost_rate" in detail
+        assert "tenant=tenant-check" in detail
+        assert "cluster=cluster-a" in detail
+        assert f"selector={expected_selector}" in detail
+        assert f"field=cost_model.{field_path}" in detail
+        assert f"category={category}" in detail
+        assert f"reason={reason}" in detail
+        assert "date=" not in detail
+        assert value not in detail
+        assert "http://prometheus:9090" not in detail
+        create_source.assert_not_called()
+
+    @patch("main.load_config")
+    def test_checker_main_path_continues_after_source_construction_failure_without_starting_runtime(
+        self,
+        mock_load: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import json
+
+        from core.config.models import AppSettings, PluginSettingsBase, StorageConfig, TenantConfig
+        from main import main
+
+        class Source:
+            def __init__(self) -> None:
+                self.closed = False
+                self.calls: list[object] = []
+
+            def query(
+                self,
+                queries: Sequence[MetricQuery],
+                start: datetime,
+                end: datetime,
+                step: timedelta = timedelta(hours=1),
+                resource_id_filter: str | None = None,
+            ) -> dict[str, list[MetricRow]]:
+                del start, end, step, resource_id_filter
+                assert len(queries) == 1
+                [query] = queries
+                self.calls.append(query)
+                return {query.key: []}
+
+            def close(self) -> None:
+                self.closed = True
+
+        plugin_settings = {
+            "cluster_id": "cluster-a",
+            "metrics_identifier": "kafka-a",
+            "metrics_identifier_label": "deployment",
+            "broker_count": 3,
+            "cost_model": {
+                "compute_hourly_rate": "0.10",
+                "storage_per_gib_hourly": "0.0001",
+                "network_ingress_per_gib": "0.01",
+                "network_egress_per_gib": "0.02",
+            },
+            "metrics": {"url": "http://prometheus:9090"},
+            "identity_source": {"source": "static"},
+        }
+        mock_load.return_value = AppSettings(
+            tenants={
+                "first": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="tenant-a",
+                    storage=StorageConfig(connection_string="sqlite:///first-check.db"),
+                    plugin_settings=PluginSettingsBase.model_validate(plugin_settings),
+                ),
+                "second": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="tenant-b",
+                    storage=StorageConfig(connection_string="sqlite:///second-check.db"),
+                    plugin_settings=PluginSettingsBase.model_validate(
+                        {**plugin_settings, "cluster_id": "cluster-b", "metrics_identifier": "kafka-b"}
+                    ),
+                ),
+            }
+        )
+        source = Source()
+
+        with (
+            patch(
+                "plugins.self_managed_kafka.telemetry_check.create_metrics_source",
+                side_effect=[RuntimeError("first unavailable"), source],
+            ) as create_source,
+            patch("main._create_runner") as create_runner,
+            patch("main._build_storage") as build_storage,
+            pytest.raises(SystemExit) as raised,
+        ):
+            main(["--config-file", "config.yaml", "--check-self-managed-telemetry"])
+
+        assert raised.value.code == 1
+        report = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        assert len(report) == 17
+        assert [record["tenant"] for record in report[:8]] == ["first"] * 8
+        assert [record["tenant"] for record in report[8:16]] == ["second"] * 8
+        assert report[-1] == {
+            "summary": {"inconclusive": 5, "invalid": 0, "not_observed": 5, "skipped": 6, "valid": 0},
+            "tenants": 2,
+        }
+        assert create_source.call_count == 2
+        assert len(source.calls) == 5
+        assert source.closed is True
+        create_runner.assert_not_called()
+        build_storage.assert_not_called()
+
+    @patch("main.load_config")
+    def test_checker_success_uses_production_factory_closes_sources_and_shares_one_utc_anchor(
+        self,
+        mock_load: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import json
+
+        from core.config.models import AppSettings, PluginSettingsBase, StorageConfig, TenantConfig
+        from main import main
+
+        settings_a = _checker_tenant_settings("cluster-a", "kafka-a")
+        settings_b = _checker_tenant_settings("cluster-b", "kafka-b")
+        mock_load.return_value = AppSettings(
+            tenants={
+                "first": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="tenant-a",
+                    storage=StorageConfig(connection_string="sqlite:///first-check.db"),
+                    plugin_settings=PluginSettingsBase.model_validate(settings_a),
+                ),
+                "second": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="tenant-b",
+                    storage=StorageConfig(connection_string="sqlite:///second-check.db"),
+                    plugin_settings=PluginSettingsBase.model_validate(settings_b),
+                ),
+            }
+        )
+        sources = [_CheckerSource(), _CheckerSource()]
+        anchor = datetime(2026, 8, 23, 12, tzinfo=UTC)
+
+        with (
+            patch("plugins.self_managed_kafka.telemetry_check.create_metrics_source", side_effect=sources) as factory,
+            patch("main._create_runner") as create_runner,
+            patch("main._build_storage") as build_storage,
+            patch("main.setup_logging") as setup_logging,
+            patch("plugins.self_managed_kafka.gathering.admin_api.create_admin_client") as admin_factory,
+            patch("main.datetime") as datetime_cls,
+            pytest.raises(SystemExit) as raised,
+        ):
+            datetime_cls.now.return_value = anchor
+            main(["--config-file", "config.yaml", "--check-self-managed-telemetry"])
+
+        assert raised.value.code == 0
+        output = capsys.readouterr().out
+        report_lines = output.splitlines()
+        report = [json.loads(line) for line in report_lines]
+        assert len(report) == 17
+        assert [record["tenant"] for record in report[:8]] == ["first"] * 8
+        assert [record["tenant"] for record in report[8:16]] == ["second"] * 8
+        assert [record["canonical_metric"] for record in report[:8]] == [
+            "up",
+            "kafka_server_brokertopicmetrics_alltopics_bytesin_total",
+            "kafka_server_brokertopicmetrics_alltopics_bytesout_total",
+            "kafka_log_log_size",
+            "kafka_server_brokertopicmetrics_bytesin_total",
+            "kafka_server_brokertopicmetrics_bytesout_total",
+            "kafka_server_quota_byte_rate",
+            "kafka_server_quota_throttle_time_ms",
+        ]
+        assert report[0] == {
+            "affected_feature": ["target_scope"],
+            "canonical_metric": "up",
+            "corrective_override": None,
+            "expected_labels": {},
+            "observed_labels": ["deployment"],
+            "resolved_metric": "up",
+            "selector": 'deployment="kafka-a"',
+            "state": "valid",
+            "tenant": "first",
+            "warning": None,
+        }
+        assert report[-1] == {
+            "summary": {"inconclusive": 0, "invalid": 0, "not_observed": 0, "skipped": 0, "valid": 16},
+            "tenants": 2,
+        }
+        assert report_lines[-1] == (
+            '{"summary":{"inconclusive":0,"invalid":0,"not_observed":0,"skipped":0,"valid":16},"tenants":2}'
+        )
+        assert output.endswith("\n")
+        assert factory.call_count == 2
+        assert [call.args[0].url for call in factory.call_args_list] == [
+            "http://prometheus:9090",
+            "http://prometheus:9090",
+        ]
+        assert all(source.closed for source in sources)
+        assert {end for source in sources for _, _, end, _, _ in source.calls} == {anchor}
+        datetime_cls.now.assert_called_once_with(UTC)
+        create_runner.assert_not_called()
+        build_storage.assert_not_called()
+        setup_logging.assert_not_called()
+        admin_factory.assert_not_called()
+
+    @patch("main.load_config")
+    def test_checker_main_path_continues_after_family_query_failure_and_closes_source(
+        self,
+        mock_load: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import json
+
+        from core.config.models import AppSettings, PluginSettingsBase, StorageConfig, TenantConfig
+        from main import main
+
+        settings = _checker_tenant_settings("cluster-a", "kafka-a")
+        mock_load.return_value = AppSettings(
+            tenants={
+                "first": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="tenant-a",
+                    storage=StorageConfig(connection_string="sqlite:///first-check.db"),
+                    plugin_settings=PluginSettingsBase.model_validate(settings),
+                )
+            }
+        )
+        failed_key = "telemetry_check_kafka_server_quota_byte_rate"
+        source = _CheckerSource(failure_key=failed_key)
+        anchor = datetime(2026, 8, 23, 12, tzinfo=UTC)
+
+        with (
+            patch("plugins.self_managed_kafka.telemetry_check.create_metrics_source", return_value=source) as factory,
+            patch("main.WorkflowRunner") as workflow_runner,
+            patch("main._create_runner") as create_runner,
+            patch("main._build_storage") as build_storage,
+            patch("main.run_api") as run_api,
+            patch("main.run_worker") as run_worker,
+            patch("main.setup_logging") as setup_logging,
+            patch("plugins.self_managed_kafka.gathering.admin_api.create_admin_client") as admin_factory,
+            patch("main.datetime") as datetime_cls,
+            pytest.raises(SystemExit) as raised,
+        ):
+            datetime_cls.now.return_value = anchor
+            main(["--config-file", "config.yaml", "--check-self-managed-telemetry"])
+
+        assert raised.value.code == 1
+        output = capsys.readouterr().out
+        report_lines = output.splitlines()
+        report = [json.loads(line) for line in report_lines]
+        assert report == [
+            {
+                "tenant": "first",
+                "canonical_metric": "up",
+                "state": "valid",
+                "resolved_metric": "up",
+                "selector": 'deployment="kafka-a"',
+                "expected_labels": {},
+                "observed_labels": ["deployment"],
+                "affected_feature": ["target_scope"],
+                "corrective_override": None,
+                "warning": None,
+            },
+            {
+                "tenant": "first",
+                "canonical_metric": "kafka_server_brokertopicmetrics_alltopics_bytesin_total",
+                "state": "valid",
+                "resolved_metric": "kafka_server_brokertopicmetrics_alltopics_bytesin_total",
+                "selector": 'deployment="kafka-a"',
+                "expected_labels": {"broker": "broker"},
+                "observed_labels": ["broker", "deployment"],
+                "affected_feature": ["cluster_ingress"],
+                "corrective_override": None,
+                "warning": None,
+            },
+            {
+                "tenant": "first",
+                "canonical_metric": "kafka_server_brokertopicmetrics_alltopics_bytesout_total",
+                "state": "valid",
+                "resolved_metric": "kafka_server_brokertopicmetrics_alltopics_bytesout_total",
+                "selector": 'deployment="kafka-a"',
+                "expected_labels": {"broker": "broker"},
+                "observed_labels": ["broker", "deployment"],
+                "affected_feature": ["cluster_egress"],
+                "corrective_override": None,
+                "warning": None,
+            },
+            {
+                "tenant": "first",
+                "canonical_metric": "kafka_log_log_size",
+                "state": "valid",
+                "resolved_metric": "kafka_log_log_size",
+                "selector": 'deployment="kafka-a"',
+                "expected_labels": {"broker": "broker", "topic": "topic", "partition": "partition"},
+                "observed_labels": ["broker", "deployment", "partition", "topic"],
+                "affected_feature": ["cluster_storage", "prometheus_discovery", "topic_storage"],
+                "corrective_override": None,
+                "warning": None,
+            },
+            {
+                "tenant": "first",
+                "canonical_metric": "kafka_server_brokertopicmetrics_bytesin_total",
+                "state": "valid",
+                "resolved_metric": "kafka_server_brokertopicmetrics_bytesin_total",
+                "selector": 'deployment="kafka-a"',
+                "expected_labels": {"broker": "broker", "topic": "topic"},
+                "observed_labels": ["broker", "deployment", "topic"],
+                "affected_feature": ["prometheus_discovery", "topic_ingress"],
+                "corrective_override": None,
+                "warning": None,
+            },
+            {
+                "tenant": "first",
+                "canonical_metric": "kafka_server_brokertopicmetrics_bytesout_total",
+                "state": "valid",
+                "resolved_metric": "kafka_server_brokertopicmetrics_bytesout_total",
+                "selector": 'deployment="kafka-a"',
+                "expected_labels": {"broker": "broker", "topic": "topic"},
+                "observed_labels": ["broker", "deployment", "topic"],
+                "affected_feature": ["prometheus_discovery", "topic_egress"],
+                "corrective_override": None,
+                "warning": None,
+            },
+            {
+                "tenant": "first",
+                "canonical_metric": "kafka_server_quota_byte_rate",
+                "state": "inconclusive",
+                "resolved_metric": "kafka_server_quota_byte_rate",
+                "selector": 'deployment="kafka-a"',
+                "expected_labels": {
+                    "broker": "broker",
+                    "quota_type": "quota_type",
+                    "quota_scope": "quota_scope",
+                    "user": "user",
+                    "client_id": "client_id",
+                },
+                "observed_labels": [],
+                "affected_feature": ["principal_readiness", "principal_attribution"],
+                "corrective_override": None,
+                "warning": "Prometheus family query failed: MetricsQueryError.",
+            },
+            {
+                "tenant": "first",
+                "canonical_metric": "kafka_server_quota_throttle_time_ms",
+                "state": "valid",
+                "resolved_metric": "kafka_server_quota_throttle_time_ms",
+                "selector": 'deployment="kafka-a"',
+                "expected_labels": {
+                    "broker": "broker",
+                    "quota_type": "quota_type",
+                    "quota_scope": "quota_scope",
+                    "user": "user",
+                    "client_id": "client_id",
+                },
+                "observed_labels": ["broker", "client_id", "deployment", "quota_scope", "quota_type", "user"],
+                "affected_feature": ["principal_readiness"],
+                "corrective_override": None,
+                "warning": None,
+            },
+            {"summary": {"inconclusive": 1, "invalid": 0, "not_observed": 0, "skipped": 0, "valid": 7}, "tenants": 1},
+        ]
+        assert report_lines[-1] == (
+            '{"summary":{"inconclusive":1,"invalid":0,"not_observed":0,"skipped":0,"valid":7},"tenants":1}'
+        )
+        assert output.endswith("\n")
+        assert factory.call_count == 1
+        assert source.closed is True
+        assert len(source.calls) == 8
+        assert source.calls[6][0].key == failed_key
+        assert {end for _, _, end, _, _ in source.calls} == {anchor}
+        datetime_cls.now.assert_called_once_with(UTC)
+        workflow_runner.assert_not_called()
+        create_runner.assert_not_called()
+        build_storage.assert_not_called()
+        run_api.assert_not_called()
+        run_worker.assert_not_called()
+        setup_logging.assert_not_called()
+        admin_factory.assert_not_called()
 
 
 class TestMainNoConfigFile:
@@ -1219,3 +1862,82 @@ class TestEmitOnce:
 
         storage.dispose.assert_called_once_with()
         plugin.close.assert_called_once_with()
+
+
+class TestSelfManagedCostRateStartupDiagnostics:
+    @pytest.mark.parametrize(
+        ("selector_label", "field_path", "value", "expected_selector", "category", "reason"),
+        [
+            (
+                None,
+                "compute_hourly_rate",
+                "-0.125",
+                "kafka_cluster_id=kraft-a-001",
+                "compute",
+                "negative",
+            ),
+            (
+                "deployment",
+                "region_overrides.us-west-2.network_egress_per_gib",
+                "Infinity",
+                "deployment=kraft-a-001",
+                "network_egress",
+                "non_finite",
+            ),
+        ],
+    )
+    @patch("core.plugin.loader.discover_plugins")
+    @patch("main.load_config")
+    def test_explicit_startup_validation_reports_tenant_and_sanitized_rate_details(
+        self,
+        mock_load: MagicMock,
+        mock_discover: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        selector_label: str | None,
+        field_path: str,
+        value: str,
+        expected_selector: str,
+        category: str,
+        reason: str,
+    ) -> None:
+        from core.config.models import AppSettings, PluginSettingsBase, TenantConfig
+        from main import main
+        from plugins.self_managed_kafka import SelfManagedKafkaPlugin
+
+        settings = _checker_tenant_settings("billing-cluster-a", "kraft-a-001")
+        if selector_label is None:
+            settings.pop("metrics_identifier_label")
+        else:
+            settings["metrics_identifier_label"] = selector_label
+        cost_model = settings["cost_model"]
+        assert isinstance(cost_model, dict)
+        if field_path.startswith("region_overrides"):
+            cost_model["region_overrides"] = {"us-west-2": {field_path.rsplit(".", maxsplit=1)[1]: value}}
+        else:
+            cost_model[field_path] = value
+        mock_discover.return_value = [("self_managed_kafka", SelfManagedKafkaPlugin)]
+        mock_load.return_value = AppSettings(
+            tenants={
+                "kafka-prod": TenantConfig(
+                    ecosystem="self_managed_kafka",
+                    tenant_id="tenant-273",
+                    plugin_settings=PluginSettingsBase.model_validate(settings),
+                )
+            }
+        )
+
+        with pytest.raises(SystemExit) as error:
+            main(["--config-file", "task-273.yaml", "--validate"])
+
+        assert error.value.code == 1
+        detail = capsys.readouterr().err
+        assert "invalid_self_managed_cost_rate" in detail
+        assert "tenant=tenant-273" in detail
+        assert "cluster=billing-cluster-a" in detail
+        assert f"selector={expected_selector}" in detail
+        assert f"field=cost_model.{field_path}" in detail
+        assert f"category={category}" in detail
+        assert f"reason={reason}" in detail
+        assert "date=" not in detail
+        assert value not in detail
+        assert "http://prometheus:9090" not in detail

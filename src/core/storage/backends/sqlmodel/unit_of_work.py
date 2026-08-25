@@ -94,6 +94,10 @@ class SQLModelUnitOfWork:
         self.tags = SQLModelEntityTagRepository(self._session)
         self.graph = SQLModelGraphRepository(self._session, self.tags)
         self.emissions = SQLModelEmissionRepository(self._session)
+        from core.plugin.protocols import UnitOfWorkRepositoryAttachment
+
+        if isinstance(self._storage_module, UnitOfWorkRepositoryAttachment):
+            self._storage_module.attach_unit_of_work_repositories(self, self._session)
         if self._preview_source_fallback_module is not None:
             self.source_attempt_fallback = (
                 self._preview_source_fallback_module.create_preview_source_attempt_fallback_repository(self._session)
@@ -147,8 +151,16 @@ class ReadOnlySQLModelUnitOfWork(SQLModelUnitOfWork):
     rather than silently acquiring a write lock at runtime.
     """
 
-    def __init__(self, connection_string: str, storage_module: StorageModule) -> None:
-        super().__init__(connection_string, storage_module, preview_evidence_enabled=False)
+    def __init__(
+        self,
+        connection_string: str,
+        storage_module: StorageModule,
+    ) -> None:
+        super().__init__(
+            connection_string,
+            storage_module,
+            preview_evidence_enabled=False,
+        )
         self._engine = get_or_create_read_only_engine(connection_string)
 
     def commit(self) -> None:
@@ -262,7 +274,10 @@ class SQLModelBackend:
         )
 
     def create_read_only_unit_of_work(self) -> ReadOnlySQLModelUnitOfWork:
-        return ReadOnlySQLModelUnitOfWork(self._connection_string, self._storage_module)
+        return ReadOnlySQLModelUnitOfWork(
+            self._connection_string,
+            self._storage_module,
+        )
 
     def create_preview_write_unit_of_work(self) -> PreviewWriteSQLModelUnitOfWork:
         return PreviewWriteSQLModelUnitOfWork(self._connection_string)
@@ -356,7 +371,7 @@ class SQLModelBackend:
         from alembic import command
         from alembic.config import Config
 
-        from core.plugin.protocols import PreviewEvidenceStorageModule
+        from core.plugin.protocols import PluginStorageMigrationModule, PreviewEvidenceStorageModule
         from core.preview.storage_availability import (
             CFG_PREVIEW_EVIDENCE_ENABLED,
             CFG_PREVIEW_EVIDENCE_ISSUES,
@@ -375,6 +390,12 @@ class SQLModelBackend:
         cfg.set_main_option("script_location", str(migrations_dir))
         set_alembic_database_url(cfg, self._connection_string)
         collector = PreviewEvidenceIssueCollector()
+        plugin_storage_module = (
+            self._storage_module if isinstance(self._storage_module, PluginStorageMigrationModule) else None
+        )
+        cfg.attributes["plugin_storage_module"] = plugin_storage_module
+        cfg.attributes["plugin_storage_selection_explicit"] = True
+
         module = None
         if self._focus_preview_enabled:
             if isinstance(self._storage_module, PreviewEvidenceStorageModule):

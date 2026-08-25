@@ -89,3 +89,12 @@ class TestChargebackToDomainEnvId:
         result = chargeback_to_domain(dim, fact)
 
         assert result.metadata["env_id"] == "env-rt"
+
+    def test_generic_fact_schema_has_no_self_managed_team_snapshot(self) -> None:
+        dim = _make_dim(env_id="env-xyz")
+        fact = _make_fact()
+
+        result = chargeback_to_domain(dim, fact)
+
+        assert result.metadata == {"env_id": "env-xyz"}
+        assert "principal_team" not in fact.__table__.columns

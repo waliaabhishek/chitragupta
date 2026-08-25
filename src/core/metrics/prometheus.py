@@ -308,6 +308,7 @@ class PrometheusMetricsSource:
         for series in result:
             metric = series.get("metric", {})
             labels = {k: v for k, v in metric.items() if k in query.label_keys}
+            source_series = tuple(sorted((str(key), str(value)) for key, value in metric.items()))
 
             values = series.get("values", [])
             if not values and "value" in series:
@@ -331,6 +332,8 @@ class PrometheusMetricsSource:
                         metric_key=query.key,
                         value=val,
                         labels=labels,
+                        source_value=val_raw,
+                        source_series=source_series,
                     )
                 )
 

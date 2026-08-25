@@ -630,6 +630,7 @@ class TopicAttributionResponse(BaseModel):
     product_type: str
     attribution_method: str
     amount: Decimal
+    is_excluded: bool | None = Field(default=None, exclude_if=lambda value: value is None)
 
     model_config = ConfigDict(from_attributes=True)
 

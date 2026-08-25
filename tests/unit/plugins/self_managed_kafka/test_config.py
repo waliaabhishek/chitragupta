@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 import pytest
@@ -27,6 +28,7 @@ def base_metrics() -> dict:
 def base_settings(base_cost_model, base_metrics) -> dict:
     return {
         "cluster_id": "kafka-cluster-001",
+        "metrics_identifier": "kraft-a-001",
         "broker_count": 3,
         "cost_model": base_cost_model,
         "metrics": base_metrics,
@@ -226,8 +228,31 @@ class TestSelfManagedKafkaConfig:
 
         config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
         assert config.cluster_id == "kafka-cluster-001"
+        assert config.metrics_identifier == "kraft-a-001"
+        assert config.metrics_identifier_label == "kafka_cluster_id"
         assert config.broker_count == 3
         assert config.region is None
+
+    def test_metrics_identifier_is_required(self, base_settings):
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        del base_settings["metrics_identifier"]
+
+        with pytest.raises(ValidationError) as error:
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert error.value.errors()[0]["loc"] == ("metrics_identifier",)
+
+    @pytest.mark.parametrize("field", ["metrics_identifier", "metrics_identifier_label"])
+    def test_metrics_selector_values_must_not_be_blank(self, base_settings, field: str) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings[field] = ""
+
+        with pytest.raises(ValidationError) as error:
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert error.value.errors()[0]["loc"] == (field,)
 
     def test_broker_count_must_be_positive(self, base_settings):
         from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
@@ -312,6 +337,325 @@ class TestSelfManagedKafkaConfig:
         config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
         assert config.discovery_window_hours == 1
 
+    @pytest.mark.parametrize(
+        ("configured_days", "expected_days"),
+        [
+            (None, 5),
+            (1, 1),
+            (17, 17),
+            (30, 30),
+        ],
+    )
+    def test_historical_acquisition_chunk_days_accepts_the_supported_range(
+        self,
+        base_settings: dict[str, object],
+        configured_days: int | None,
+        expected_days: int,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        if configured_days is not None:
+            base_settings["historical_acquisition_chunk_days"] = configured_days
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.historical_acquisition_chunk_days == expected_days
+
+    @pytest.mark.parametrize("configured_days", [0, 31, -1, 1.5, "seven"])
+    def test_historical_acquisition_chunk_days_rejects_values_outside_the_supported_integer_range(
+        self,
+        base_settings: dict[str, object],
+        configured_days: object,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["historical_acquisition_chunk_days"] = configured_days
+
+        with pytest.raises(ValidationError) as raised:
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert raised.value.errors()[0]["loc"] == ("historical_acquisition_chunk_days",)
+
+    def test_telemetry_aliases_default_to_empty_mappings_and_preserve_the_canonical_selector(
+        self, base_settings: dict[str, object]
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.metric_name_overrides == {}
+        assert config.label_name_overrides == {}
+        assert config.metrics_identifier == "kraft-a-001"
+        assert config.metrics_identifier_label == "kafka_cluster_id"
+
+    def test_telemetry_aliases_accept_partial_metric_and_label_mappings(self, base_settings: dict[str, object]) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["metric_name_overrides"] = {"kafka_log_log_size": "company_kafka_partition_size"}
+        base_settings["label_name_overrides"] = {
+            "kafka_log_log_size": {
+                "broker": "node",
+                "topic": "topic_name",
+            }
+        }
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.metric_name_overrides == {"kafka_log_log_size": "company_kafka_partition_size"}
+        assert config.label_name_overrides == {"kafka_log_log_size": {"broker": "node", "topic": "topic_name"}}
+
+    @pytest.mark.parametrize(
+        ("field", "value", "expected_detail"),
+        [
+            (
+                "metric_name_overrides",
+                [],
+                "metric_name_overrides must be a mapping of canonical metric names to one physical metric name",
+            ),
+            (
+                "metric_name_overrides",
+                {"kafka_log_log_size": ["one", "two"]},
+                "metric_name_overrides[kafka_log_log_size] must resolve to exactly one physical metric name",
+            ),
+            (
+                "metric_name_overrides",
+                {"unknown_metric": "physical_metric"},
+                "metric_name_overrides contains unknown canonical metric family unknown_metric",
+            ),
+            (
+                "metric_name_overrides",
+                {"kafka_log_log_size": "not-a-metric"},
+                "metric_name_overrides[kafka_log_log_size] is not a valid Prometheus metric identifier",
+            ),
+            (
+                "metric_name_overrides",
+                {"kafka_log_log_size": ""},
+                "metric_name_overrides[kafka_log_log_size] is not a valid Prometheus metric identifier",
+            ),
+            (
+                "metric_name_overrides",
+                {"up": "kafka_log_log_size"},
+                (
+                    "physical metric kafka_log_log_size is assigned to multiple canonical metric families: "
+                    "kafka_log_log_size, up"
+                ),
+            ),
+            (
+                "label_name_overrides",
+                [],
+                "label_name_overrides must be a mapping of canonical metric families to label mappings",
+            ),
+            (
+                "label_name_overrides",
+                {"kafka_log_log_size": []},
+                "label_name_overrides[kafka_log_log_size] must be a mapping of canonical labels to physical labels",
+            ),
+            (
+                "label_name_overrides",
+                {"unknown_metric": {}},
+                "label_name_overrides contains unknown canonical metric family unknown_metric",
+            ),
+            (
+                "label_name_overrides",
+                {"up": {"broker": "node"}},
+                "label_name_overrides[up] contains unknown canonical label broker",
+            ),
+            (
+                "label_name_overrides",
+                {"kafka_log_log_size": {"broker": ["node"]}},
+                "label_name_overrides[kafka_log_log_size][broker] must resolve to exactly one physical label name",
+            ),
+            (
+                "label_name_overrides",
+                {"kafka_log_log_size": {"broker": "not-a-label"}},
+                "label_name_overrides[kafka_log_log_size][broker] is not a valid Prometheus label identifier",
+            ),
+            (
+                "label_name_overrides",
+                {"kafka_log_log_size": {"broker": ""}},
+                "label_name_overrides[kafka_log_log_size][broker] is not a valid Prometheus label identifier",
+            ),
+            (
+                "label_name_overrides",
+                {"kafka_log_log_size": {"broker": "topic"}},
+                "physical label topic is assigned to multiple canonical labels in kafka_log_log_size: broker, topic",
+            ),
+        ],
+    )
+    def test_telemetry_alias_validation_rejects_invalid_mapping_shapes_and_resolved_names(
+        self,
+        base_settings: dict[str, object],
+        field: str,
+        value: object,
+        expected_detail: str,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings[field] = value
+
+        with pytest.raises(ValidationError, match=re.escape(expected_detail)):
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+    @pytest.mark.parametrize(
+        ("selector_label", "label_name_overrides", "expected_detail"),
+        [
+            (
+                "not-a-label",
+                {},
+                "metrics_identifier_label is not a valid Prometheus label identifier",
+            ),
+            (
+                "broker",
+                {},
+                (
+                    "physical label broker in kafka_server_brokertopicmetrics_alltopics_bytesin_total "
+                    "conflicts with metrics_identifier_label"
+                ),
+            ),
+            (
+                "deployment",
+                {"kafka_log_log_size": {"broker": "deployment"}},
+                "physical label deployment in kafka_log_log_size conflicts with metrics_identifier_label",
+            ),
+        ],
+    )
+    def test_telemetry_alias_validation_keeps_the_global_selector_separate_from_family_labels(
+        self,
+        base_settings: dict[str, object],
+        selector_label: str,
+        label_name_overrides: dict[str, dict[str, str]],
+        expected_detail: str,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["metrics_identifier_label"] = selector_label
+        base_settings["label_name_overrides"] = label_name_overrides
+
+        with pytest.raises(ValidationError, match=re.escape(expected_detail)):
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+
+class TestPrincipalAttributionConfig:
+    def test_omitted_or_disabled_principal_attribution_keeps_the_baseline_static_policy(
+        self, base_settings: dict[str, object]
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        omitted = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+        base_settings["principal_attribution"] = {"enabled": False}
+        disabled = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert omitted.principal_attribution.enabled is False
+        assert disabled.principal_attribution.enabled is False
+        assert omitted.principal_attribution.compute_policy == "unattributed"
+        assert disabled.principal_attribution.storage_policy == "unattributed"
+
+    @pytest.mark.parametrize(
+        "principal_attribution",
+        [
+            {"enabled": True, "scrape_interval_seconds": 5, "max_gap_seconds": 10},
+            {"enabled": True, "scrape_interval_seconds": 17, "max_gap_seconds": 23},
+            {"enabled": True, "scrape_interval_seconds": 30, "max_gap_seconds": 60},
+            {"enabled": True, "scrape_interval_seconds": 60, "max_gap_seconds": 120},
+        ],
+    )
+    def test_enabled_principal_attribution_accepts_independent_positive_cadence_and_gap_values(
+        self, base_settings: dict[str, object], principal_attribution: dict[str, object]
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["identity_source"] = {"source": "both"}
+        base_settings["principal_attribution"] = principal_attribution
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.principal_attribution.enabled is True
+        assert config.principal_attribution.scrape_interval_seconds == principal_attribution["scrape_interval_seconds"]
+        assert config.principal_attribution.max_gap_seconds == principal_attribution["max_gap_seconds"]
+
+    @pytest.mark.parametrize(
+        ("identity_source", "principal_attribution", "expected_location"),
+        [
+            ("static", {"enabled": True, "scrape_interval_seconds": 5, "max_gap_seconds": 10}, "identity_source"),
+            ("prometheus", {"enabled": True, "max_gap_seconds": 10}, "principal_attribution"),
+            ("both", {"enabled": True, "scrape_interval_seconds": 5}, "principal_attribution"),
+            ("both", {"enabled": True, "scrape_interval_seconds": 0, "max_gap_seconds": 10}, "principal_attribution"),
+            ("both", {"enabled": True, "scrape_interval_seconds": 5, "max_gap_seconds": 0}, "principal_attribution"),
+            (
+                "both",
+                {
+                    "enabled": True,
+                    "scrape_interval_seconds": 5,
+                    "max_gap_seconds": 10,
+                    "compute_policy": "automatic",
+                },
+                "principal_attribution",
+            ),
+        ],
+    )
+    def test_enabled_principal_attribution_rejects_invalid_identity_source_or_cadence_inputs(
+        self,
+        base_settings: dict[str, object],
+        identity_source: str,
+        principal_attribution: dict[str, object],
+        expected_location: str,
+    ) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["identity_source"] = {"source": identity_source}
+        base_settings["principal_attribution"] = principal_attribution
+
+        with pytest.raises(ValidationError) as error:
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert any(issue["loc"][0] == expected_location for issue in error.value.errors())
+
+
+class TestSelfManagedTopicAttributionConfig:
+    def test_defaults_to_disabled_without_implicit_topic_exclusions(self, base_settings: dict[str, object]) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.topic_attribution.enabled is False
+        assert config.topic_attribution.compute_policy == "disabled"
+        assert config.topic_attribution.exclude_topic_patterns == []
+        assert config.topic_attribution.retention_days == 90
+        assert config.topic_attribution.emitters == []
+
+    def test_accepts_the_versioned_shared_compute_policy(self, base_settings: dict[str, object]) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["topic_attribution"] = {
+            "enabled": True,
+            "compute_policy": "shared_even_v1",
+            "exclude_topic_patterns": ["__consumer_offsets", "_confluent-*"],
+            "retention_days": 14,
+        }
+
+        config = SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        assert config.topic_attribution.enabled is True
+        assert config.topic_attribution.compute_policy == "shared_even_v1"
+        assert config.topic_attribution.exclude_topic_patterns == ["__consumer_offsets", "_confluent-*"]
+        assert config.topic_attribution.retention_days == 14
+
+    def test_rejects_unknown_compute_policy_and_invalid_exclusion_shape(self, base_settings: dict[str, object]) -> None:
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        base_settings["topic_attribution"] = {
+            "enabled": True,
+            "compute_policy": "usage_weighted_v1",
+            "exclude_topic_patterns": "__consumer_offsets",
+        }
+
+        with pytest.raises(ValidationError) as error:
+            SelfManagedKafkaConfig.from_plugin_settings(base_settings)
+
+        locations = {issue["loc"] for issue in error.value.errors()}
+        assert ("topic_attribution", "compute_policy") in locations
+        assert ("topic_attribution", "exclude_topic_patterns") in locations
+
 
 class TestCostModelConfigGiBFields:
     """Issue 2: config fields renamed from _per_gb to _per_gib."""
@@ -363,3 +707,79 @@ class TestBytesPerGiBConstant:
         from plugins.self_managed_kafka.cost_input import _BYTES_PER_GIB
 
         assert Decimal("1073741824") == _BYTES_PER_GIB
+
+
+_RATE_FIELDS = (
+    "compute_hourly_rate",
+    "storage_per_gib_hourly",
+    "network_ingress_per_gib",
+    "network_egress_per_gib",
+)
+
+
+class TestSelfManagedCostRateBounds:
+    @pytest.mark.parametrize("field", _RATE_FIELDS)
+    @pytest.mark.parametrize(
+        ("value", "is_valid"),
+        [
+            ("-0", True),
+            ("0", True),
+            ("+0", True),
+            ("0.125", True),
+            ("-0.125", False),
+            ("NaN", False),
+            ("Infinity", False),
+            ("-Infinity", False),
+        ],
+    )
+    def test_base_rate_accepts_only_finite_non_negative_values(
+        self,
+        base_cost_model: dict[str, str],
+        field: str,
+        value: str,
+        is_valid: bool,
+    ) -> None:
+        from plugins.self_managed_kafka.config import CostModelConfig
+
+        base_cost_model[field] = value
+
+        if not is_valid:
+            with pytest.raises(ValidationError):
+                CostModelConfig.model_validate(base_cost_model)
+            return
+
+        model = CostModelConfig.model_validate(base_cost_model)
+        assert getattr(model, field) == Decimal(value)
+
+    @pytest.mark.parametrize("field", _RATE_FIELDS)
+    @pytest.mark.parametrize(
+        ("value", "is_valid"),
+        [
+            ("-0", True),
+            ("0", True),
+            ("+0", True),
+            ("0.125", True),
+            ("-0.125", False),
+            ("NaN", False),
+            ("Infinity", False),
+            ("-Infinity", False),
+        ],
+    )
+    def test_regional_override_rate_accepts_only_finite_non_negative_values(
+        self,
+        base_cost_model: dict[str, str],
+        field: str,
+        value: str,
+        is_valid: bool,
+    ) -> None:
+        from plugins.self_managed_kafka.config import CostModelConfig
+
+        base_cost_model["region_overrides"] = {"us-west-2": {field: value}}
+
+        if not is_valid:
+            with pytest.raises(ValidationError):
+                CostModelConfig.model_validate(base_cost_model)
+            return
+
+        model = CostModelConfig.model_validate(base_cost_model)
+        assert getattr(model.region_overrides["us-west-2"], field) == Decimal(value)

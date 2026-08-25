@@ -172,33 +172,143 @@ daily_cost = 101.67 × 24 × $0.0001 = $0.2440
     hour 1 does not mean you used 200 GiB — you used 100 GiB for 2 hours.
     Averaging across samples gives the representative GiB held over the day.
 
-### Network costs (counter metric, summed)
+### Network costs (broker-wide client counters)
 
-Network bytes are cumulative counters. The engine queries
-`kafka_server_brokertopicmetrics_bytesin_total` (and `bytesout`) using
-`increase()` over 1-hour windows, then sums all the hourly deltas to get the
-total bytes transferred in a day.
+Network bytes are cumulative counters. For each closed UTC day, the ingress and
+egress pools come from the broker-wide client counters, with no `topic` label:
 
 ```
-total_bytes = sum(all hourly increase values for the day)
-total_gib   = total_bytes ÷ 1,073,741,824
-daily_cost  = total_gib × network_per_gib
+ingress_pool_bytes = sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesin_total[86400s]))
+egress_pool_bytes  = sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesout_total[86400s]))
+```
+
+The expression is evaluated for that day's `[00:00 UTC, 00:00 UTC)` window.
+The `alltopics` counters represent client traffic and exclude replication. The
+topic-labelled bytes-in and bytes-out counters are not pool inputs; the optional
+topic-attribution overlay uses them as allocation evidence.
+
+```
+pool_gib  = pool_bytes ÷ 1,073,741,824
+daily_cost = pool_gib × network_per_gib
 ```
 
 | Input | Value |
 |---|---|
-| Hourly increases (24 values) | Sum = 53,687,091,200 bytes |
+| Closed-day broker-wide client increase | 53,687,091,200 bytes |
 | `network_ingress_per_gib` | $0.01 |
 
 ```
-total_gib  = 53,687,091,200 ÷ 1,073,741,824 = 50.0 GiB
+pool_gib   = 53,687,091,200 ÷ 1,073,741,824 = 50.0 GiB
 daily_cost = 50.0 × $0.01 = $0.50
 ```
 
-!!! note "Why sum, not average?"
-    Network bytes are a running total. `increase()` gives bytes transferred in
-    each hour. Summing gives total daily transfer. This is the actual volume
-    that crossed the network.
+!!! note "Why `increase()`?"
+    Network bytes are a running total. `increase(...[86400s])` gives the client
+    bytes transferred during the closed day. It does not average the counter or
+    reconstruct the pool from topic-labelled series.
+
+### Self-managed historical request bounds
+
+Self-managed Kafka uses `historical_acquisition_chunk_days` to cap each scope,
+cluster, and topic workload response at `H` closed UTC days. The omitted/default
+value is `H=5`; `1..30` is valid, and `30` is an explicit operator-selected maximum.
+Smaller `H` values reduce response size and reduced-evidence memory while increasing
+request count. One reduced chunk is retained at a time and is released before the
+next chunk is acquired.
+
+Within a run, exact target-scope evidence is reused for the same tenant, target
+identifier and label, step, start, and end. An open scope executes one newest-point
+probe. A failed probe permits no workload, progress, or writes; a successful probe
+is persisted before complete bounded validation is rerun. Billing windows remain
+calculation-owned.
+
+Let `C_cluster` and `C_topic` be the sums of `ceil(run_length / H)` over the
+independent contiguous cluster and topic date runs. With a step that divides one
+UTC day, successful workload family counts are:
+
+```
+B_cluster = 3 × C_cluster
+B_topic   = 3 × C_topic
+```
+
+For a non-divisor step, the exact per-family residue-request sums add `G` requests:
+
+```
+B_cluster = 2 × C_cluster + G_cluster
+B_topic   = 2 × C_topic   + G_topic
+```
+
+Use `D = 86,400` seconds per UTC day, `S = metrics_step_seconds`, and `h_j` for
+the days in one actual chunk `j`. For one actual chunk, `g(h_j, S)` is the exact
+number of residue-group requests for that gauge family. Sum it once across actual
+chunks:
+
+```
+g(h, S) = min(h, S / gcd(S, D))
+G_family = sum_j g(h_j, S)
+```
+
+Each returned series is bounded by `floor(H × D / S) + 1` evaluation timestamps
+before half-open daily filtering. The shorthand `6C` applies only when cluster and
+topic date sets coincide and the step divides one day, yielding `3C` on each side.
+The [self-managed reference](../configuration/self-managed-reference.md#measured-request-and-transport-bounds)
+defines the symbols, measured values, and fallback examples in one operator-readable
+table.
+
+If bounded family requests fail, `F` is the number of owned days retried with daily
+fallback queries, so the affected workload is `B + F`. A logical family is one
+PromQL family; a transport attempt is one HTTP request. With the existing retry
+ceiling `R`, cold attempts are at most `R×L` for `L` logical families. Warm raw
+cache hits can reduce attempts but never logical-family counts. The measured
+one-day, 31-day, unequal recovery, failed-open, successful recovery, and warm-cache
+values are listed in the [self-managed configuration reference](../configuration/self-managed-reference.md#measured-request-and-transport-bounds).
+
+Daily semantics remain unchanged: counters use exact UTC day-end ownership of the
+preceding half-open day, gauges preserve the daily start-anchored grid and half-open
+filter, zero and missing evidence remain distinct, and family/day failures remain
+isolated. Residual, reconciliation, retry, and terminal topic behavior is
+unchanged. These bounds apply only to self-managed Kafka; CCloud and generic metrics
+keep their existing configuration, query, progress, and attribution behavior.
+
+### Self-managed Kafka topic-attribution overlay
+
+Self-managed Kafka can optionally produce a topic-level analytical view without
+changing the cluster chargeback or principal allocation. The overlay retains the
+actual topic rows separately from chargeback and processes each pool on the same
+closed UTC day, `[00:00, 00:00)`.
+
+Network pools come from broker-wide `alltopics` client counters, while
+topic-labelled bytes-in and bytes-out counters determine each topic's ingress and
+egress share. Storage comes from `kafka_log_log_size`, summed across a topic's
+partitions and averaged over the day. A topic evidence shortfall is retained as
+`__UNATTRIBUTED__`, so the topic amounts reconcile to the full cluster pool.
+
+For a measured ingress, egress, or storage pool, let `C` be the cluster cost,
+`P` the corresponding pool usage, and `U_t` a topic's valid usage. The allocation
+uses the measured share and preserves unobserved usage explicitly:
+
+```
+topic_amount(t) = C × U_t / P
+unattributed_amount = C × (P - sum(U_t)) / P
+```
+
+The second equation is a usage-evidence residual, not a rounding adjustment.
+Emitted monetary amounts are quantized to `0.0001` USD; any final monetary
+rounding remainder is distributed among the emitted rows. The complete set of
+topic rows, including `__UNATTRIBUTED__` when present, reconciles to `C` within
+`0.0001` USD.
+
+Compute is not inferred from topic activity. It is disabled in the topic view by
+default. The explicit `shared_even_v1` policy allocates 100% of a compute pool
+evenly across the complete active-topic universe (`compute_amount(t) = C / N`).
+It is declared shared policy, not measured usage. The policy name fixes that
+algorithm's meaning; a changed algorithm needs a new name.
+
+Topic exclusion is a presentation policy, not an allocation rule. The current
+configuration determines it when rows are read: aggregate analytics collapse matches
+to `Excluded topics`, while detailed results and CSV retain the actual topic name and
+derived status. A normal configuration reload or restart therefore reclassifies
+historical views without recomputing or rewriting their amounts.
 
 ### Generic metrics: the three quantity types
 

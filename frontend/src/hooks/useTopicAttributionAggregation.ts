@@ -13,6 +13,7 @@ export interface UseTopicAttributionAggregationParams {
   productType?: string | null;
   timezone?: string | null;
   tagFilters?: Record<string, string[]>;
+  collapseExcluded?: boolean;
 }
 
 export interface UseTopicAttributionAggregationResult {
@@ -36,6 +37,7 @@ export function useTopicAttributionAggregation(
     productType,
     timezone,
     tagFilters,
+    collapseExcluded,
   } = params;
 
   const groupByKey = groupBy.join(",");
@@ -53,6 +55,7 @@ export function useTopicAttributionAggregation(
       productType ?? null,
       timezone ?? null,
       JSON.stringify(tagFilters ?? null),
+      collapseExcluded ?? null,
     ],
     queryFn: ({ signal }) =>
       fetchTopicAttributionAggregation(
@@ -67,6 +70,7 @@ export function useTopicAttributionAggregation(
           product_type: productType ?? undefined,
           timezone: timezone ?? undefined,
           tag_filters: tagFilters,
+          collapse_excluded: collapseExcluded,
         },
         signal,
       ),

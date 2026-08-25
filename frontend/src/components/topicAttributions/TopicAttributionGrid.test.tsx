@@ -62,7 +62,7 @@ describe("TopicAttributionGrid", () => {
     ).toBe("true");
   });
 
-  it("renders expected column fields: timestamp, topic_name, cluster_resource_id, product_type, attribution_method, amount", () => {
+  it("shows the derived exclusion column only for self-managed tenants", () => {
     let capturedColDefs: ColDef[] | undefined;
 
     renderOverride = ({ columnDefs }: AgGridProps) => {
@@ -70,7 +70,9 @@ describe("TopicAttributionGrid", () => {
       return <div data-testid="ag-grid" />;
     };
 
-    render(<TopicAttributionGrid tenantName="acme" filters={{}} />);
+    const { rerender } = render(
+      <TopicAttributionGrid tenantName="acme" filters={{}} />,
+    );
 
     expect(capturedColDefs).toBeDefined();
     const fields = capturedColDefs!.map((c) => c.field);
@@ -79,7 +81,21 @@ describe("TopicAttributionGrid", () => {
     expect(fields).toContain("cluster_resource_id");
     expect(fields).toContain("product_type");
     expect(fields).toContain("attribution_method");
+    expect(fields).not.toContain("is_excluded");
     expect(fields).toContain("amount");
+
+    renderOverride = ({ columnDefs }: AgGridProps) => {
+      capturedColDefs = columnDefs;
+      return <div data-testid="ag-grid" />;
+    };
+    rerender(
+      <TopicAttributionGrid
+        tenantName="acme"
+        filters={{}}
+        showExcluded
+      />,
+    );
+    expect(capturedColDefs!.map((c) => c.field)).toContain("is_excluded");
   });
 
   it("datasource fetches data from API and calls successCallback", async () => {

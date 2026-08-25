@@ -76,7 +76,7 @@ def test_revision_031_is_head_and_uses_guarded_preview_hook() -> None:
         / "031_add_tiered_preview_source_lineage.py"
     )
 
-    assert script.get_current_head() == "032"
+    assert script.get_current_head() == "033"
     source = migration_path.read_text(encoding="utf-8")
     assert 'run_preview_evidence_step("031")' in source
     assert 'run_preview_evidence_downgrade_step("031")' in source

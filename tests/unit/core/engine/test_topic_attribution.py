@@ -460,6 +460,129 @@ class TestGatherPhaseTopicDiscovery:
         mock_plugin.gather_topic_resources.assert_not_called()
 
 
+class TestSelfManagedTopicAttributionTerminalPersistence:
+    def _phase(self, provider: object):
+        from core.engine.topic_attribution import TopicAttributionPhase
+
+        return TopicAttributionPhase(
+            ecosystem="self_managed_kafka",
+            tenant_id="tenant-1",
+            metrics_source=None,
+            config=MagicMock(enabled=True, exclude_topic_patterns=[], retention_days=90, emitters=[]),
+            metrics_step=timedelta(hours=1),
+            provider=provider,
+        )
+
+    def test_retryable_self_managed_line_keeps_every_date_fact_in_memory(self) -> None:
+        from core.engine.topic_attribution_provider import TopicAttributionClusterOutcome
+        from core.models.topic_attribution import TopicAttributionRow
+
+        retry_line = _make_billing_line(
+            resource_id="billing-cluster-a",
+            product_type="SELF_KAFKA_NETWORK_EGRESS",
+        )
+        row = TopicAttributionRow(
+            ecosystem="self_managed_kafka",
+            tenant_id="tenant-1",
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            env_id="cluster-a",
+            cluster_resource_id="billing-cluster-a",
+            topic_name="orders",
+            product_category="kafka",
+            product_type="SELF_KAFKA_NETWORK_INGRESS",
+            attribution_method="bytes_ratio",
+            amount=Decimal("10.0000"),
+        )
+        provider = MagicMock()
+        provider.supported_product_types = frozenset({"SELF_KAFKA_NETWORK_INGRESS", "SELF_KAFKA_NETWORK_EGRESS"})
+        provider.replace_date_on_completion = True
+        provider.attribute_cluster.return_value = TopicAttributionClusterOutcome(rows=(row,), retry_lines=(retry_line,))
+        phase = self._phase(provider)
+        mock_uow = MagicMock()
+        mock_uow.billing.find_by_date.return_value = [
+            _make_billing_line(
+                resource_id="billing-cluster-a",
+                product_type="SELF_KAFKA_NETWORK_INGRESS",
+            ),
+            retry_line,
+        ]
+        mock_uow.resources.find_by_period.return_value = ([_make_resource("orders", "billing-cluster-a")], 0)
+
+        phase.run(mock_uow, date(2026, 1, 1))
+
+        mock_uow.topic_attributions.delete_by_date.assert_not_called()
+        mock_uow.topic_attributions.upsert_batch.assert_not_called()
+        mock_uow.pipeline_state.mark_topic_attribution_calculated.assert_not_called()
+
+    def test_terminal_self_managed_day_replaces_stale_snapshot_before_marking_calculated(self) -> None:
+        from core.engine.topic_attribution_provider import TopicAttributionClusterOutcome
+        from core.models.topic_attribution import TopicAttributionRow
+
+        row = TopicAttributionRow(
+            ecosystem="self_managed_kafka",
+            tenant_id="tenant-1",
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            env_id="cluster-a",
+            cluster_resource_id="billing-cluster-a",
+            topic_name="orders",
+            product_category="kafka",
+            product_type="SELF_KAFKA_NETWORK_INGRESS",
+            attribution_method="bytes_ratio",
+            amount=Decimal("10.0000"),
+        )
+        provider = MagicMock()
+        provider.supported_product_types = frozenset({"SELF_KAFKA_NETWORK_INGRESS"})
+        provider.replace_date_on_completion = True
+        provider.attribute_cluster.return_value = TopicAttributionClusterOutcome(rows=(row,))
+        phase = self._phase(provider)
+        mock_uow = MagicMock()
+        mock_uow.billing.find_by_date.return_value = [
+            _make_billing_line(
+                resource_id="billing-cluster-a",
+                product_type="SELF_KAFKA_NETWORK_INGRESS",
+            )
+        ]
+        mock_uow.resources.find_by_period.return_value = ([_make_resource("orders", "billing-cluster-a")], 0)
+
+        phase.run(mock_uow, date(2026, 1, 1))
+
+        mock_uow.topic_attributions.delete_by_date.assert_called_once_with(
+            "self_managed_kafka", "tenant-1", date(2026, 1, 1)
+        )
+        mock_uow.topic_attributions.upsert_batch.assert_called_once_with([row])
+        mock_uow.pipeline_state.mark_topic_attribution_calculated.assert_called_once_with(
+            "self_managed_kafka", "tenant-1", date(2026, 1, 1)
+        )
+
+    def test_retry_terminalization_is_per_line_while_the_date_remains_pending(self) -> None:
+        provider = MagicMock()
+        provider.supported_product_types = frozenset()
+        provider.replace_date_on_completion = True
+        phase = self._phase(provider)
+        phase._retry_checker = MagicMock()
+        phase._retry_checker.increment_and_check.side_effect = [(3, True), (1, False)]
+        exhausted = _make_billing_line(
+            resource_id="billing-cluster-a",
+            product_type="SELF_KAFKA_NETWORK_INGRESS",
+        )
+        pending = _make_billing_line(
+            resource_id="billing-cluster-a",
+            product_type="SELF_KAFKA_NETWORK_EGRESS",
+        )
+
+        rows, any_pending = phase._handle_retry_lines(
+            (exhausted, pending),
+            "billing-cluster-a",
+            "cluster-a",
+            date(2026, 1, 1),
+        )
+
+        assert any_pending is True
+        assert [(row.product_type, row.attribution_method) for row in rows] == [
+            ("SELF_KAFKA_NETWORK_INGRESS", "ATTRIBUTION_FAILED"),
+        ]
+
+
 def _make_metric_row(topic: str, value: float, cluster_id: str = "lkc-abc") -> MagicMock:
     row = MagicMock()
     row.labels = {"topic": topic, "kafka_id": cluster_id}

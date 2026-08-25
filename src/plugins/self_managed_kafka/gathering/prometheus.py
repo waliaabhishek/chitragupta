@@ -7,21 +7,93 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from core.metrics.protocol import MetricsQueryError
 from core.models import CoreIdentity, CoreResource, Identity, MetricQuery, Resource
 
 if TYPE_CHECKING:
     from core.metrics.protocol import MetricsSource
-    from core.models import MetricRow
     from plugins.self_managed_kafka.config import IdentitySourceConfig
+    from plugins.self_managed_kafka.telemetry_aliases import ResolvedTelemetryCatalog
 logger = logging.getLogger(__name__)
 
-# Combined discovery query — single round-trip to discover brokers, topics, and principals.
-_COMBINED_DISCOVERY_QUERY = MetricQuery(
-    key="combined_discovery",
-    query_expression="group by (broker, topic, principal) (kafka_server_brokertopicmetrics_bytesin_total{})",
-    label_keys=("broker", "topic", "principal"),
-    resource_label=None,
-)
+
+def _broker_topic_discovery_queries(
+    telemetry_catalog: ResolvedTelemetryCatalog | str | None = None,
+    metrics_identifier_label: str | None = None,
+) -> list[MetricQuery]:
+    """Build the independent topic-evidence discovery queries.
+
+    Kafka creates the bytes-in and bytes-out meters lazily, while log-size is
+    present for loaded local partitions. Discovery therefore uses their union.
+    """
+    catalog = None if isinstance(telemetry_catalog, (str, type(None))) else telemetry_catalog
+    selector_label = telemetry_catalog if isinstance(telemetry_catalog, str) else metrics_identifier_label
+    if selector_label is None:
+        raise ValueError("metrics_identifier_label is required")
+
+    families = (
+        ("broker_topic_discovery_bytes_in", "kafka_server_brokertopicmetrics_bytesin_total"),
+        ("broker_topic_discovery_bytes_out", "kafka_server_brokertopicmetrics_bytesout_total"),
+        ("broker_topic_discovery_log_size", "kafka_log_log_size"),
+    )
+    queries: list[MetricQuery] = []
+    for key, family in families:
+        metric_name = family if catalog is None else catalog.metric_name(family)
+        broker_label = "broker" if catalog is None else catalog.label_name(family, "broker")
+        topic_label = "topic" if catalog is None else catalog.label_name(family, "topic")
+        expression = f"group by ({broker_label}, {topic_label}) ({metric_name}{{}})"
+        if catalog is None:
+            queries.append(
+                MetricQuery(
+                    key=key,
+                    query_expression=expression,
+                    label_keys=("broker", "topic", selector_label),
+                    resource_label=selector_label,
+                )
+            )
+        else:
+            queries.append(
+                catalog.bind_query(
+                    canonical_family=family,
+                    key=key,
+                    query_expression=expression,
+                    canonical_label_keys=("broker", "topic"),
+                    passthrough_label_keys=(selector_label,),
+                    resource_label=selector_label,
+                )
+            )
+    return queries
+
+
+def _legacy_broker_topic_discovery_query(
+    telemetry_catalog: ResolvedTelemetryCatalog | str | None = None,
+    metrics_identifier_label: str | None = None,
+) -> MetricQuery:
+    """Build the pre-overlay discovery query used when the overlay is disabled."""
+    catalog = None if isinstance(telemetry_catalog, (str, type(None))) else telemetry_catalog
+    selector_label = telemetry_catalog if isinstance(telemetry_catalog, str) else metrics_identifier_label
+    if selector_label is None:
+        raise ValueError("metrics_identifier_label is required")
+    family = "kafka_server_brokertopicmetrics_bytesin_total"
+    metric_name = family if catalog is None else catalog.metric_name(family)
+    broker_label = "broker" if catalog is None else catalog.label_name(family, "broker")
+    topic_label = "topic" if catalog is None else catalog.label_name(family, "topic")
+    expression = f"group by ({broker_label}, {topic_label}) ({metric_name}{{}})"
+    if catalog is None:
+        return MetricQuery(
+            key="broker_topic_discovery",
+            query_expression=expression,
+            label_keys=("broker", "topic", selector_label),
+            resource_label=selector_label,
+        )
+    return catalog.bind_query(
+        canonical_family=family,
+        key="broker_topic_discovery",
+        query_expression=expression,
+        canonical_label_keys=("broker", "topic"),
+        passthrough_label_keys=(selector_label,),
+        resource_label=selector_label,
+    )
 
 
 def gather_cluster_resource(
@@ -51,35 +123,47 @@ def gather_cluster_resource(
     )
 
 
-def run_combined_discovery(
+def run_broker_topic_discovery(
     metrics_source: MetricsSource,
+    *,
+    metrics_identifier_label: str,
+    metrics_identifier: str,
     step: timedelta,
     discovery_window_hours: int = 1,
-) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
-    """Issue a single query to discover brokers, topics, and principals simultaneously.
-
-    Returns:
-        (brokers, topics, principals) as frozensets of label values.
-        Empty string values are excluded; missing labels are skipped.
-    """
+    include_topic_evidence: bool = True,
+    telemetry_catalog: ResolvedTelemetryCatalog | None = None,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Discover broker and topic labels without deriving any identities."""
     now = datetime.now(UTC)
+    queries = (
+        _broker_topic_discovery_queries(telemetry_catalog or metrics_identifier_label, metrics_identifier_label)
+        if include_topic_evidence
+        else [
+            _legacy_broker_topic_discovery_query(
+                telemetry_catalog or metrics_identifier_label,
+                metrics_identifier_label,
+            )
+        ]
+    )
     results = metrics_source.query(
-        queries=[_COMBINED_DISCOVERY_QUERY],
+        queries=queries,
         start=now - timedelta(hours=discovery_window_hours),
         end=now,
         step=step,
+        resource_id_filter=metrics_identifier,
     )
+    missing_keys = [query.key for query in queries if query.key not in results]
+    if missing_keys:
+        raise MetricsQueryError("Missing required topic discovery result families: " + ", ".join(missing_keys))
     brokers: set[str] = set()
     topics: set[str] = set()
-    principals: set[str] = set()
-    for row in results.get("combined_discovery", []):
-        if b := row.labels.get("broker"):
-            brokers.add(b)
-        if t := row.labels.get("topic"):
-            topics.add(t)
-        if p := row.labels.get("principal"):
-            principals.add(p)
-    return frozenset(brokers), frozenset(topics), frozenset(principals)
+    for rows in (results.get(query.key, []) for query in queries):
+        for row in rows:
+            if b := row.labels.get("broker"):
+                brokers.add(b)
+            if t := row.labels.get("topic"):
+                topics.add(t)
+    return frozenset(brokers), frozenset(topics)
 
 
 def brokers_to_resources(
@@ -126,38 +210,6 @@ def topics_to_resources(
         )
 
 
-def principals_to_identities(
-    principal_ids: frozenset[str],
-    ecosystem: str,
-    tenant_id: str,
-    identity_config: IdentitySourceConfig,
-) -> Iterable[Identity]:
-    """Convert a set of principal label values to Identity objects."""
-    for principal_id in principal_ids:
-        yield from _make_principal_identity(principal_id, ecosystem, tenant_id, identity_config)
-
-
-def _make_principal_identity(
-    principal_id: str,
-    ecosystem: str,
-    tenant_id: str,
-    identity_config: IdentitySourceConfig,
-) -> Iterable[Identity]:
-    """Create an Identity from a principal ID, applying team mapping if configured."""
-    team_name = identity_config.principal_to_team.get(principal_id, identity_config.default_team)
-    yield CoreIdentity(
-        ecosystem=ecosystem,
-        tenant_id=tenant_id,
-        identity_id=principal_id,
-        identity_type="principal",
-        display_name=team_name if team_name != identity_config.default_team else principal_id,
-        created_at=None,
-        deleted_at=None,
-        last_seen_at=datetime.now(UTC),
-        metadata={"raw_principal": principal_id, "team": team_name},
-    )
-
-
 def load_static_identities(
     identity_config: IdentitySourceConfig,
     ecosystem: str,
@@ -176,22 +228,3 @@ def load_static_identities(
             last_seen_at=datetime.now(UTC),
             metadata={"team": static.team} if static.team else {},
         )
-
-
-def extract_principals_from_metrics_data(
-    metrics_data: dict[str, list[MetricRow]],
-    ecosystem: str,
-    tenant_id: str,
-    identity_config: IdentitySourceConfig,
-) -> Iterable[Identity]:
-    """Extract distinct principals from metrics_data (billing-window metrics).
-
-    Used in resolve_identities() to find principals active during billing window.
-    """
-    seen: set[str] = set()
-    for rows in metrics_data.values():
-        for row in rows:
-            principal_id = row.labels.get("principal")
-            if principal_id and principal_id not in seen:
-                seen.add(principal_id)
-                yield from _make_principal_identity(principal_id, ecosystem, tenant_id, identity_config)

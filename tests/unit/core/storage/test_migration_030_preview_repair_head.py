@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, inspect, text
 
 from core.preview.storage_availability import PreviewEvidenceOfflineMigrationError
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+from core.storage.migrations.config import set_alembic_database_url
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
 HEAD_TABLE = "ccloud_focus_preview_repair_heads"
@@ -24,13 +25,17 @@ def _config(
     url: str,
     *,
     selection: str | None = None,
+    plugin_storage: str | None = None,
     output: io.StringIO | None = None,
 ) -> Config:
     migrations = Path(__file__).resolve().parents[4] / "src" / "core" / "storage" / "migrations"
     config = Config(str(migrations / "alembic.ini"), output_buffer=output)
     config.set_main_option("script_location", str(migrations))
-    config.set_main_option("sqlalchemy.url", url)
-    config.cmd_opts = SimpleNamespace(x=[] if selection is None else [f"focus_preview={selection}"])
+    set_alembic_database_url(config, url)
+    x_arguments = [] if selection is None else [f"focus_preview={selection}"]
+    if plugin_storage is not None:
+        x_arguments.append(f"plugin_storage={plugin_storage}")
+    config.cmd_opts = SimpleNamespace(x=x_arguments)
     return config
 
 
@@ -91,7 +96,7 @@ def test_revision_030_is_head_and_uses_guarded_preview_hook() -> None:
         / "030_add_focus_preview_repair_head.py"
     )
 
-    assert script.get_current_head() == "032"
+    assert script.get_current_head() == "033"
     source = migration_path.read_text(encoding="utf-8")
     assert 'run_preview_evidence_step("030")' in source
     assert 'run_preview_evidence_downgrade_step("030")' in source

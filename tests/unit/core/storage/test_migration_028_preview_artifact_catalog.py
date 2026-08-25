@@ -31,7 +31,7 @@ def test_revision_028_defines_preview_artifact_catalog_migration_in_current_chai
         / "028_add_preview_artifact_file_catalog.py"
     )
 
-    assert script.get_current_head() == "032"
+    assert script.get_current_head() == "033"
     source = migration_path.read_text(encoding="utf-8")
     assert 'run_preview_evidence_step("028")' in source
     assert 'run_preview_evidence_downgrade_step("028")' in source
@@ -253,6 +253,7 @@ def test_downgrade_reconstructs_request_and_revision_legacy_json_before_catalog_
             {"digest": "0" * 64},
         )
     engine.dispose()
+    config.cmd_opts.x.append("plugin_storage=disabled")
     with pytest.raises(PreviewEvidenceSchemaError):
         command.downgrade(config, "027")
     engine = create_engine(url)

@@ -1,0 +1,146 @@
+{
+  "window": {
+    "logical_billing_interval": "[start,end)",
+    "provider_source_membership": "(start,end]",
+    "start_timestamp": 1787097600,
+    "end_timestamp": 1787097900,
+    "evaluation_timestamp": 1787097900,
+    "duration_seconds": 300,
+    "scrape_interval_seconds": 60,
+    "max_gap_seconds": 120,
+    "selector": {
+      "job": "kafka-jmx",
+      "lab_cluster": "cluster-a",
+      "kafka_cluster_id": "kraft-a-001"
+    }
+  },
+  "scope_evidence": {
+    "status": "pass",
+    "category": null,
+    "message": "expected target scope is healthy for the complete logical interval",
+    "artifact": "principal-scope-evidence.json"
+  },
+  "queries": {
+    "scope": {
+      "query": "up{job=\"kafka-jmx\",lab_cluster=\"cluster-a\",kafka_cluster_id=\"kraft-a-001\"}[420s]",
+      "response": {
+        "status": "success",
+        "data": {
+          "resultType": "matrix",
+          "result": [
+            {
+              "metric": {
+                "__name__": "up",
+                "job": "kafka-jmx",
+                "instance": "jmx-a:7071",
+                "lab_cluster": "cluster-a",
+                "kafka_cluster_id": "kraft-a-001"
+              },
+              "values": [[1787097540, "1"], [1787097600, "1"], [1787097660, "1"], [1787097720, "1"], [1787097780, "1"], [1787097840, "1"], [1787097900, "1"]]
+            }
+          ]
+        }
+      }
+    },
+    "quota_produce": {
+      "query": "kafka_server_quota_byte_rate{job=\"kafka-jmx\",lab_cluster=\"cluster-a\",kafka_cluster_id=\"kraft-a-001\",quota_type=\"Produce\"}[420s]",
+      "response": {
+        "status": "success",
+        "data": {
+          "resultType": "matrix",
+          "result": [
+            {
+              "metric": {"__name__": "kafka_server_quota_byte_rate", "lab_cluster": "cluster-a", "kafka_cluster_id": "kraft-a-001", "broker": "1", "quota_type": "Produce", "quota_scope": "user", "user": "user-only", "client_id": "not_applicable"},
+              "values": [[1787097540, "100"], [1787097600, "100"], [1787097660, "100"], [1787097720, "100"], [1787097780, "100"], [1787097840, "100"], [1787097900, "100"]]
+            },
+            {
+              "metric": {"__name__": "kafka_server_quota_byte_rate", "lab_cluster": "cluster-a", "kafka_cluster_id": "kraft-a-001", "broker": "1", "quota_type": "Produce", "quota_scope": "user-client", "user": "shared-user", "client_id": "shared-client"},
+              "values": [[1787097540, "200"], [1787097600, "200"], [1787097660, "200"], [1787097720, "200"], [1787097780, "200"], [1787097840, "200"], [1787097900, "200"]]
+            },
+            {
+              "metric": {"__name__": "kafka_server_quota_byte_rate", "lab_cluster": "cluster-a", "kafka_cluster_id": "kraft-a-001", "broker": "1", "quota_type": "Produce", "quota_scope": "client-id", "user": "not_applicable", "client_id": "client-only"},
+              "values": [[1787097540, "50"], [1787097600, "50"], [1787097660, "50"], [1787097720, "50"], [1787097780, "50"], [1787097840, "50"], [1787097900, "50"]]
+            }
+          ]
+        }
+      }
+    },
+    "quota_fetch": {
+      "query": "kafka_server_quota_byte_rate{job=\"kafka-jmx\",lab_cluster=\"cluster-a\",kafka_cluster_id=\"kraft-a-001\",quota_type=\"Fetch\"}[420s]",
+      "response": {
+        "status": "success",
+        "data": {
+          "resultType": "matrix",
+          "result": [
+            {
+              "metric": {"__name__": "kafka_server_quota_byte_rate", "lab_cluster": "cluster-a", "kafka_cluster_id": "kraft-a-001", "broker": "1", "quota_type": "Fetch", "quota_scope": "user", "user": "user-only", "client_id": "not_applicable"},
+              "values": [[1787097540, "60"], [1787097600, "60"], [1787097660, "60"], [1787097720, "60"], [1787097780, "60"], [1787097840, "60"], [1787097900, "60"]]
+            },
+            {
+              "metric": {"__name__": "kafka_server_quota_byte_rate", "lab_cluster": "cluster-a", "kafka_cluster_id": "kraft-a-001", "broker": "1", "quota_type": "Fetch", "quota_scope": "user-client", "user": "shared-user", "client_id": "shared-client"},
+              "values": [[1787097540, "40"], [1787097600, "40"], [1787097660, "40"], [1787097720, "40"], [1787097780, "40"], [1787097840, "40"], [1787097900, "40"]]
+            },
+            {
+              "metric": {"__name__": "kafka_server_quota_byte_rate", "lab_cluster": "cluster-a", "kafka_cluster_id": "kraft-a-001", "broker": "1", "quota_type": "Fetch", "quota_scope": "client-id", "user": "not_applicable", "client_id": "client-only"},
+              "values": [[1787097540, "20"], [1787097600, "20"], [1787097660, "20"], [1787097720, "20"], [1787097780, "20"], [1787097840, "20"], [1787097900, "20"]]
+            }
+          ]
+        }
+      }
+    },
+    "pool_ingress_raw": {
+      "query": "kafka_server_brokertopicmetrics_alltopics_bytesin_total{job=\"kafka-jmx\",lab_cluster=\"cluster-a\",kafka_cluster_id=\"kraft-a-001\"}[420s]",
+      "response": {
+        "status": "success",
+        "data": {
+          "resultType": "matrix",
+          "result": [
+            {
+              "metric": {"__name__": "kafka_server_brokertopicmetrics_alltopics_bytesin_total", "lab_cluster": "cluster-a", "kafka_cluster_id": "kraft-a-001", "broker": "1"},
+              "values": [[1787097540, "990000"], [1787097600, "1000000"], [1787097660, "1024000"], [1787097720, "1048000"], [1787097780, "1072000"], [1787097840, "1096000"], [1787097900, "1120000"]]
+            }
+          ]
+        }
+      }
+    },
+    "pool_egress_raw": {
+      "query": "kafka_server_brokertopicmetrics_alltopics_bytesout_total{job=\"kafka-jmx\",lab_cluster=\"cluster-a\",kafka_cluster_id=\"kraft-a-001\"}[420s]",
+      "response": {
+        "status": "success",
+        "data": {
+          "resultType": "matrix",
+          "result": [
+            {
+              "metric": {"__name__": "kafka_server_brokertopicmetrics_alltopics_bytesout_total", "lab_cluster": "cluster-a", "kafka_cluster_id": "kraft-a-001", "broker": "1"},
+              "values": [[1787097540, "1990000"], [1787097600, "2000000"], [1787097660, "2007200"], [1787097720, "2014400"], [1787097780, "2021600"], [1787097840, "2028800"], [1787097900, "2036000"]]
+            }
+          ]
+        }
+      }
+    },
+    "pool_ingress": {
+      "query": "sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesin_total{job=\"kafka-jmx\",lab_cluster=\"cluster-a\",kafka_cluster_id=\"kraft-a-001\"}[300s]))",
+      "response": {
+        "status": "success",
+        "data": {
+          "resultType": "vector",
+          "result": [
+            {"metric": {"lab_cluster": "cluster-a", "kafka_cluster_id": "kraft-a-001"}, "value": [1787097900, "120000"]}
+          ]
+        }
+      }
+    },
+    "pool_egress": {
+      "query": "sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesout_total{job=\"kafka-jmx\",lab_cluster=\"cluster-a\",kafka_cluster_id=\"kraft-a-001\"}[300s]))",
+      "response": {
+        "status": "success",
+        "data": {
+          "resultType": "vector",
+          "result": [
+            {"metric": {"lab_cluster": "cluster-a", "kafka_cluster_id": "kraft-a-001"}, "value": [1787097900, "36000"]}
+          ]
+        }
+      }
+    }
+  }
+}

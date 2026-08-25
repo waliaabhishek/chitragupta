@@ -1,0 +1,195 @@
+version: 1
+logical_billing_interval: "[start,end)"
+provider_source_membership: "(start,end]"
+scope_first: true
+scrape_interval_seconds: 5
+max_gap_seconds: 10
+quota_rate_window:
+  source: kafka_default
+  complete_windows: 10
+  window_seconds: 1
+  includes_current_window: true
+sampling_semantics:
+  completeness_basis: configured_datasource_cadence_and_gap
+  estimate: monitoring_resolution
+  byte_exact: false
+  production_interval_fixed: false
+retention_days: 14
+quota_scopes: [user, client-id, user-client]
+selector:
+  job: kafka-jmx
+  lab_cluster: cluster-a
+  kafka_cluster_id: kraft-a-001
+expected_targets: 1
+identity:
+  canonical_prefix: "User:"
+  preserve_suffix: case-sensitive
+  user_scope_client_id: not_applicable
+  ownership:
+    mappings:
+      "User:user-only": team-data
+    default_owner: UNASSIGNED
+expected_live_identities:
+  mapped_user:
+    identity: "User:user-only"
+    owner: team-data
+  unmapped_user:
+    identity: "User:shared-user"
+    owner: UNASSIGNED
+  client_only_label: client-only
+expected_live_states:
+  ingress: degraded
+  egress: degraded
+expected_live_balances:
+  ingress: "12.0000"
+  egress: "3.0000"
+directions:
+  ingress:
+    quota_type: Produce
+  egress:
+    quota_type: Fetch
+fixed_policy_inputs:
+  compute:
+    policy: static_even_v1
+    identities: ["Team:analytics", "Team:platform"]
+  storage:
+    policy: unattributed
+    identities: []
+  shared:
+    policy: unattributed
+    identities: []
+allocation_rules:
+  weights:
+    user:
+      source_scopes: [user, user-client]
+      symbol: q_i
+    client_only:
+      source_scopes: [client-id]
+      symbol: c
+    denominator: total_valid_quota_weight
+  completeness:
+    required: [configuration, target, samples, identity]
+    samples: configured_datasource_cadence_and_gap
+  state_matrix:
+    - when: invalid_or_incomplete
+      state: unavailable
+    - when: complete_total_weight_zero
+      state: zero_usage
+    - when: complete_positive_weight_without_client_only
+      state: ready
+    - when: complete_positive_weight_with_client_only
+      state: degraded
+  monetary:
+    pool_source: configured_direction_monetary_pool
+    client_only: unallocated
+    rounding:
+      quantum: "0.0001"
+      mode: ROUND_DOWN
+      residual: explicit_unallocated
+  fixed_categories:
+    shared:
+      policy: unattributed
+      measured_usage: false
+      rounding: ROUND_DOWN
+    static_even_v1:
+      identities: sorted_ascending
+      measured_usage: false
+      rounding: ROUND_DOWN
+principal_topic_relationship: independent_marginals
+forbidden_inferences: [principal_by_topic, topic_owner_rollup]
+money:
+  quantum: "0.0001"
+  rounding: ROUND_DOWN
+demonstration_pools:
+  ingress: "12.0000"
+  egress: "3.0000"
+  compute: "4.0000"
+  storage: "5.0000"
+  shared: "2.0000"
+identity_churn: case-sensitive identities remain distinct
+lifecycle:
+  principal_day_terminal: true
+  later_days_continue: true
+  topic_lane_independent: true
+  reprocess:
+    mode: explicit
+    replaces_date: true
+    scope: cluster-day
+state_precedence:
+  - target_scope_blocked
+  - unavailable
+  - degraded
+  - ready
+  - zero_usage
+  - policy_only
+artifact_schema:
+  top_level:
+    required: [version, clusters]
+    types:
+      version: integer
+      clusters: object
+  cluster:
+    required: [state, directions, fixed_categories]
+    types:
+      state: state_enum
+      directions: object
+      fixed_categories: object
+  direction:
+    required:
+      - pool
+      - weights
+      - coverage
+      - sampling_resolution
+      - state
+      - reason
+      - users
+      - client_only
+      - rounding_residual
+      - unallocated
+      - balance
+    types:
+      pool: decimal_string
+      weights: weight_object
+      coverage: coverage_object
+      sampling_resolution: sampling_resolution_object
+      state: state_enum
+      reason: nonempty_string
+      users: array
+      client_only: allocation_object
+      rounding_residual: decimal_string
+      unallocated: decimal_string
+      balance: decimal_string
+  fixed_category:
+    required: [state, policy, shared, measured_usage, users, pool, rounding_residual, unallocated, balance]
+    types:
+      state: fixed_state_enum
+      policy: fixed_policy_enum
+      shared: boolean
+      measured_usage: boolean
+      users: array
+      pool: decimal_string
+      rounding_residual: decimal_string
+      unallocated: decimal_string
+      balance: decimal_string
+error_categories:
+  - principal_scope
+  - principal_contract
+  - principal_identity
+  - principal_window
+  - principal_metric
+  - principal_reconciliation
+  - principal_expected_state
+error_schema:
+  required: [category, message, artifact]
+  types:
+    category: error_category_enum
+    message: nonempty_string
+    artifact: string_or_null
+  category_values:
+    - principal_scope
+    - principal_contract
+    - principal_identity
+    - principal_window
+    - principal_metric
+    - principal_reconciliation
+    - principal_expected_state

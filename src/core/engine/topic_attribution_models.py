@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -10,9 +10,27 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from core.engine.helpers import _CENT, _distribute_remainder
 
 if TYPE_CHECKING:
+    from core.config.models import EmitterSpec
     from core.models.topic_attribution import TopicAttributionRow
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class TopicAttributionOutputConfigProtocol(Protocol):
+    """Shared topic-attribution lifecycle configuration."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+    @property
+    def exclude_topic_patterns(self) -> list[str]: ...
+
+    @property
+    def retention_days(self) -> int: ...
+
+    @property
+    def emitters(self) -> list[EmitterSpec]: ...
 
 
 @runtime_checkable
@@ -51,6 +69,20 @@ class TopicAttributionContext:
     topics: frozenset[str]
     topic_metrics: dict[str, dict[str, float]]  # {metric_key: {topic_name: value}}
     config: TopicAttributionConfigProtocol
+
+
+@dataclass(frozen=True)
+class TopicAttributionRowOutputContext:
+    """Identity and cost fields shared by reconciled self-managed output rows."""
+
+    ecosystem: str
+    tenant_id: str
+    timestamp: datetime
+    env_id: str
+    cluster_resource_id: str
+    product_category: str
+    product_type: str
+    cluster_cost: Decimal
 
 
 @runtime_checkable
@@ -200,6 +232,85 @@ def resolve_topic_attribution_models(
 
 
 # --- Private helpers ---
+
+
+def build_reconciled_topic_rows(
+    ctx: TopicAttributionRowOutputContext,
+    *,
+    cluster_quantity: Decimal,
+    pool_usage: Decimal,
+    topic_usage: Mapping[str, Decimal],
+    attribution_method: str,
+    residual_method: str,
+) -> list[TopicAttributionRow]:
+    """Build rows that preserve a measured-topic usage residual separately from rounding."""
+    del cluster_quantity
+    from core.models.topic_attribution import TopicAttributionRow
+
+    raw_cluster_cost = ctx.cluster_cost
+    cluster_cost = raw_cluster_cost.quantize(_CENT, rounding=ROUND_HALF_UP)
+
+    def unattributed(method: str) -> list[TopicAttributionRow]:
+        return [
+            TopicAttributionRow(
+                ecosystem=ctx.ecosystem,
+                tenant_id=ctx.tenant_id,
+                timestamp=ctx.timestamp,
+                env_id=ctx.env_id,
+                cluster_resource_id=ctx.cluster_resource_id,
+                topic_name="__UNATTRIBUTED__",
+                product_category=ctx.product_category,
+                product_type=ctx.product_type,
+                attribution_method=method,
+                amount=cluster_cost,
+            )
+        ]
+
+    positive_topic_usage: dict[str, Decimal] = {}
+    for topic, usage in topic_usage.items():
+        if not usage.is_finite() or usage < 0:
+            return unattributed("invalid_topic_telemetry")
+        if usage > 0:
+            positive_topic_usage[topic] = usage
+
+    topic_usage_total = sum(positive_topic_usage.values(), start=Decimal(0))
+    if pool_usage == 0:
+        return unattributed("zero_cluster_usage" if topic_usage_total == 0 else "invalid_topic_telemetry")
+
+    if topic_usage_total > pool_usage:
+        overage_cost = abs(raw_cluster_cost) * (topic_usage_total - pool_usage) / pool_usage
+        if overage_cost > _CENT:
+            return unattributed("invalid_topic_telemetry")
+        raw_amounts = {
+            topic: raw_cluster_cost * usage / topic_usage_total for topic, usage in positive_topic_usage.items()
+        }
+        residual_amount: Decimal | None = None
+    else:
+        raw_amounts = {topic: raw_cluster_cost * usage / pool_usage for topic, usage in positive_topic_usage.items()}
+        residual_amount = raw_cluster_cost * (pool_usage - topic_usage_total) / pool_usage
+
+    row_specs = [(topic, attribution_method, raw_amounts[topic]) for topic in sorted(raw_amounts)]
+    if residual_amount is not None and (residual_amount.quantize(_CENT, rounding=ROUND_HALF_UP) != 0 or not row_specs):
+        row_specs.append(("__UNATTRIBUTED__", residual_method, residual_amount))
+
+    amounts = [raw_amount.quantize(_CENT, rounding=ROUND_HALF_UP) for _, _, raw_amount in row_specs]
+    amounts = _distribute_remainder(amounts, (cluster_cost - sum(amounts)).quantize(_CENT))
+
+    return [
+        TopicAttributionRow(
+            ecosystem=ctx.ecosystem,
+            tenant_id=ctx.tenant_id,
+            timestamp=ctx.timestamp,
+            env_id=ctx.env_id,
+            cluster_resource_id=ctx.cluster_resource_id,
+            topic_name=topic,
+            product_category=ctx.product_category,
+            product_type=ctx.product_type,
+            attribution_method=method,
+            amount=amount,
+        )
+        for (topic, method, _), amount in zip(row_specs, amounts, strict=True)
+    ]
 
 
 def _build_rows(

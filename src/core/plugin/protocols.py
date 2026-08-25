@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import date as date_type
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
 
 if TYPE_CHECKING:
@@ -13,6 +15,7 @@ if TYPE_CHECKING:
     from sqlmodel import Session
 
     from core.engine.allocation import AllocationContext, AllocationResult
+    from core.engine.topic_attribution_provider import TopicAttributionProvider
     from core.metrics.protocol import MetricsSource
     from core.models import (
         BillingLineItem,
@@ -64,6 +67,13 @@ class StorageModule(Protocol):
 
 
 @runtime_checkable
+class UnitOfWorkRepositoryAttachment(Protocol):
+    """Optional plugin hook for repositories that are not core-owned."""
+
+    def attach_unit_of_work_repositories(self, uow: UnitOfWork, session: Session) -> None: ...
+
+
+@runtime_checkable
 class PreviewEvidenceStorageModule(Protocol):
     def prepare_preview_evidence_migration(
         self,
@@ -97,6 +107,25 @@ class PreviewEvidenceStorageModule(Protocol):
         self,
         backend: PreviewEvidenceStorageBackend,
     ) -> PreviewEvidenceBootstrap: ...
+
+
+@runtime_checkable
+class PluginStorageMigrationModule(Protocol):
+    """Optional owner of plugin-specific DDL inside the core migration chain."""
+
+    def prepare_plugin_storage_migration(
+        self,
+        connection: Connection,
+        *,
+        target_revision: str,
+    ) -> None: ...
+
+    def downgrade_plugin_storage_migration(
+        self,
+        connection: Connection,
+        *,
+        target_revision: str,
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -207,6 +236,85 @@ class EcosystemPlugin(Protocol):
     def close(self) -> None: ...
 
 
+class ScopeGateDecision(StrEnum):
+    ALLOW = "allow"
+    BLOCKED = "blocked"
+    RECOVERY_READY = "recovery_ready"
+
+
+@dataclass(frozen=True)
+class ScopeGateResult:
+    decision: ScopeGateDecision
+    scope_id: str
+    detail: str
+    blocked_window_start: datetime | None = None
+    blocked_window_end: datetime | None = None
+    recovery_start: datetime | None = None
+    recovery_end: datetime | None = None
+    retention_gap_start: datetime | None = None
+    retention_gap_end: datetime | None = None
+    status: str | None = None
+    reason: str | None = None
+    evidence: object | None = None
+    probe_only: bool = False
+
+
+class ScopeBlockedError(RuntimeError):
+    """A plugin could not establish the scope required for pipeline work."""
+
+    def __init__(self, result: ScopeGateResult) -> None:
+        super().__init__(result.detail)
+        self.result = result
+
+
+@runtime_checkable
+class ScopeGatePlugin(Protocol):
+    """Optional core-owned gate for provider-specific telemetry scope checks."""
+
+    def prepare_gather_scope(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        uow: UnitOfWork,
+    ) -> ScopeGateResult: ...
+
+    def prepare_calculation_scope(
+        self,
+        tenant_id: str,
+        windows: Sequence[tuple[datetime, datetime]],
+        uow: UnitOfWork,
+    ) -> ScopeGateResult: ...
+
+    def persist_scope_blocked(self, tenant_id: str, result: ScopeGateResult, uow: UnitOfWork) -> None: ...
+
+    def persist_scope_probe(self, tenant_id: str, result: ScopeGateResult, uow: UnitOfWork) -> None: ...
+
+    def persist_scope_recovery(self, tenant_id: str, result: ScopeGateResult, uow: UnitOfWork) -> None: ...
+
+    def persist_scope_closed(self, tenant_id: str, result: ScopeGateResult, uow: UnitOfWork) -> None: ...
+
+
+@runtime_checkable
+class ScopeGateRunLifecycle(Protocol):
+    """Optional per-pipeline lifecycle for run-local scope evidence."""
+
+    def begin_scope_gate_run(self) -> None: ...
+
+
+@runtime_checkable
+class PostRecoveryGatherScopeValidator(Protocol):
+    """Optional full gather-scope validation after recovery persistence."""
+
+    def prepare_post_recovery_gather_scope(
+        self,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        uow: UnitOfWork,
+    ) -> ScopeGateResult: ...
+
+
 @runtime_checkable
 class SupplementalResourceGatherer(Protocol):
     """Optional plugin capability for isolated, non-billing resource inventory."""
@@ -241,6 +349,17 @@ class TopicDiscoveryPlugin(Protocol):
         tenant_id: str,
         cluster_ids: list[str],
     ) -> Iterable[Resource]: ...
+
+
+@runtime_checkable
+class TopicAttributionProviderPlugin(Protocol):
+    """Optional plugin capability for an ecosystem-owned attribution strategy."""
+
+    def get_topic_attribution_provider(self) -> TopicAttributionProvider | None: ...
+
+    def reset_topic_attribution_inventory_proof(self) -> None: ...
+
+    def topic_attribution_inventory_ready(self, shared_context: object | None) -> bool: ...
 
 
 @runtime_checkable

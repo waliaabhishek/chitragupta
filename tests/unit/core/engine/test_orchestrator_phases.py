@@ -1201,6 +1201,45 @@ class TestCalculatePhasePrefetchMetrics:
         assert mock_metrics.query.call_count == 2
 
 
+class TestCalculatePhaseWindowPlanning:
+    def test_public_window_planner_accepts_a_tuple_and_returns_sorted_unique_windows(self) -> None:
+        phase = _make_calculate_phase()
+        daily_start = datetime(2026, 2, 1, tzinfo=UTC)
+        monthly_start = datetime(2026, 3, 1, tzinfo=UTC)
+        lines = (
+            _make_billing_line(timestamp=monthly_start, granularity="monthly"),
+            _make_billing_line(timestamp=daily_start, granularity="daily"),
+            _make_billing_line(timestamp=daily_start, granularity="daily"),
+        )
+
+        windows = phase.plan_billing_windows(lines)
+
+        assert windows == (
+            (daily_start, daily_start + timedelta(days=1)),
+            (monthly_start, datetime(2026, 4, 1, tzinfo=UTC)),
+        )
+
+    def test_window_cache_consumers_accept_iterable_lines_and_a_read_only_mapping(self) -> None:
+        from types import MappingProxyType
+
+        phase = _make_calculate_phase()
+        lines = (
+            _make_billing_line(timestamp=datetime(2026, 2, 1, tzinfo=UTC)),
+            _make_billing_line(timestamp=datetime(2026, 2, 2, tzinfo=UTC)),
+        )
+
+        cache = phase._compute_line_window_cache(iter(lines))
+        windows = phase._billing_windows_from_cache(iter(lines), MappingProxyType(cache))
+        prefetched, failed = phase._prefetch_metrics(iter(lines), MappingProxyType(cache))
+
+        assert windows == (
+            (datetime(2026, 2, 1, tzinfo=UTC), datetime(2026, 2, 2, tzinfo=UTC)),
+            (datetime(2026, 2, 2, tzinfo=UTC), datetime(2026, 2, 3, tzinfo=UTC)),
+        )
+        assert prefetched == {}
+        assert failed == frozenset()
+
+
 class TestCalculatePhaseProcessBillingLine:
     def test_unknown_product_type_no_fallback_returns_0_and_writes_nothing(self) -> None:
         """Billing line with unknown product_type and no fallback_allocator → returns 0, writes nothing."""

@@ -1,0 +1,112 @@
+{
+  "series_names": [
+    "kafka_server_brokertopicmetrics_alltopics_bytesin_total",
+    "kafka_server_brokertopicmetrics_alltopics_bytesout_total",
+    "kafka_server_brokertopicmetrics_bytesin_total",
+    "kafka_server_brokertopicmetrics_bytesout_total",
+    "kafka_log_log_size",
+    "kafka_server_quota_byte_rate",
+    "kafka_server_quota_throttle_time_ms",
+    "up",
+    "jmx_scrape_error"
+  ],
+  "cluster_labels": ["lab_cluster", "kafka_cluster_id"],
+  "failure_categories": [
+    "missing_metric", "missing_label", "wrong_type", "quota_scope", "throttle_observation",
+    "rate_distinction", "target_health", "cluster_selector", "high_cardinality", "evidence_stale"
+  ],
+  "quota_scopes": ["user", "client-id", "user-client"],
+  "principal_contract": {
+    "quota_scopes": ["user", "client-id", "user-client"],
+    "required_live_identities": {
+      "mapped_user": {"identity": "User:user-only", "owner": "team-data"},
+      "unmapped_user": {"identity": "User:shared-user", "owner": "UNASSIGNED"},
+      "client_only_label": "client-only"
+    },
+    "required_live_states": {"ingress": "degraded", "egress": "degraded"},
+    "required_live_balances": {"ingress": "12.0000", "egress": "3.0000"},
+    "quota_rate_window": {
+      "source": "kafka_default", "complete_windows": 10,
+      "window_seconds": 1, "includes_current_window": true
+    },
+    "sampling_semantics": {
+      "completeness_basis": "configured_datasource_cadence_and_gap",
+      "estimate": "monitoring_resolution", "byte_exact": false,
+      "production_interval_fixed": false
+    },
+    "demonstration_pools": {
+      "ingress": "12.0000", "egress": "3.0000", "compute": "4.0000",
+      "storage": "5.0000", "shared": "2.0000"
+    },
+    "fixed_policy_inputs": {
+      "compute": {"policy": "static_even_v1", "identities": ["Team:analytics", "Team:platform"]},
+      "storage": {"policy": "unattributed", "identities": []},
+      "shared": {"policy": "unattributed", "identities": []}
+    },
+    "allocation_rules": {
+      "weights": {
+        "user": {"source_scopes": ["user", "user-client"], "symbol": "q_i"},
+        "client_only": {"source_scopes": ["client-id"], "symbol": "c"},
+        "denominator": "total_valid_quota_weight"
+      },
+      "completeness": {
+        "required": ["configuration", "target", "samples", "identity"],
+        "samples": "configured_datasource_cadence_and_gap"
+      },
+      "state_matrix": [
+        {"when": "invalid_or_incomplete", "state": "unavailable"},
+        {"when": "complete_total_weight_zero", "state": "zero_usage"},
+        {"when": "complete_positive_weight_without_client_only", "state": "ready"},
+        {"when": "complete_positive_weight_with_client_only", "state": "degraded"}
+      ],
+      "monetary": {
+        "pool_source": "configured_direction_monetary_pool", "client_only": "unallocated",
+        "rounding": {"quantum": "0.0001", "mode": "ROUND_DOWN", "residual": "explicit_unallocated"}
+      },
+      "fixed_categories": {
+        "shared": {"policy": "unattributed", "measured_usage": false, "rounding": "ROUND_DOWN"},
+        "static_even_v1": {"identities": "sorted_ascending", "measured_usage": false, "rounding": "ROUND_DOWN"}
+      }
+    },
+    "artifact_schema": {
+      "top_level": {"required": ["version", "clusters"], "types": {"version": "integer", "clusters": "object"}},
+      "cluster": {"required": ["state", "directions", "fixed_categories"], "types": {"state": "state_enum", "directions": "object", "fixed_categories": "object"}},
+      "direction": {
+        "required": ["pool", "weights", "coverage", "sampling_resolution", "state", "reason", "users", "client_only", "rounding_residual", "unallocated", "balance"],
+        "types": {"pool": "decimal_string", "weights": "weight_object", "coverage": "coverage_object", "sampling_resolution": "sampling_resolution_object", "state": "state_enum", "reason": "nonempty_string", "users": "array", "client_only": "allocation_object", "rounding_residual": "decimal_string", "unallocated": "decimal_string", "balance": "decimal_string"}
+      },
+      "fixed_category": {"required": ["state", "policy", "shared", "measured_usage", "users", "pool", "rounding_residual", "unallocated", "balance"], "types": {"state": "fixed_state_enum", "policy": "fixed_policy_enum", "shared": "boolean", "measured_usage": "boolean", "users": "array", "pool": "decimal_string", "rounding_residual": "decimal_string", "unallocated": "decimal_string", "balance": "decimal_string"}}
+    },
+    "error_categories": ["principal_scope", "principal_contract", "principal_identity", "principal_window", "principal_metric", "principal_reconciliation", "principal_expected_state"],
+    "error_schema": {
+      "required": ["category", "message", "artifact"],
+      "types": {"category": "error_category_enum", "message": "nonempty_string", "artifact": "string_or_null"},
+      "category_values": ["principal_scope", "principal_contract", "principal_identity", "principal_window", "principal_metric", "principal_reconciliation", "principal_expected_state"]
+    },
+    "lifecycle": {"principal_day_terminal": true, "later_days_continue": true, "topic_lane_independent": true, "reprocess": {"mode": "explicit", "replaces_date": true, "scope": "cluster-day"}}
+  },
+  "raw_mbeans": [
+    {"object_name": "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec", "attribute": "Count", "series": "kafka_server_brokertopicmetrics_alltopics_bytesin_total"},
+    {"object_name": "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec", "attribute": "Count", "series": "kafka_server_brokertopicmetrics_alltopics_bytesout_total"},
+    {"object_name": "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec,topic=shared-topic", "attribute": "Count", "series": "kafka_server_brokertopicmetrics_bytesin_total"},
+    {"object_name": "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec,topic=shared-topic", "attribute": "Count", "series": "kafka_server_brokertopicmetrics_bytesout_total"},
+    {"object_name": "kafka.log:type=Log,name=Size,topic=shared-topic,partition=0", "attribute": "Value", "series": "kafka_log_log_size"},
+    {"object_name": "kafka.server:type=Produce,user=user-only", "attribute": "byte-rate", "series": "kafka_server_quota_byte_rate"},
+    {"object_name": "kafka.server:type=Produce,user=user-only", "attribute": "throttle-time", "series": "kafka_server_quota_throttle_time_ms"},
+    {"object_name": "kafka.server:type=Fetch,user=user-only", "attribute": "byte-rate", "series": "kafka_server_quota_byte_rate"},
+    {"object_name": "kafka.server:type=Fetch,user=user-only", "attribute": "throttle-time", "series": "kafka_server_quota_throttle_time_ms"},
+    {"object_name": "kafka.server:type=Produce,client-id=client-only", "attribute": "byte-rate", "series": "kafka_server_quota_byte_rate"},
+    {"object_name": "kafka.server:type=Produce,client-id=client-only", "attribute": "throttle-time", "series": "kafka_server_quota_throttle_time_ms"},
+    {"object_name": "kafka.server:type=Fetch,client-id=client-only", "attribute": "byte-rate", "series": "kafka_server_quota_byte_rate"},
+    {"object_name": "kafka.server:type=Fetch,client-id=client-only", "attribute": "throttle-time", "series": "kafka_server_quota_throttle_time_ms"},
+    {"object_name": "kafka.server:type=Produce,user=shared-user,client-id=shared-client", "attribute": "byte-rate", "series": "kafka_server_quota_byte_rate"},
+    {"object_name": "kafka.server:type=Produce,user=shared-user,client-id=shared-client", "attribute": "throttle-time", "series": "kafka_server_quota_throttle_time_ms"},
+    {"object_name": "kafka.server:type=Fetch,user=shared-user,client-id=shared-client", "attribute": "byte-rate", "series": "kafka_server_quota_byte_rate"},
+    {"object_name": "kafka.server:type=Fetch,user=shared-user,client-id=shared-client", "attribute": "throttle-time", "series": "kafka_server_quota_throttle_time_ms"}
+  ],
+  "completion_evidence": ["raw-jmx-cluster-a.jsonl", "raw-jmx-cluster-b.jsonl", "exporter-cluster-a.metrics", "exporter-cluster-b.metrics", "prometheus-targets.json", "prometheus-metadata.json", "prometheus-query-results.json", "quota-descriptions.json", "topic-descriptions.json", "cluster-id-comparison.json", "clean-restart-manifest.json", "footprint.json", "cleanup-result.json", "validator-result.json"],
+  "workload_rates": {"steady_low": 8192, "steady_high": 65536, "over_quota": 131072, "quota_limit": 16384},
+  "exit_contract": {"2": "prereq_failed:", "3": "config_generation_failed:", "4": "kafka_setup_failed:", "5": "workload_failed:", "6": "evidence_capture_failed:", "7": "validation_failed:", "8": "cleanup_failed:"},
+  "overlap_names": {"topic": "shared-topic", "user": "shared-user", "client_id": "shared-client", "group": "shared-group"},
+  "documented_commands": ["prereq", "start", "ready", "workload", "validate", "evidence", "stop", "cleanup"]
+}

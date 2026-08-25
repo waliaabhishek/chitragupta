@@ -138,7 +138,8 @@ window if the billing data changed.
 date too early, you get partial costs. The cutoff gives the vendor time to
 settle. For self-managed Kafka, this is less critical since you control the
 metrics, but a small cutoff (1–2 days) still avoids processing incomplete
-Prometheus scrapes.
+Prometheus scrapes. Self-managed Kafka uses closed UTC billing days, so this
+also gives the final `[00:00, 00:00)` window time to close.
 
 **`retention_days`** (default: 250) — Delete data older than this. Runs
 automatically after each pipeline cycle. Set this higher than `lookback_days`
@@ -221,9 +222,12 @@ Topic attribution is an optional overlay that breaks Kafka cluster costs down to
 
 **Should you enable it?**
 
-- **Confluent Cloud + Prometheus metrics configured** → yes, add `topic_attribution.enabled: true` under `plugin_settings`
+- **Confluent Cloud + Prometheus metrics configured** → supported with the
+  existing CCloud configuration and behavior
 - **Confluent Cloud without Prometheus** → no — config validation rejects `enabled: true` without a `metrics` source
-- **Self-managed Kafka or Generic metrics** → not supported
+- **Self-managed Kafka** → supported as an opt-in overlay with the
+  self-managed policy and telemetry requirements below
+- **Generic metrics** → not supported
 
 The minimal config:
 
@@ -236,9 +240,13 @@ plugin_settings:
     enabled: true
 ```
 
-This uses all defaults: `even_split` fallback when metrics are missing, 90-day retention, no exclusion overrides beyond the built-in internal topics.
+For CCloud, this uses its existing defaults, including its `even_split` fallback
+when metrics are missing and 90-day retention. See the
+[CCloud configuration reference](ccloud-reference.md#topic-attribution) for its
+separate exclusion and metric behavior.
 
-For the full field reference (exclusion patterns, cost mapping overrides, custom metric names, retry behavior), see the [CCloud configuration reference](ccloud-reference.md#topic-attribution).
+For self-managed Kafka, see [Optional topic attribution](#optional-topic-attribution)
+and the [self-managed reference](self-managed-reference.md#optional-topic-attribution).
 
 ---
 
@@ -294,12 +302,79 @@ your rates. Here is the exact math (from `ConstructedCostInput`):
 | Network ingress | `total_bytes_in ÷ 1,073,741,824 × network_ingress_per_gib` | 50 GiB × $0.01 = **$0.50** |
 | Network egress | `total_bytes_out ÷ 1,073,741,824 × network_egress_per_gib` | 50 GiB × $0.05 = **$2.50** |
 
-Storage uses the **average** of all Prometheus samples in the day (because storage
-is a point-in-time measurement, not a cumulative counter). Network uses the **sum**
-of all hourly increases (because bytes are a cumulative counter).
+Storage uses the **average** of all Prometheus samples in the closed UTC day
+(because storage is a point-in-time measurement, not a cumulative counter).
+Network uses the broker-wide client `alltopics` counter for each direction:
+`sum(increase(...alltopics_bytesin_total[86400s]))` or
+`sum(increase(...alltopics_bytesout_total[86400s]))`, evaluated for that day.
+Those pool counters have no `topic` label and exclude replication traffic.
+Topic-labelled counters are attribution evidence only; they never construct the
+network cost pool.
+
+### Bounded Prometheus history (self-managed only)
+
+Self-managed Kafka bounds historical Prometheus responses with
+`historical_acquisition_chunk_days`:
+
+```yaml
+plugin_settings:
+  historical_acquisition_chunk_days: 5  # omit for the default; valid range 1–30
+```
+
+The omitted/default value is `5`; `30` is the explicit operator-selected maximum.
+Each scope, cluster, and topic workload response spans no more than `H` closed UTC
+days, and only one reduced workload chunk is retained while the next is acquired.
+Smaller values reduce response size and memory but increase request count. See the
+[self-managed reference](self-managed-reference.md#bounded-historical-acquisition-and-recovery-behavior)
+for measured logical-family versus HTTP-attempt tables and formulas.
+
+Within a run, identical target-scope evidence is reused by its exact tenant, target
+identifier and label, step, start, and end. An open breaker makes one newest-point
+probe; a failed probe starts no work, progress, or writes. A successful probe is
+persisted, followed by complete bounded validation before workload, progress, or
+writes begin. Billing windows remain calculation-owned. Counters use exact UTC
+day-end samples for the preceding half-open day; gauges preserve each daily
+start-anchored grid and half-open filter. Zero versus missing evidence, family/day
+failure isolation, residual and reconciliation rows, retries, and terminal topic
+visibility remain unchanged, and reduced chunks are cleaned up on success, failure,
+or shutdown.
+
+This setting and bounded-history behavior do not apply to Confluent Cloud or generic
+metrics. Their existing configuration, query, progress, and attribution paths are
+unchanged.
 
 See [How Costs Work](../architecture/cost-model.md) for the complete mathematical
 model including allocation.
+
+### Optional topic attribution
+
+The cluster chargeback and principal allocation remain unchanged. To add a
+self-managed topic-level analytical view, opt in under `plugin_settings`:
+
+```yaml
+topic_attribution:
+  enabled: true
+  compute_policy: shared_even_v1
+  # Omit this key, or use [], when no topics should be excluded.
+  # exclude_topic_patterns:
+  #   - "internal-*"
+```
+
+Omitting `topic_attribution` keeps the overlay disabled. `shared_even_v1` assigns
+the full fixed compute cost evenly across active topics; it is a declared shared
+policy, not usage measurement. Its behavior is versioned by name. Ingress, egress,
+and storage use their own topic evidence and leave any unsupported remainder as
+`__UNATTRIBUTED__`, so the topic view reconciles to the cluster costs.
+
+Exclusion patterns do not change allocation. Actual topic names remain stored;
+the currently loaded YAML configuration classifies them when they are read.
+After a normal reload or restart, changed patterns affect current and historical
+views without recalculating costs. Analytics group matching topics as `Excluded topics`,
+while detailed rows and CSV retain the name and expose exclusion status.
+
+Self-managed pool construction and topic evidence use the same closed UTC
+`[00:00, 00:00)` window. Use a 1–2 day cutoff to avoid a day whose scrapes have
+not yet completed.
 
 ### Choosing a resource source
 
@@ -307,12 +382,12 @@ How does the engine discover your brokers and topics?
 
 | Source | How it works | Tradeoffs |
 |---|---|---|
-| `prometheus` (default) | Extracts broker, topic, and principal labels from `kafka_server_brokertopicmetrics_bytesin_total` | Zero additional credentials. Only discovers resources that have traffic. A topic with zero bytes in the discovery window won't appear. |
-| `admin_api` | Queries the Kafka AdminClient for cluster metadata | Discovers *all* topics including idle ones. Requires bootstrap server credentials. Does **not** discover principals (no ACL info). |
+| `prometheus` (default) | Extracts broker and topic labels from the available topic-labelled bytes-in, bytes-out, and log-size metrics | Zero additional credentials. Only discovers resources observed by those metrics. A topic with no evidence in the discovery window won't appear. |
+| `admin_api` | Queries the Kafka AdminClient for cluster metadata | Discovers *all* topics including idle ones. Requires bootstrap server credentials. |
 
 **When to use `admin_api`:** If you need a complete inventory of topics regardless
-of traffic. Combine with `identity_source: prometheus` or `both` to still get
-principal data from metrics.
+of traffic. Principal evidence and allocation policy remain separate from resource
+discovery.
 
 ```yaml
 resource_source:
@@ -324,53 +399,64 @@ resource_source:
   sasl_password: ${KAFKA_PASS}
 ```
 
-### Choosing an identity source
+### Binding a cluster to Prometheus targets
 
-How does the engine discover who is producing/consuming?
+`cluster_id` is the logical Chitragupta resource ID. Set the required
+`metrics_identifier` independently to the operator-defined Prometheus target value;
+`metrics_identifier_label` names that label and defaults to `kafka_cluster_id`.
+Every scraped broker target, including separately exposed JMX exporter endpoints,
+must carry the exact configured label/value.
 
-| Source | How it works | Tradeoffs |
-|---|---|---|
-| `prometheus` (default) | Extracts `principal` label from JMX metrics | Requires JMX exporter configured to expose principal labels. Only finds principals with recent traffic. |
-| `static` | You list identities in YAML | Works without Prometheus principal labels. You maintain the list manually. |
-| `both` | Combines Prometheus + static | Prometheus principals go to `metrics_derived` (dynamic, per-window). Static identities go to `resource_active` (always present). Good when Prometheus has partial coverage. |
+The same selector is applied to target health, discovery, broker-wide cost pools,
+and topic evidence. Do not rely on a shared Prometheus endpoint's default labels
+to isolate clusters.
 
-**Which one should you use?**
+For each billing window, Chitragupta validates the exact target selector, for
+example `up{kafka_cluster_id="kafka-dc1"}`. A missing, mismatched, incomplete, or
+unhealthy target fails closed before billing or progress is committed. Its open
+breaker keeps both blocked. Later runs perform one targeted probe; once healthy,
+recovery proceeds chronologically within the available lookback range and records an
+older unavailable portion as a retention gap. Topic and quota series can appear only
+when active, so neither proves this target scope.
 
-- If your JMX exporter includes `principal` labels on `kafka_server_brokertopicmetrics_*` → use `prometheus`
-- If JMX doesn't expose principal labels (common with older exporters) → use `static`
-- If some principals appear in metrics but you also want to include service accounts
-  that rarely produce traffic → use `both`
+### Choosing principal attribution
 
-```yaml
-# Static identities example
-identity_source:
-  source: static
-  static_identities:
-    - identity_id: "User:alice"
-      identity_type: principal
-      display_name: Alice
-      team: data-eng
-    - identity_id: "User:bob"
-      identity_type: service_account
-      display_name: Bob (ETL service)
-      team: platform
-```
-
-### Principal-to-team mapping
-
-Regardless of identity source, you can map raw principal IDs to team names. This
-is purely cosmetic — it doesn't affect allocation — but makes chargeback reports
-readable.
+BrokerTopicMetrics supplies a cluster-wide cost pool, not principal ownership.
+Quota-backed principal attribution is optional and off by default. Enable it only
+after Kafka quota telemetry is exported with the required labels:
 
 ```yaml
+principal_attribution:
+  enabled: true
+  scrape_interval_seconds: 30
+  max_gap_seconds: 90
+  compute_policy: unattributed
+  storage_policy: unattributed
 identity_source:
-  source: prometheus
+  source: prometheus  # or `both` when using static identities for a fixed pool
   principal_to_team:
-    "User:alice": team-data-eng
-    "User:bob": team-platform
-    "User:etl-service": team-platform
-  default_team: UNASSIGNED    # Principals not in the map get this
+    "User:service-account": data-platform
+  default_team: UNASSIGNED
 ```
+
+Produce quota rates allocate ingress and Fetch quota rates allocate egress. Kafka's
+authenticated user label becomes `User:<user>` without changing its case. User-only
+and user/client rates contribute to that user; a client-only rate stays
+`UNALLOCATED`. After target scope is valid, missing, invalid, or incomplete quota
+evidence leaves the affected direction unallocated. A target-scope failure instead
+stops calculation before quota queries or allocation and creates no business rows.
+Compute and storage remain fixed pools under their configured policies.
+
+The Prometheus target selector is checked before quota evidence. Retain the billing
+window, leading guard sample, calculation delay, and planned recalculation horizon.
+When `principal_attribution` is omitted or disabled, `prometheus` and `both` retain
+their byte-rate/throttle readiness probes (`observed`, `not_observed`, `invalid`, or
+`transient_failure`) without measured allocation; `static` is policy-only and makes
+no quota calls.
+
+For the full metric contract, state behavior, exact reconciliation, fixed-pool
+policies, and troubleshooting, see the
+[Self-Managed Kafka Configuration Reference](self-managed-reference.md#quota-backed-principal-attribution).
 
 ---
 
@@ -660,6 +746,8 @@ tenants:
       connection_string: "sqlite:///data/kafka-dc1.db"
     plugin_settings:
       cluster_id: kafka-dc1-cluster
+      metrics_identifier: kafka-dc1
+      metrics_identifier_label: kafka_cluster_id
       broker_count: 5
       cost_model:
         compute_hourly_rate: "0.45"
@@ -668,10 +756,6 @@ tenants:
         network_egress_per_gib: "0.09"
       identity_source:
         source: both
-        principal_to_team:
-          "User:etl-service": team-platform
-          "User:analytics": team-data
-        default_team: UNASSIGNED
         static_identities:
           - identity_id: "User:batch-job"
             identity_type: service_account
@@ -695,7 +779,7 @@ This configuration:
 - Runs the pipeline hourly, processing both tenants in parallel
 - CCloud: fetches billing from the API, allocates CKUs 70/30, uses Telemetry API
   metrics for per-principal network attribution
-- On-prem: constructs billing from Prometheus metrics and your rates, discovers
-  principals from JMX labels plus a static entry for a batch job that rarely
-  appears in metrics
+- On-prem: constructs billing from target-scoped Prometheus metrics and your rates,
+  discovers brokers/topics separately, records quota evidence, and uses visible
+  static policy identities for allocation
 - Both tenants emit to CSV and (CCloud only) Prometheus

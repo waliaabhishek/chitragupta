@@ -119,6 +119,7 @@ def test_ccloud_plugin_config_base_and_plugin_fields_validate() -> None:
 def valid_smk_settings() -> dict:
     return {
         "cluster_id": "kafka-cluster-001",
+        "metrics_identifier": "kraft-a-001",
         "broker_count": 3,
         "cost_model": {
             "compute_hourly_rate": "0.10",

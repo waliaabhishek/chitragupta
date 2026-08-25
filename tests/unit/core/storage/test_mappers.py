@@ -211,12 +211,13 @@ class TestChargebackMapper:
         assert dim.cost_type == "usage"
         assert dim.dimension_id is None  # not saved yet
 
-    def test_to_fact(self):
-        row = self._make_row()
+    def test_to_fact_does_not_persist_transient_metadata(self):
+        row = self._make_row(metadata={"team": "transient"})
         fact = chargeback_to_fact(row, dimension_id=42)
         assert fact.dimension_id == 42
         assert fact.amount == "50.25"
         assert '"team"' in fact.tags_json
+        assert "principal_team" not in fact.__table__.columns
 
     def test_to_domain(self):
         dim = ChargebackDimensionTable(
@@ -242,6 +243,25 @@ class TestChargebackMapper:
         assert domain.tags == {}
         assert domain.metadata == {}  # metadata is transient
         assert domain.cost_type == CostType.USAGE
+        assert not hasattr(domain, "principal_team")
+
+    def test_chargeback_mapper_has_no_plugin_specific_principal_knowledge(self):
+        from pathlib import Path
+
+        source = (
+            Path(__file__).resolve().parents[4] / "src" / "core" / "storage" / "backends" / "sqlmodel" / "mappers.py"
+        )
+
+        assert all(
+            value not in source.read_text(encoding="utf-8")
+            for value in (
+                "self_managed_kafka",
+                "User:",
+                "principal_quota_ready_v1",
+                "principal_quota_degraded_v1",
+                "usage_ratio_allocation",
+            )
+        )
 
     def test_null_resource_id(self):
         row = self._make_row(resource_id=None)

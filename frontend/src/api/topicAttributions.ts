@@ -30,6 +30,7 @@ export interface FetchTopicAttributionAggregationParams {
   topic_name?: string;
   product_type?: string;
   tag_filters?: Record<string, string[]>;
+  collapse_excluded?: boolean;
 }
 
 export interface ExportTopicAttributionsParams {
@@ -94,6 +95,9 @@ export async function fetchTopicAttributionAggregation(
   if (params.topic_name) qs.set("topic_name", params.topic_name);
   if (params.product_type) qs.set("product_type", params.product_type);
   if (params.tag_filters) appendTagFilters(qs, params.tag_filters);
+  if (params.collapse_excluded !== undefined) {
+    qs.set("collapse_excluded", String(params.collapse_excluded));
+  }
 
   const response = await fetch(
     `${API_URL}/tenants/${tenantName}/topic-attributions/aggregate?${qs.toString()}`,

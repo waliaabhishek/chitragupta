@@ -172,6 +172,7 @@ class TestIntegrationSmoke:
         config = SelfManagedKafkaConfig.from_plugin_settings(
             {
                 "cluster_id": "kafka-001",
+                "metrics_identifier": "kraft-a-001",
                 "broker_count": 3,
                 "cost_model": {
                     "compute_hourly_rate": "0.10",

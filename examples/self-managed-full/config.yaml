@@ -69,7 +69,7 @@ tenants:
     # Self-managed clusters typically have shorter Prometheus retention. Range: 1–364.
     lookback_days: 30
     # cutoff_days: skip the most recent N days (data may still be accumulating). Range: 1–30.
-    cutoff_days: 3
+    cutoff_days: 2
     # retention_days: how long to keep chargeback records in the database.
     # Records older than this are purged automatically. Range: 1–730.
     # retention_days: 180
@@ -107,9 +107,17 @@ tenants:
 
     plugin_settings:
       # ── Cluster identity ───────────────────────────────────────────────────
-      # cluster_id: identifier used internally to reference this cluster's resources.
-      # Does not need to match the Kafka cluster.id property — it's for Chitragupta's DB only.
+      # cluster_id: Chitragupta's logical resource identifier for this cluster.
+      # It is not the Prometheus target selector and need not match Kafka's cluster.id.
       cluster_id: kafka-dc1
+
+      # Required operator-defined Prometheus target label value for this cluster.
+      # Every scraped broker target, including separately exposed endpoints, must have
+      # this exact label/value. It is separate from cluster_id.
+      metrics_identifier: kafka-dc1
+      # Prometheus target label name. Default: kafka_cluster_id; change only when
+      # your scrape configuration uses another label name.
+      metrics_identifier_label: kafka_cluster_id
 
       # broker_count: number of brokers in this cluster.
       # Used to compute total compute cost = broker_count * compute_hourly_rate * hours.
@@ -133,7 +141,7 @@ tenants:
         # Network ingress cost per GiB (data entering the cluster from producers).
         network_ingress_per_gib: "0.01"
 
-        # Network egress cost per GiB (data leaving the cluster to consumers + replication).
+        # Network egress cost per GiB (data read by clients; replication is excluded).
         network_egress_per_gib: "0.09"
 
         # region_overrides: per-region rate overrides (optional).
@@ -161,30 +169,51 @@ tenants:
         # auth_type: bearer
         # bearer_token: "${PROMETHEUS_TOKEN}"
 
+      # ── Prometheus name aliases (optional) ────────────────────────────────
+      # Canonical names are keys; physical Prometheus names are values. These
+      # mappings are optional and partial. Leaving them commented preserves
+      # the canonical defaults shown in the metric inventory.
+      # metric_name_overrides:
+      #   kafka_log_log_size: company_kafka_partition_size
+      # label_name_overrides:
+      #   kafka_log_log_size:
+      #     broker: node
+      #     topic: topic_name
+      #     partition: partition_number
+
+      # ── Quota-backed principal attribution (optional) ───────────────────────
+      # Off by default. When enabled, Produce and Fetch quota gauges allocate the
+      # network pools separately. Scrape interval and maximum gap must match your
+      # Prometheus operation. Compute and storage remain fixed-policy pools.
+      # principal_attribution:
+      #   enabled: true
+      #   scrape_interval_seconds: 30
+      #   max_gap_seconds: 90
+      #   compute_policy: unattributed  # or static_even_v1
+      #   storage_policy: unattributed  # or static_even_v1
+
       # ── Identity source ────────────────────────────────────────────────────
-      # How to discover which principals (users/service accounts) are active.
-      # 'prometheus': extracts principals from metric labels (recommended — no extra setup).
-      # 'static': load from the static_identities list below.
-      # 'both': combine prometheus discovery with the static list.
+      # Static identities are used by static allocation and, when attribution is
+      # enabled, by the optional static_even_v1 compute/storage policy.
+      # Use prometheus or both when enabling principal_attribution.
       identity_source:
-        source: prometheus
+        source: static
 
-        # default_team: team assigned to principals that have no explicit mapping.
-        default_team: UNASSIGNED
-
-        # principal_to_team: map Kafka principals to internal team names (optional).
-        # Used for allocation — costs are grouped by team in reports.
+        # Maps quota-derived canonical IDs, such as User:service-account, to a
+        # team snapshot. Unmapped measured users use default_team (UNASSIGNED).
         # principal_to_team:
-        #   "User:alice": platform-team
-        #   "User:bob": data-team
-        #   "ServiceAccount:etl": ingest-team
+        #   "User:service-account": data-platform
+        # default_team: UNASSIGNED
 
-        # static_identities: manually-defined identities (used when source=static or both).
-        # static_identities:
-        #   - identity_id: "User:alice"
-        #     identity_type: principal        # principal, team, or service_account
-        #     display_name: Alice Smith       # optional — human-readable label
-        #     team: platform-team             # optional — explicit team assignment
+        # static_identities: policy identities used by static and both, and by
+        # static_even_v1 when principal attribution is enabled.
+        static_identities:
+          - identity_id: platform-team
+            identity_type: team
+            display_name: Platform Team
+          - identity_id: data-team
+            identity_type: team
+            display_name: Data Team
 
       # ── Resource source ────────────────────────────────────────────────────
       # How to discover Kafka resources (topics, partitions).
@@ -200,17 +229,21 @@ tenants:
         # sasl_username: "${KAFKA_USERNAME}"
         # sasl_password: "${KAFKA_PASSWORD}"
 
+      # ── Topic attribution (optional) ─────────────────────────────────────
+      # Omit this section (the default) to keep topic-level attribution disabled.
+      # It is independent of the principal policy configured above.
+      # topic_attribution:
+      #   enabled: true
+      #   # shared_even_v1 allocates fixed compute evenly across active topics.
+      #   compute_policy: shared_even_v1
+      #   # Omit this key, or use [], to keep every topic visible in analytics.
+      #   # exclude_topic_patterns:
+      #   #   - "internal-*"
+
       # ── Discovery window ───────────────────────────────────────────────────
-      # How many hours of Prometheus data to scan when discovering resources and identities.
+      # How many hours of Prometheus data to scan when discovering brokers and topics.
       # Default 1 hour is sufficient for most setups. Increase if metrics are sparse.
       # discovery_window_hours: 1
-
-      # ── Allocation tuning (optional) ───────────────────────────────────────
-      # Allocator-specific numeric/string/bool params passed to all allocators.
-      # Keys and semantics are allocator-defined.
-      # allocator_params:
-      #   min_bytes_threshold: 1073741824    # 1 GiB — principals below this excluded from usage ratio
-      #   fallback_to_even_split: true       # boolean param; interpretation is allocator-specific
 
       # ── Allocator overrides (optional) ─────────────────────────────────────
       # Override the default allocation strategy for specific product types.
@@ -231,6 +264,11 @@ tenants:
       # Controls billing granularity and Prometheus server load.
       # Default 3600 = 1-hour resolution. Lower = finer-grained data at higher load.
       # metrics_step_seconds: 3600
+
+      # Maximum closed UTC days in each historical Prometheus response and reduced
+      # workload chunk. Omit this setting to use 5; valid values are 1–30.
+      # Smaller values reduce response size and memory at the cost of more queries.
+      historical_acquisition_chunk_days: 5
 
       # chargeback_granularity: granularity of billing data produced by the plugin.
       # Controls emitter aggregation — emitters may not request finer granularity

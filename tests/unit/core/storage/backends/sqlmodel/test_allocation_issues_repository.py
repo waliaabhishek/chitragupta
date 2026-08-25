@@ -87,6 +87,29 @@ def _insert_row(
 
 
 class TestFindAllocationIssuesFiltering:
+    def test_static_policy_success_rows_are_not_reported_as_allocation_issues(self, session: Session) -> None:
+        _insert_row(
+            session,
+            identity_id="team-data",
+            cost_type=CostType.SHARED.value,
+            allocation_detail=AllocationDetail.EVEN_SPLIT_ALLOCATION.value,
+            amount="15.00",
+        )
+        _insert_row(
+            session,
+            identity_id="unallocated",
+            cost_type=CostType.SHARED.value,
+            allocation_detail="principal_telemetry_not_observed",
+            amount="15.00",
+        )
+        session.commit()
+
+        items, total = SQLModelChargebackRepository(session).find_allocation_issues("eco", "t1")
+
+        assert total == 1
+        assert items[0].identity_id == "unallocated"
+        assert items[0].allocation_detail == "principal_telemetry_not_observed"
+
     def test_returns_only_failure_code_rows(self, session: Session) -> None:
         """Success codes are excluded; only failure codes are returned."""
         # success rows — should be excluded

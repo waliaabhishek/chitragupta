@@ -1,0 +1,191 @@
+version: 1
+evidence_max_age_seconds: 900
+cluster_labels: [lab_cluster, kafka_cluster_id]
+failure_categories:
+  - missing_metric
+  - missing_label
+  - wrong_type
+  - quota_scope
+  - throttle_observation
+  - rate_distinction
+  - target_health
+  - cluster_selector
+  - high_cardinality
+  - evidence_stale
+quota_scopes: [user, client-id, user-client]
+rate_thresholds:
+  minimum_high_to_low_ratio: 4
+  minimum_throttle_time_ms: 0
+metrics:
+  - logical_name: alltopics_bytes_in
+    workload_profile: steady_low
+    raw_object_name: kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec
+    raw_attribute: Count
+    prometheus_series: kafka_server_brokertopicmetrics_alltopics_bytesin_total
+    type: counter
+    required_labels: [lab_cluster, kafka_cluster_id, broker]
+    forbidden_labels: [topic]
+  - logical_name: alltopics_bytes_out
+    workload_profile: steady_low
+    raw_object_name: kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec
+    raw_attribute: Count
+    prometheus_series: kafka_server_brokertopicmetrics_alltopics_bytesout_total
+    type: counter
+    required_labels: [lab_cluster, kafka_cluster_id, broker]
+    forbidden_labels: [topic]
+  - logical_name: topic_bytes_in
+    workload_profile: steady_low
+    raw_object_name: kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec,topic={topic}
+    raw_attribute: Count
+    prometheus_series: kafka_server_brokertopicmetrics_bytesin_total
+    type: counter
+    required_labels: [lab_cluster, kafka_cluster_id, broker, topic]
+  - logical_name: topic_bytes_out
+    workload_profile: steady_low
+    raw_object_name: kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec,topic={topic}
+    raw_attribute: Count
+    prometheus_series: kafka_server_brokertopicmetrics_bytesout_total
+    type: counter
+    required_labels: [lab_cluster, kafka_cluster_id, broker, topic]
+  - logical_name: partition_log_size
+    workload_profile: steady_low
+    raw_object_name: kafka.log:type=Log,name=Size,topic={topic},partition=0
+    raw_attribute: Value
+    prometheus_series: kafka_log_log_size
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, topic, partition]
+  - logical_name: produce_user_quota_byte_rate
+    workload_profile: steady_low
+    quota_type: Produce
+    quota_scope: user
+    raw_object_name: kafka.server:type=Produce,user={user}
+    raw_attribute: byte-rate
+    prometheus_series: kafka_server_quota_byte_rate
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: produce_user_quota_throttle_time
+    workload_profile: steady_low
+    quota_type: Produce
+    quota_scope: user
+    raw_object_name: kafka.server:type=Produce,user={user}
+    raw_attribute: throttle-time
+    prometheus_series: kafka_server_quota_throttle_time_ms
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: fetch_user_quota_byte_rate
+    workload_profile: steady_low
+    quota_type: Fetch
+    quota_scope: user
+    raw_object_name: kafka.server:type=Fetch,user={user}
+    raw_attribute: byte-rate
+    prometheus_series: kafka_server_quota_byte_rate
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: fetch_user_quota_throttle_time
+    workload_profile: steady_low
+    quota_type: Fetch
+    quota_scope: user
+    raw_object_name: kafka.server:type=Fetch,user={user}
+    raw_attribute: throttle-time
+    prometheus_series: kafka_server_quota_throttle_time_ms
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: produce_client_quota_byte_rate
+    workload_profile: steady_high
+    quota_type: Produce
+    quota_scope: client-id
+    raw_object_name: kafka.server:type=Produce,client-id={client_id}
+    raw_attribute: byte-rate
+    prometheus_series: kafka_server_quota_byte_rate
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: produce_client_quota_throttle_time
+    workload_profile: steady_high
+    quota_type: Produce
+    quota_scope: client-id
+    raw_object_name: kafka.server:type=Produce,client-id={client_id}
+    raw_attribute: throttle-time
+    prometheus_series: kafka_server_quota_throttle_time_ms
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: fetch_client_quota_byte_rate
+    workload_profile: steady_high
+    quota_type: Fetch
+    quota_scope: client-id
+    raw_object_name: kafka.server:type=Fetch,client-id={client_id}
+    raw_attribute: byte-rate
+    prometheus_series: kafka_server_quota_byte_rate
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: fetch_client_quota_throttle_time
+    workload_profile: steady_high
+    quota_type: Fetch
+    quota_scope: client-id
+    raw_object_name: kafka.server:type=Fetch,client-id={client_id}
+    raw_attribute: throttle-time
+    prometheus_series: kafka_server_quota_throttle_time_ms
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: produce_combined_quota_byte_rate
+    workload_profile: over_quota
+    quota_type: Produce
+    quota_scope: user-client
+    raw_object_name: kafka.server:type=Produce,user={user},client-id={client_id}
+    raw_attribute: byte-rate
+    prometheus_series: kafka_server_quota_byte_rate
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: produce_combined_quota_throttle_time
+    workload_profile: over_quota
+    quota_type: Produce
+    quota_scope: user-client
+    raw_object_name: kafka.server:type=Produce,user={user},client-id={client_id}
+    raw_attribute: throttle-time
+    prometheus_series: kafka_server_quota_throttle_time_ms
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: fetch_combined_quota_byte_rate
+    workload_profile: over_quota
+    quota_type: Fetch
+    quota_scope: user-client
+    raw_object_name: kafka.server:type=Fetch,user={user},client-id={client_id}
+    raw_attribute: byte-rate
+    prometheus_series: kafka_server_quota_byte_rate
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: fetch_combined_quota_throttle_time
+    workload_profile: over_quota
+    quota_type: Fetch
+    quota_scope: user-client
+    raw_object_name: kafka.server:type=Fetch,user={user},client-id={client_id}
+    raw_attribute: throttle-time
+    prometheus_series: kafka_server_quota_throttle_time_ms
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, broker, quota_type, quota_scope, user, client_id]
+  - logical_name: scrape_health
+    prometheus_series: up
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, job, instance]
+  - logical_name: jmx_scrape_health
+    prometheus_series: jmx_scrape_error
+    type: gauge
+    required_labels: [lab_cluster, kafka_cluster_id, job, instance]
+high_cardinality_exclusions:
+  - java.lang:*
+  - kafka.network:*
+  - kafka.request:*
+completion_evidence:
+  - raw-jmx-cluster-a.jsonl
+  - raw-jmx-cluster-b.jsonl
+  - exporter-cluster-a.metrics
+  - exporter-cluster-b.metrics
+  - prometheus-targets.json
+  - prometheus-metadata.json
+  - prometheus-query-results.json
+  - quota-descriptions.json
+  - topic-descriptions.json
+  - cluster-id-comparison.json
+  - clean-restart-manifest.json
+  - footprint.json
+  - cleanup-result.json
+  - validator-result.json

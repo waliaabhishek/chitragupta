@@ -3,33 +3,42 @@
 from __future__ import annotations
 
 import logging
+import re
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, StrictInt, field_validator, model_validator
 
-from core.config.models import PluginSettingsBase
+from core.config.models import EmitterSpec, PluginSettingsBase
 from core.metrics.config import MetricsConnectionConfig  # noqa: TC001 — Pydantic evaluates field annotations at runtime
+from plugins.self_managed_kafka.telemetry_aliases import (
+    validate_label_name_overrides,
+    validate_metric_name_overrides,
+    validate_resolved_aliases,
+)
 
 logger = logging.getLogger(__name__)
+
+
+NonNegativeCostRate = Annotated[Decimal, Field(ge=0)]
 
 
 class CostRateOverride(BaseModel):
     """Override cost rates for a specific region."""
 
-    compute_hourly_rate: Decimal | None = None
-    storage_per_gib_hourly: Decimal | None = None
-    network_ingress_per_gib: Decimal | None = None
-    network_egress_per_gib: Decimal | None = None
+    compute_hourly_rate: NonNegativeCostRate | None = None
+    storage_per_gib_hourly: NonNegativeCostRate | None = None
+    network_ingress_per_gib: NonNegativeCostRate | None = None
+    network_egress_per_gib: NonNegativeCostRate | None = None
 
 
 class CostModelConfig(BaseModel):
     """Infrastructure cost model for self-managed Kafka."""
 
-    compute_hourly_rate: Decimal  # Per broker-hour
-    storage_per_gib_hourly: Decimal  # Per GiB-hour (1 GiB = 2^30 bytes)
-    network_ingress_per_gib: Decimal  # Per GiB
-    network_egress_per_gib: Decimal  # Per GiB
+    compute_hourly_rate: NonNegativeCostRate  # Per broker-hour
+    storage_per_gib_hourly: NonNegativeCostRate  # Per GiB-hour (1 GiB = 2^30 bytes)
+    network_ingress_per_gib: NonNegativeCostRate  # Per GiB
+    network_egress_per_gib: NonNegativeCostRate  # Per GiB
     region_overrides: dict[str, CostRateOverride] = {}
 
 
@@ -70,17 +79,111 @@ class ResourceSourceConfig(BaseModel):
         return self
 
 
+class SelfManagedTopicAttributionConfig(BaseModel):
+    """Configuration for the self-managed Kafka topic-attribution overlay."""
+
+    enabled: bool = False
+    compute_policy: Literal["disabled", "shared_even_v1"] = "disabled"
+    exclude_topic_patterns: list[str] = Field(default_factory=list)
+    retention_days: int = Field(default=90, gt=0, le=365)
+    emitters: list[EmitterSpec] = Field(default_factory=list)
+
+
+class SelfManagedPrincipalAttributionConfig(BaseModel):
+    """Opt-in configuration for quota-backed principal attribution."""
+
+    enabled: bool = False
+    scrape_interval_seconds: int | None = Field(default=None, gt=0)
+    max_gap_seconds: int | None = Field(default=None, gt=0)
+    compute_policy: Literal["unattributed", "static_even_v1"] = "unattributed"
+    storage_policy: Literal["unattributed", "static_even_v1"] = "unattributed"
+
+    @model_validator(mode="after")
+    def validate_enabled_cadence(self) -> SelfManagedPrincipalAttributionConfig:
+        """Require both independent cadence inputs only for measured allocation."""
+        if self.enabled and (self.scrape_interval_seconds is None or self.max_gap_seconds is None):
+            raise ValueError(
+                "scrape_interval_seconds and max_gap_seconds are required when principal_attribution is enabled"
+            )
+        return self
+
+
 class SelfManagedKafkaConfig(PluginSettingsBase):
     """Validates plugin_settings for ecosystem='self_managed_kafka'."""
 
     cluster_id: str  # Logical identifier for this cluster (used as resource_id in billing)
+    metrics_identifier: str = Field(
+        min_length=1,
+        description="Operator-defined Prometheus label value used to scope this configured Kafka cluster.",
+    )
+    metrics_identifier_label: str = Field(
+        default="kafka_cluster_id",
+        min_length=1,
+        description="Prometheus target label name that carries metrics_identifier.",
+    )
+    metric_name_overrides: dict[str, str] = Field(default_factory=dict)
+    label_name_overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
     broker_count: int = Field(gt=0)  # Used for compute cost calculation
     region: str | None = None  # Optional region for cost overrides
     cost_model: CostModelConfig
+    principal_attribution: SelfManagedPrincipalAttributionConfig = Field(
+        default_factory=SelfManagedPrincipalAttributionConfig
+    )
     identity_source: IdentitySourceConfig = Field(default_factory=IdentitySourceConfig)
     resource_source: ResourceSourceConfig = Field(default_factory=ResourceSourceConfig)
     metrics: MetricsConnectionConfig  # Required for cost construction + allocation
     discovery_window_hours: int = Field(default=1, gt=0)
+    historical_acquisition_chunk_days: StrictInt = Field(default=5, ge=1, le=30)
+    topic_attribution: SelfManagedTopicAttributionConfig = Field(default_factory=SelfManagedTopicAttributionConfig)
+
+    @field_validator("metrics_identifier", "metrics_identifier_label")
+    @classmethod
+    def validate_metrics_selector_value(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("metrics_identifier_label")
+    @classmethod
+    def validate_metrics_identifier_label_name(cls, value: str) -> str:
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) is None:
+            raise ValueError("metrics_identifier_label is not a valid Prometheus label identifier")
+        return value
+
+    @field_validator("metric_name_overrides", mode="before")
+    @classmethod
+    def validate_metric_name_override_shape(cls, value: object) -> object:
+        validate_metric_name_overrides(value)
+        return value
+
+    @field_validator("label_name_overrides", mode="before")
+    @classmethod
+    def validate_label_name_override_shape(cls, value: object) -> object:
+        validate_label_name_overrides(value)
+        return value
+
+    @model_validator(mode="after")
+    def validate_telemetry_aliases(self) -> SelfManagedKafkaConfig:
+        """Validate aliases after all defaults are resolved."""
+        validate_resolved_aliases(
+            self.metric_name_overrides,
+            self.label_name_overrides,
+            self.metrics_identifier_label,
+        )
+        return self
+
+    @field_validator("identity_source")
+    @classmethod
+    def validate_principal_attribution_identity_source(
+        cls,
+        identity_source: IdentitySourceConfig,
+        info: Any,
+    ) -> IdentitySourceConfig:
+        """Measured attribution requires a Prometheus identity source."""
+        attribution = info.data.get("principal_attribution")
+        if attribution is not None and attribution.enabled and identity_source.source not in {"prometheus", "both"}:
+            raise ValueError("identity_source.source must be prometheus or both when principal_attribution is enabled")
+        return identity_source
 
     @classmethod
     def from_plugin_settings(cls, settings: dict[str, Any]) -> SelfManagedKafkaConfig:

@@ -45,18 +45,22 @@ export function TopicAttributionAnalytics({
   const topTopicsData = useTopicAttributionAggregation({
     ...sharedParams,
     groupBy: ["topic_name"],
+    collapseExcluded: true,
   });
   const compositionData = useTopicAttributionAggregation({
     ...sharedParams,
     groupBy: ["topic_name", "product_type"],
+    collapseExcluded: true,
   });
   const envData = useTopicAttributionAggregation({
     ...sharedParams,
     groupBy: ["topic_name", "env_id"],
+    collapseExcluded: true,
   });
   const clusterData = useTopicAttributionAggregation({
     ...sharedParams,
     groupBy: ["cluster_resource_id", "topic_name"],
+    collapseExcluded: true,
   });
   const mixData = useTopicAttributionAggregation({
     ...sharedParams,

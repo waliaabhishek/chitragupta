@@ -4,6 +4,8 @@ import inspect
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
 import core.engine.helpers as helpers
 import core.engine.topic_attribution_models as tam
 from core.engine.topic_attribution_models import (
@@ -302,3 +304,171 @@ class TestTopicFilter:
         assert "__consumer_offsets" not in topic_names
         total = sum(r.amount for r in rows)
         assert total == Decimal("10.00")
+
+
+class TestReconciledSelfManagedTopicRows:
+    def _context(self, *, cost: Decimal):
+        from core.engine.topic_attribution_models import TopicAttributionRowOutputContext
+
+        return TopicAttributionRowOutputContext(
+            ecosystem="self_managed_kafka",
+            tenant_id="tenant-1",
+            timestamp=datetime(2026, 2, 1, tzinfo=UTC),
+            env_id="cluster-a",
+            cluster_resource_id="billing-cluster-a",
+            product_category="kafka",
+            product_type="SELF_KAFKA_NETWORK_INGRESS",
+            cluster_cost=cost,
+        )
+
+    def test_partial_usage_preserves_a_distinct_unattributed_residual(self) -> None:
+        from core.engine.topic_attribution_models import build_reconciled_topic_rows
+
+        rows = build_reconciled_topic_rows(
+            self._context(cost=Decimal("10.0000")),
+            cluster_quantity=Decimal("100"),
+            pool_usage=Decimal("100"),
+            topic_usage={"orders": Decimal("60")},
+            attribution_method="bytes_ratio",
+            residual_method="incomplete_topic_telemetry",
+        )
+
+        by_topic = {row.topic_name: row for row in rows}
+        assert by_topic["orders"].amount == Decimal("6.0000")
+        assert by_topic["__UNATTRIBUTED__"].amount == Decimal("4.0000")
+        assert by_topic["__UNATTRIBUTED__"].attribution_method == "incomplete_topic_telemetry"
+        assert sum(row.amount for row in rows) == Decimal("10.0000")
+
+    def test_one_quantum_usage_residual_is_not_absorbed_by_rounding(self) -> None:
+        from core.engine.topic_attribution_models import build_reconciled_topic_rows
+
+        rows = build_reconciled_topic_rows(
+            self._context(cost=Decimal("10.0000")),
+            cluster_quantity=Decimal("100000"),
+            pool_usage=Decimal("100000"),
+            topic_usage={"orders": Decimal("99999")},
+            attribution_method="bytes_ratio",
+            residual_method="incomplete_topic_telemetry",
+        )
+
+        residual = next(row for row in rows if row.topic_name == "__UNATTRIBUTED__")
+        assert residual.amount == Decimal("0.0001")
+        assert residual.attribution_method == "incomplete_topic_telemetry"
+        assert sum(row.amount for row in rows) == Decimal("10.0000")
+
+    def test_high_cardinality_reconciliation_distributes_only_rounding_remainder(self) -> None:
+        from core.engine.topic_attribution_models import build_reconciled_topic_rows
+
+        rows = build_reconciled_topic_rows(
+            self._context(cost=Decimal("0.1000")),
+            cluster_quantity=Decimal("17"),
+            pool_usage=Decimal("17"),
+            topic_usage={f"topic-{index}": Decimal("1") for index in range(17)},
+            attribution_method="bytes_ratio",
+            residual_method="incomplete_topic_telemetry",
+        )
+
+        assert {row.topic_name for row in rows} == {f"topic-{index}" for index in range(17)}
+        assert all(row.amount >= Decimal("0") for row in rows)
+        assert sum(row.amount for row in rows) == Decimal("0.1000")
+
+    @pytest.mark.parametrize(
+        ("topic_usage", "expected_method"),
+        [
+            ({"orders": Decimal("100.001")}, "bytes_ratio"),
+            ({"orders": Decimal("100.002")}, "invalid_topic_telemetry"),
+        ],
+    )
+    def test_over_pool_evidence_uses_the_documented_monetary_tolerance(
+        self,
+        topic_usage: dict[str, Decimal],
+        expected_method: str,
+    ) -> None:
+        from core.engine.topic_attribution_models import build_reconciled_topic_rows
+
+        rows = build_reconciled_topic_rows(
+            self._context(cost=Decimal("10.0000")),
+            cluster_quantity=Decimal("100"),
+            pool_usage=Decimal("100"),
+            topic_usage=topic_usage,
+            attribution_method="bytes_ratio",
+            residual_method="incomplete_topic_telemetry",
+        )
+
+        assert {row.attribution_method for row in rows} == {expected_method}
+        assert sum(row.amount for row in rows) == Decimal("10.0000")
+
+    @pytest.mark.parametrize(
+        ("topic_usage", "expected_method"),
+        [
+            (Decimal("350"), "bytes_ratio"),
+            (Decimal("400"), "invalid_topic_telemetry"),
+        ],
+    )
+    def test_over_pool_tolerance_uses_unquantized_cluster_cost(
+        self,
+        topic_usage: Decimal,
+        expected_method: str,
+    ) -> None:
+        from core.engine.topic_attribution_models import build_reconciled_topic_rows
+
+        rows = build_reconciled_topic_rows(
+            self._context(cost=Decimal("0.00004")),
+            cluster_quantity=Decimal("100"),
+            pool_usage=Decimal("100"),
+            topic_usage={"orders": topic_usage},
+            attribution_method="bytes_ratio",
+            residual_method="incomplete_topic_telemetry",
+        )
+
+        assert {row.attribution_method for row in rows} == {expected_method}
+        assert sum(row.amount for row in rows) == Decimal("0.0000")
+
+    def test_zero_cluster_usage_has_explicit_terminal_outcome(self) -> None:
+        from core.engine.topic_attribution_models import build_reconciled_topic_rows
+
+        rows = build_reconciled_topic_rows(
+            self._context(cost=Decimal("0.0000")),
+            cluster_quantity=Decimal("0"),
+            pool_usage=Decimal("0"),
+            topic_usage={},
+            attribution_method="bytes_ratio",
+            residual_method="incomplete_topic_telemetry",
+        )
+
+        assert len(rows) == 1
+        assert rows[0].topic_name == "__UNATTRIBUTED__"
+        assert rows[0].attribution_method == "zero_cluster_usage"
+        assert rows[0].amount == Decimal("0.0000")
+
+    def test_empty_evidence_with_a_positive_pool_keeps_a_quantized_zero_residual(self) -> None:
+        from core.engine.topic_attribution_models import build_reconciled_topic_rows
+
+        rows = build_reconciled_topic_rows(
+            self._context(cost=Decimal("0.00001")),
+            cluster_quantity=Decimal("1"),
+            pool_usage=Decimal("1"),
+            topic_usage={},
+            attribution_method="bytes_ratio",
+            residual_method="incomplete_topic_telemetry",
+        )
+
+        assert [(row.topic_name, row.attribution_method, row.amount) for row in rows] == [
+            ("__UNATTRIBUTED__", "incomplete_topic_telemetry", Decimal("0.0000")),
+        ]
+
+    def test_excluded_topic_name_remains_a_measured_allocation_participant(self) -> None:
+        from core.engine.topic_attribution_models import build_reconciled_topic_rows
+
+        rows = build_reconciled_topic_rows(
+            self._context(cost=Decimal("10.0000")),
+            cluster_quantity=Decimal("100"),
+            pool_usage=Decimal("100"),
+            topic_usage={"__consumer_offsets": Decimal("100")},
+            attribution_method="bytes_ratio",
+            residual_method="incomplete_topic_telemetry",
+        )
+
+        assert [(row.topic_name, row.attribution_method, row.amount) for row in rows] == [
+            ("__consumer_offsets", "bytes_ratio", Decimal("10.0000")),
+        ]

@@ -5,7 +5,10 @@ import logging
 import signal
 import sys
 import threading
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+
+from pydantic import ValidationError
 
 from core.api import get_version
 from core.config.loader import load_config
@@ -76,12 +79,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Re-emit all pending chargebacks from DB and exit (no pipeline run)",
     )
     parser.add_argument(
+        "--check-self-managed-telemetry",
+        action="store_true",
+        default=False,
+        help="Check configured self-managed Kafka Prometheus telemetry and exit",
+    )
+    parser.add_argument(
         "--mode",
         choices=["worker", "api", "both"],
         default="worker",
         help="Run mode: worker (pipeline), api (HTTP server), or both",
     )
-    return parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(raw_argv)
+    if args.check_self_managed_telemetry:
+        for option, present in (
+            ("--validate", args.validate),
+            ("--show-config", args.show_config),
+            ("--run-once", args.run_once),
+            ("--emit-once", args.emit_once),
+            ("--mode", any(token == "--mode" or token.startswith("--mode=") for token in raw_argv)),
+        ):
+            if present:
+                parser.error(f"--check-self-managed-telemetry cannot be combined with {option}")
+    return args
 
 
 def setup_logging(settings: AppSettings) -> None:
@@ -170,7 +191,10 @@ def _validate_plugin_configs(settings: AppSettings) -> None:
         try:
             validate_fn(tenant_config.plugin_settings.model_dump())
         except Exception as exc:
-            errors.append(f"tenant {tenant_name!r} ({ecosystem}): {exc}")
+            detail = str(exc)
+            if detail.startswith("invalid_self_managed_cost_rate"):
+                detail = f"tenant={tenant_config.tenant_id} {detail}"
+            errors.append(f"tenant {tenant_name!r} ({ecosystem}): {detail}")
     if errors:
         raise ValueError("\n".join(errors))
 
@@ -296,10 +320,71 @@ def main(argv: list[str] | None = None) -> None:
     try:
         settings = load_config(args.config_file, env_file=args.env_file)
     except Exception as exc:
+        if args.check_self_managed_telemetry:
+            print(f"Telemetry check configuration failed:\n{exc}", file=sys.stderr)
+            sys.exit(1)
         if args.validate:
             print(f"Config validation failed:\n{exc}", file=sys.stderr)
             sys.exit(1)
         raise
+
+    if args.check_self_managed_telemetry:
+        from plugins.self_managed_kafka import (
+            SelfManagedKafkaPlugin,
+            TelemetryCheckState,
+            TelemetryFamilyCheck,
+            check_self_managed_telemetry,
+            render_telemetry_check_jsonl,
+        )
+        from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
+
+        selected = [
+            (tenant_name, tenant_config)
+            for tenant_name, tenant_config in settings.tenants.items()
+            if tenant_config.ecosystem == "self_managed_kafka"
+        ]
+        if not selected:
+            print("error: no self-managed Kafka tenant is configured", file=sys.stderr)
+            sys.exit(2)
+
+        validated: list[tuple[str, SelfManagedKafkaConfig]] = []
+        config_errors: list[str] = []
+        for tenant_name, tenant_config in selected:
+            raw_settings = tenant_config.plugin_settings.model_dump()
+            try:
+                SelfManagedKafkaPlugin().validate_plugin_settings(raw_settings)
+                validated.append(
+                    (
+                        tenant_name,
+                        SelfManagedKafkaConfig.from_plugin_settings(raw_settings),
+                    )
+                )
+            except (ValidationError, ValueError) as exc:
+                detail = str(exc)
+                if detail.startswith("invalid_self_managed_cost_rate"):
+                    detail = f"tenant={tenant_config.tenant_id} {detail}"
+                config_errors.append(f"tenant {tenant_name!r}: {detail}")
+        if config_errors:
+            print("Telemetry check configuration failed:\n" + "\n".join(config_errors), file=sys.stderr)
+            sys.exit(1)
+
+        window_end = datetime.now(UTC)
+        records: list[TelemetryFamilyCheck] = []
+        for tenant_name, config in validated:
+            records.extend(
+                check_self_managed_telemetry(
+                    tenant_name=tenant_name,
+                    config=config,
+                    window_end=window_end,
+                )
+            )
+        print(
+            render_telemetry_check_jsonl(records, tenant_count=len(validated)),
+            end="",
+        )
+        if any(record.state in {TelemetryCheckState.INVALID, TelemetryCheckState.INCONCLUSIVE} for record in records):
+            sys.exit(1)
+        sys.exit(0)
 
     if args.validate:
         try:

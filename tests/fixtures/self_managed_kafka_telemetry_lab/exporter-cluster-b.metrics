@@ -1,0 +1,28 @@
+# TYPE kafka_server_brokertopicmetrics_alltopics_bytesin_total counter
+kafka_server_brokertopicmetrics_alltopics_bytesin_total{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1"} 32768
+# TYPE kafka_server_brokertopicmetrics_alltopics_bytesout_total counter
+kafka_server_brokertopicmetrics_alltopics_bytesout_total{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1"} 24576
+# TYPE kafka_server_brokertopicmetrics_bytesin_total counter
+kafka_server_brokertopicmetrics_bytesin_total{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",topic="shared-topic"} 16384
+# TYPE kafka_server_brokertopicmetrics_bytesout_total counter
+kafka_server_brokertopicmetrics_bytesout_total{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",topic="shared-topic"} 12288
+# TYPE kafka_log_log_size gauge
+kafka_log_log_size{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",topic="shared-topic",partition="0"} 24576
+# TYPE kafka_server_quota_byte_rate gauge
+kafka_server_quota_byte_rate{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Produce",quota_scope="user",user="user-only",client_id="not_applicable"} 8192
+kafka_server_quota_byte_rate{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Fetch",quota_scope="user",user="user-only",client_id="not_applicable"} 8192
+kafka_server_quota_byte_rate{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Produce",quota_scope="client-id",user="not_applicable",client_id="client-only"} 65536
+kafka_server_quota_byte_rate{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Fetch",quota_scope="client-id",user="not_applicable",client_id="client-only"} 65536
+kafka_server_quota_byte_rate{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Produce",quota_scope="user-client",user="shared-user",client_id="shared-client"} 131072
+kafka_server_quota_byte_rate{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Fetch",quota_scope="user-client",user="shared-user",client_id="shared-client"} 131072
+# TYPE kafka_server_quota_throttle_time_ms gauge
+kafka_server_quota_throttle_time_ms{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Produce",quota_scope="user",user="user-only",client_id="not_applicable"} 0
+kafka_server_quota_throttle_time_ms{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Fetch",quota_scope="user",user="user-only",client_id="not_applicable"} 0
+kafka_server_quota_throttle_time_ms{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Produce",quota_scope="client-id",user="not_applicable",client_id="client-only"} 0
+kafka_server_quota_throttle_time_ms{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Fetch",quota_scope="client-id",user="not_applicable",client_id="client-only"} 0
+kafka_server_quota_throttle_time_ms{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Produce",quota_scope="user-client",user="shared-user",client_id="shared-client"} 9
+kafka_server_quota_throttle_time_ms{lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001",broker="1",quota_type="Fetch",quota_scope="user-client",user="shared-user",client_id="shared-client"} 6
+# TYPE up gauge
+up{job="kafka-jmx",instance="jmx-b:7071",lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001"} 1
+# TYPE jmx_scrape_error gauge
+jmx_scrape_error{job="kafka-jmx",instance="jmx-b:7071",lab_cluster="cluster-b",kafka_cluster_id="kraft-b-001"} 0

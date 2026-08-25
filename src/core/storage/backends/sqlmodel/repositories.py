@@ -850,6 +850,9 @@ class SQLModelChargebackRepository:
             self._session.add_all(unique_facts.values())
         return len(unique_facts)
 
+    def _to_domain_rows(self, results: Sequence[Any]) -> list[ChargebackRow]:
+        return [chargeback_to_domain(dim, fact) for dim, fact in results]
+
     def _query_joined(self, *where_clauses: Any) -> list[ChargebackRow]:
         """Execute a joined query on dimensions+facts. where_clauses are SQLAlchemy column elements."""
         stmt = (
@@ -861,7 +864,7 @@ class SQLModelChargebackRepository:
             .where(*where_clauses)
         )
         results = self._session.execute(stmt).all()
-        return [chargeback_to_domain(dim, fact) for dim, fact in results]
+        return self._to_domain_rows(results)
 
     def find_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> list[ChargebackRow]:
         start, end = exact_utc_half_open_bounds(
@@ -1219,7 +1222,7 @@ class SQLModelChargebackRepository:
             .limit(limit)
         )
         results = self._session.execute(stmt).all()
-        items = [chargeback_to_domain(dim, fact) for dim, fact in results]
+        items = self._to_domain_rows(results)
         if tags_repo is not None:
             _overlay_tags(items, tags_repo)
         return items, total
@@ -1259,7 +1262,7 @@ class SQLModelChargebackRepository:
             .execution_options(yield_per=batch_size)
         )
         for partition in self._session.execute(stmt).partitions(batch_size):
-            batch = [chargeback_to_domain(dim, fact) for dim, fact in partition]
+            batch = self._to_domain_rows(partition)
             if tags_repo is not None:
                 _overlay_tags(batch, tags_repo)
             yield from batch

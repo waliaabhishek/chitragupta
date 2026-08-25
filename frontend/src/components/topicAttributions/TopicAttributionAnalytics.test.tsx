@@ -1,8 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TopicAttributionAnalytics } from "./TopicAttributionAnalytics";
 import type { TopicAttributionFilters } from "../../types/filters";
+import type { UseTopicAttributionAggregationParams } from "../../hooks/useTopicAttributionAggregation";
 
 vi.mock("antd", () => ({
   Col: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -69,13 +70,19 @@ vi.mock("../pivotPanel/TagPivotPanel", () => ({
   TagPivotPanel: () => null,
 }));
 
+const { useTopicAttributionAggregationMock } = vi.hoisted(() => ({
+  useTopicAttributionAggregationMock: vi.fn<
+    (params: UseTopicAttributionAggregationParams) => unknown
+  >(() => ({
+      data: { buckets: [] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    })),
+}));
+
 vi.mock("../../hooks/useTopicAttributionAggregation", () => ({
-  useTopicAttributionAggregation: () => ({
-    data: { buckets: [] },
-    isLoading: false,
-    error: null,
-    refetch: vi.fn(),
-  }),
+  useTopicAttributionAggregation: useTopicAttributionAggregationMock,
 }));
 
 const defaultFilters: TopicAttributionFilters = {
@@ -91,6 +98,10 @@ const defaultFilters: TopicAttributionFilters = {
 };
 
 describe("TopicAttributionAnalytics", () => {
+  beforeEach(() => {
+    useTopicAttributionAggregationMock.mockClear();
+  });
+
   it("Cost Velocity ChartCard is wired with correct subtitle", () => {
     render(
       <TopicAttributionAnalytics tenantName="test" filters={defaultFilters} />,
@@ -103,5 +114,19 @@ describe("TopicAttributionAnalytics", () => {
           "Top 10 topics by largest period-over-period cost change",
       ),
     ).toBe(true);
+  });
+
+  it("requests collapsed excluded-topic buckets for every topic analytical view", () => {
+    render(
+      <TopicAttributionAnalytics tenantName="test" filters={defaultFilters} />,
+    );
+
+    const topicCalls = useTopicAttributionAggregationMock.mock.calls.filter(
+      ([params]) => params.groupBy.includes("topic_name"),
+    );
+    expect(topicCalls).toHaveLength(4);
+    for (const [params] of topicCalls) {
+      expect(params).toEqual(expect.objectContaining({ collapseExcluded: true }));
+    }
   });
 });

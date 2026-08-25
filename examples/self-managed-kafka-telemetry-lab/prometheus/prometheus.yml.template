@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: kafka-jmx
+    static_configs:
+      - targets: ["jmx-a:7071"]
+        labels:
+          lab_cluster: cluster-a
+          kafka_cluster_id: __KAFKA_CLUSTER_A_ID__
+          broker: "1"
+      - targets: ["jmx-b:7071"]
+        labels:
+          lab_cluster: cluster-b
+          kafka_cluster_id: __KAFKA_CLUSTER_B_ID__
+          broker: "1"
+

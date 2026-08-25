@@ -86,6 +86,23 @@ class TestChargebackRow:
         assert row.tags == {}
         assert row.metadata == {}
 
+    def test_metadata_remains_the_only_generic_extension_after_existing_positional_fields(self) -> None:
+        row = ChargebackRow(
+            "self_managed_kafka",
+            "tenant-1",
+            _NOW,
+            "cluster-1",
+            "kafka",
+            "SELF_KAFKA_NETWORK_INGRESS",
+            "User:alice",
+            CostType.USAGE,
+            dimension_id=17,
+            metadata={"team": "transient"},
+        )
+
+        assert row.dimension_id == 17
+        assert row.metadata == {"team": "transient"}
+
     def test_tags_mutation(self) -> None:
         row = ChargebackRow(
             ecosystem="confluent",

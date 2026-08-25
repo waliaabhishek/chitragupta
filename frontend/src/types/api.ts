@@ -218,6 +218,7 @@ export interface TopicAttributionResponse {
   product_type: string;
   attribution_method: string;
   amount: string; // Decimal as string
+  is_excluded?: boolean;
 }
 
 export interface TopicAttributionAggregationBucket {
