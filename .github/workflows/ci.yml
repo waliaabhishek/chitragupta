@@ -154,6 +154,7 @@ jobs:
           uv run pytest
           tests/integration/core/storage/test_migration_029_postgresql.py
           tests/integration/core/storage/test_manual_alembic_command.py
+          tests/integration/plugins/self_managed_kafka/storage/test_schema_postgresql.py
 
   ci-success:
     name: CI Success

@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, inspect, text
 
 from core.preview.storage_availability import PreviewEvidenceOfflineMigrationError
 from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
+from core.storage.migrations.config import set_alembic_database_url
 from plugins.confluent_cloud.storage.module import CCloudStorageModule
 
 HEAD_TABLE = "ccloud_focus_preview_repair_heads"
@@ -30,7 +31,7 @@ def _config(
     migrations = Path(__file__).resolve().parents[4] / "src" / "core" / "storage" / "migrations"
     config = Config(str(migrations / "alembic.ini"), output_buffer=output)
     config.set_main_option("script_location", str(migrations))
-    config.set_main_option("sqlalchemy.url", url)
+    set_alembic_database_url(config, url)
     x_arguments = [] if selection is None else [f"focus_preview={selection}"]
     if plugin_storage is not None:
         x_arguments.append(f"plugin_storage={plugin_storage}")
