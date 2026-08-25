@@ -930,6 +930,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Pipeline steps per date">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#self-managed-bounded-history-and-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-managed bounded history and recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stable-scope-gate-capability-contract-developer-facing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stable scope-gate capability contract (developer-facing)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1385,6 +1413,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Pipeline steps per date">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#self-managed-bounded-history-and-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-managed bounded history and recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stable-scope-gate-capability-contract-developer-facing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stable scope-gate capability contract (developer-facing)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1539,8 +1595,11 @@
    deletion.</p>
 </li>
 <li>
-<p><strong>Fetch metrics</strong> — <code>metrics_source.query_range(...)</code> per handler
-   Prometheus range queries for the billing period. Returns <code>MetricRow</code> objects.</p>
+<p><strong>Fetch metrics</strong> — Prometheus range queries for the billing period return
+   metric rows. Self-managed Kafka bounds each scope, cluster, and topic response to
+   at most <code>H</code> closed UTC days (<code>H=5</code> when omitted, valid <code>1..30</code>) and reduces one
+   workload chunk before requesting the next. Identical target-scope evidence is
+   reused within a run by its exact tenant, selector, step, start, and end.</p>
 </li>
 <li>
 <p><strong>Resolve identities</strong> — <code>handler.resolve_identities(tenant_id, resource_id, ...)</code>
@@ -1581,6 +1640,53 @@
    so already-emitted dates are not re-sent on the next cycle.</p>
 </li>
 </ol>
+<h3 id="self-managed-bounded-history-and-recovery">Self-managed bounded history and recovery<a class="headerlink" href="#self-managed-bounded-history-and-recovery" title="Permanent link">&para;</a></h3>
+<p>Self-managed Kafka validates target scope before workload, progress, or writes. An
+open breaker issues one newest-point health probe; a failed probe performs no gather,
+calculation, topic, or progress work. A successful probe is persisted as recovery
+state, then the complete bounded scope is validated again before work resumes.
+Calculation remains the owner of billing windows, so acquisition never widens or
+invents a date set.</p>
+<p>Counter evidence is evaluated at exact UTC day ends for the preceding half-open
+<code>[day_start, day_end)</code> day. Gauge evidence keeps each daily start-anchored grid and
+the same half-open filter, including non-divisor steps. Present zero remains distinct
+from missing data; one failed family or day does not discard successful families or
+later dates. Reduced chunk evidence is cleared after success, failure, or shutdown,
+and existing residual, reconciliation, retry, and terminal-topic behavior is
+preserved.</p>
+<p>The optional self-managed topic overlay is a separate plugin-specific path. Confluent
+Cloud keeps its existing configuration, query, progress, and topic behavior, and
+generic metrics keeps its existing path; neither consumes the self-managed chunk
+setting.</p>
+<h3 id="stable-scope-gate-capability-contract-developer-facing">Stable scope-gate capability contract (developer-facing)<a class="headerlink" href="#stable-scope-gate-capability-contract-developer-facing" title="Permanent link">&para;</a></h3>
+<p><code>ScopeGatePlugin</code> remains the unchanged scope-gate contract. Two independent,
+optional capabilities extend the self-managed lifecycle without changing that
+existing shape:</p>
+<ul>
+<li><code>ScopeGateRunLifecycle</code> resets run-local scope/evidence state. It affects progress
+  ordering only when the plugin also implements the unchanged <code>ScopeGatePlugin</code>.</li>
+<li><code>PostRecoveryGatherScopeValidator</code> performs the complete bounded gather-scope
+  validation after recovery persistence and before downstream gather activity.</li>
+</ul>
+<p>For an opted-in self-managed recovery, the stable order is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>point probe
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  → isolated recovery persistence
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  → full bounded gather validation
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  → authorized gathering progress
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>  → preview-source preparation
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  → shared context
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>  → handlers and discovery
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  → workload and writes
+</code></pre></div>
+<p>If full revalidation fails, the block is persisted in its own isolated unit of work
+and none of the downstream calls in that sequence occur. For an opted-in throttled
+gather, no gathering callback is emitted at all. A failed open probe is terminal for
+all remaining gated stages in that run and is not repeated; calculation and
+topic-overlay progress callbacks occur only after their complete applicable
+preflights. If no stage callback is authorized, no final-clear callback is emitted.
+Old-shape <code>ScopeGatePlugin</code> implementations retain their existing ordering and do
+not receive either optional call. Confluent Cloud and generic metrics retain their
+existing progress, query, and recovery ordering as well.</p>
 <h2 id="storage-schema">Storage schema<a class="headerlink" href="#storage-schema" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

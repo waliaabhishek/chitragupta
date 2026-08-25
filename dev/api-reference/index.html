@@ -3667,151 +3667,92 @@ needs attention.</p>
 <p><strong>Default columns:</strong> <code>timestamp</code>, <code>resource_id</code>, <code>product_category</code>, <code>product_type</code>, <code>identity_id</code>, <code>cost_type</code>, <code>amount</code>, <code>allocation_method</code>, <code>tags</code>.</p>
 <hr />
 <h2 id="focus-mapping-preview">FOCUS Mapping Preview<a class="headerlink" href="#focus-mapping-preview" title="Permanent link">&para;</a></h2>
-<p>FOCUS Mapping Preview is an asynchronous, Confluent Cloud-only exposition API.
-Package requests and publication read persisted calculation and source evidence;
-they never call the provider, trigger the pipeline, rerun allocation, or edit
-data. A separate historical-repair API explicitly reacquires provider evidence
-and runs canonical calculation for eligible retained dates. Package requests
-support Daily or Monthly grain and Full, Summary, or Custom column profiles. The
-tenant's optional <code>focus_preview</code>
-block must establish a <code>direct_payg</code> commercial profile over the complete
-request interval. <code>billing_currency</code> defaults to normalized <code>USD</code>; any other
-configured currency fails closed without conversion. Eligible rows copy that
-normalized setting into <code>BillingCurrency</code> as scope authority. The Confluent
-Costs API does not provide a per-record currency field, and Preview does not
-infer the value from individual records.</p>
-<p>For setup and complete UI/CLI workflows, start with
-<a href="../focus-mapping-preview/">FOCUS Mapping Preview</a>. This section is the HTTP
-contract reference.</p>
-<p>The API is opt-in per tenant. When <code>focus_preview</code> is absent, every Preview
-route returns HTTP 409 with the structured
-<code>preview_commercial_profile_unavailable</code> diagnostic before initializing
-Preview runtime, artifact, or evidence storage. Other billing, chargeback, and
-generic export routes remain available.</p>
-<p>The API has no built-in authentication. Protect the entire Preview route prefix
-behind an authenticated reverse proxy or API gateway, including profile,
-repair submission/status, package submission, recent history, status, manifest,
-individual-file, and archive routes. The remote CLI's repeatable
-<code>--header NAME=VALUE</code> option forwards the deployment's external authentication
-headers on every request.</p>
-<p>Requested-package submission, recent-history, status, and artifact routes
-recover the tenant's artifact owner after their existing tenant, input,
-feature-enablement, runtime, and storage checks and before requested-package
-metadata actions. Recovery removes interrupted staging work, retries incomplete
-terminal transitions and expiry cleanup, and reconciles finalized packages
-against all persisted request and revision references. An apparent orphan is
-deleted only after a fresh authoritative reference check while holding its
-stable package lock. Recovery is safe to repeat in the same process or after
-restart. A failed reference check preserves the candidate; a failed delete or
-filesystem synchronization is logged and retried rather than reported as
-complete. If recovery cannot complete, the requested-package operation returns
-HTTP 503 with exact detail <code>FOCUS Mapping Preview recovery is unavailable</code>.
-Published-revision history, detail, and artifact routes do not invoke this
-requested-package owner-recovery step.</p>
+<p>FOCUS Mapping Preview is an asynchronous, Confluent Cloud-only API under
+<code>/api/v1/tenants/{tenant_name}/focus-preview</code>. Requested packages and monthly
+revisions read persisted calculation and source evidence. Historical repair is
+the only Preview operation that reacquires provider data and runs calculation.</p>
+<p>The tenant must enable <code>focus_preview</code> for the requested interval. Disabled
+tenants receive HTTP 409 <code>preview_commercial_profile_unavailable</code>; unrelated
+billing, chargeback, and export endpoints remain available.</p>
+<p>The API has no built-in authentication. Protect the complete Preview prefix with
+an authenticated reverse proxy or API gateway. For configuration and UI/CLI
+workflows, use <a href="../focus-mapping-preview/">FOCUS Mapping Preview</a>. This section
+defines only the HTTP contract.</p>
 <h3 id="get-apiv1tenantstenant_namefocus-previewprofile"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/profile</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewprofile" title="Permanent link">&para;</a></h3>
-<p>Return static metadata for the first-release <code>focus-1.4-preview-v1</code> mapping
-profile. The response requires <code>mapping_profile_version</code>,
-<code>target_focus_version: "1.4"</code>, <code>conformance_status: "non_conforming"</code>, the
-ordered <code>full_columns</code> allowlist, and the ordered 20-column <code>summary_columns</code>
-subset. The mapping profile and <code>chitragupta.preview-manifest.v1</code> are the first
-release contracts. The response also contains <code>known_gaps</code>, the same canonical
-ordered public value used by Requested Preview Package and Published Preview
-Revision manifests. Each gap contains exactly <code>code</code>, customer-facing
-<code>description</code>, and ordered affected <code>columns</code>; internal ownership and delivery
-process metadata are excluded. The pre-submission UI renders its
-target-version warning, non-conformance status, and <strong>Current authority gaps</strong>
-from this response. See the manifest contract below for the complete current
-gap catalog, which is not repeated here.</p>
-<p>For the eligible Direct-billed PAYG scope, the mapping profile supplies
-<code>Confluent Cloud</code> as the participating-entity value for both
-<code>ServiceProviderName</code> and <code>InvoiceIssuerName</code>. <code>InvoiceIssuerName</code> is not a
-per-record field supplied by the Confluent Costs API. Invoice-issuer-assigned
-<code>InvoiceId</code> and <code>InvoiceDetailId</code> remain unavailable and null; Preview does not
-fabricate them or perform invoice reconciliation.</p>
-<p>For eligible priced Direct-billed PAYG rows, the profile applies the
-no-negotiated-unit-price default: <code>ContractedUnitPrice</code> equals <code>ListUnitPrice</code>,
-and <code>PricingCurrencyContractedUnitPrice</code> equals
-<code>PricingCurrencyListUnitPrice</code>. Provider discounts remain in the final
-<code>BilledCost</code> and <code>EffectiveCost</code> values and in
-<code>x_ConfluentDiscountAmount</code>; they are not negotiated contracted-price savings.
-The projection preserves provider price and quantity values exactly. Credit and
-promotional rows without <code>SkuPriceId</code> keep these unit-price fields null.</p>
-<p>This correction changes no endpoint, HTTP status, request or response shape,
-manifest schema version, or Full-profile column order/count. Newly generated
-manifests no longer list <code>ContractedUnitPrice</code> or
-<code>PricingCurrencyContractedUnitPrice</code> in <code>profile_not_applicable_columns</code>.
-Unexpired requested packages generated with the immediately preceding exact
-canonical list remain downloadable; other manifest drift still fails closed.</p>
-<p>This endpoint validates tenant existence and the Confluent Cloud ecosystem but
-does not initialize Preview storage or the worker runtime.</p>
-<p>These target and conformance fields are additions only to the profile, request,
-and revision metadata described below. Repair operations, readiness responses,
-and unrelated API responses are unchanged.</p>
+<p>Return static capability metadata for <code>focus-1.4-preview-v1</code>:</p>
+<ul>
+<li><code>mapping_profile_version</code>;</li>
+<li><code>target_focus_version: "1.4"</code>;</li>
+<li><code>conformance_status: "non_conforming"</code>;</li>
+<li>ordered <code>full_columns</code> and <code>summary_columns</code>; and</li>
+<li>ordered <code>known_gaps</code>, each containing <code>code</code>, <code>description</code>, and
+  affected <code>columns</code>.</li>
+</ul>
+<p>The current authority gaps are:</p>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Description</th>
+<th>Affected columns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>invoice_identity_unavailable</code></td>
+<td>Post-issuance invoice identity is unavailable.</td>
+<td><code>InvoiceDetailId</code>, <code>InvoiceId</code></td>
+</tr>
+<tr>
+<td><code>provider_host_display_name_unavailable</code></td>
+<td><code>HostProviderName</code> contains the raw provider cloud code, not a provider display name.</td>
+<td><code>HostProviderName</code></td>
+</tr>
+<tr>
+<td><code>provider_region_display_name_unavailable</code></td>
+<td>Confluent inventory does not provide a distinct region display name.</td>
+<td><code>RegionName</code></td>
+</tr>
+<tr>
+<td><code>derived_sku_identity_not_provider_authoritative</code></td>
+<td>SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.</td>
+<td><code>SkuId</code>, <code>SkuMeter</code>, <code>SkuPriceDetails</code>, <code>SkuPriceId</code>, <code>x_ChitraguptaSkuComponents</code></td>
+</tr>
+</tbody>
+</table>
+<p>The endpoint validates tenant existence and the Confluent Cloud ecosystem but
+does not initialize Preview storage or workers.</p>
 <h3 id="post-apiv1tenantstenant_namefocus-previewrepairs"><code>POST /api/v1/tenants/{tenant_name}/focus-preview/repairs</code><a class="headerlink" href="#post-apiv1tenantstenant_namefocus-previewrepairs" title="Permanent link">&para;</a></h3>
-<p>Create a durable asynchronous historical repair. This operator surface is
-REST-only and accepts new work only in <code>both</code> mode.</p>
+<p>Create an asynchronous historical repair. New repairs are accepted only in
+<code>both</code> mode.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">&quot;start_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">&quot;end_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-02-01&quot;</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="p">}</span>
 </code></pre></div>
-<p>The dates are UTC with inclusive-start/exclusive-end semantics and must contain
-1–364 dates. The complete range must fit within the intersection of the
-tenant's <code>focus_preview</code> effective interval, current <code>lookback_days</code> and
-<code>cutoff_days</code> acquisition window, and complete <code>retention_days</code> interval. It
-cannot include future dates. Validation of tenant, ecosystem, enablement, and
-range occurs before repair changes pipeline data.</p>
-<p>A valid submission returns HTTP 202 with the durable queued operation and a
-<code>Location</code> header identifying its status URL. The operation fields are:
-<code>repair_id</code>, <code>tenant_name</code>, <code>start_date</code>, <code>end_date</code>, <code>status</code>, <code>created_at</code>,
-nullable <code>started_at</code>, nullable <code>completed_at</code>, nullable <code>diagnostic</code>, and
-date-ordered <code>dates</code>. Operation status is <code>queued</code>, <code>running</code>, <code>completed</code>,
-<code>completed_with_failures</code>, or <code>failed</code>.</p>
-<p>Each date contains <code>tracking_date</code>, <code>status</code>, nullable <code>started_at</code>,
+<p>Dates use inclusive-start/exclusive-end UTC semantics. The 1–364 date range must
+fit inside the tenant's commercial, acquisition, cutoff, and retention
+intervals and cannot include future dates.</p>
+<p>A valid request returns HTTP 202, a <code>Location</code> header, and these operation
+fields: <code>repair_id</code>, <code>tenant_name</code>, <code>start_date</code>, <code>end_date</code>, <code>status</code>,
+<code>created_at</code>, nullable <code>started_at</code>, nullable <code>completed_at</code>, nullable
+<code>diagnostic</code>, and date-ordered <code>dates</code>. Operation status is <code>queued</code>, <code>running</code>,
+<code>completed</code>, <code>completed_with_failures</code>, or <code>failed</code>.</p>
+<p>Each date contains <code>tracking_date</code>, <code>status</code>, and nullable <code>started_at</code>,
 <code>completed_at</code>, <code>calculation_id</code>, <code>calculation_completed_at</code>, <code>rows_written</code>,
 <code>failure_stage</code>, and <code>diagnostic</code>. Date status is <code>queued</code>, <code>running</code>,
-<code>daily_validated</code>, <code>succeeded</code>, or <code>failed</code>. <code>daily_validated</code> is nonterminal:
-Daily Full validation passed with calculation metadata, but validation of the
-wholly selected UTC month has not completed. Failure stages are
-<code>retained_state</code>, <code>provider_source</code>, <code>calculation</code>, <code>evidence</code>,
-<code>preview_validation</code>, and <code>worker</code>. Diagnostics contain <code>code</code>, <code>message</code>,
-<code>retryable</code>, and <code>source_correlation_ids</code>.</p>
-<p>The worker processes every date in ascending order and continues after expected
-date failures. It reacquires authoritative provider billing data and may query
-historical metrics through the configured canonical allocators. The exact
-tenant/date billing scope is replaced even when the provider authoritatively
-returns no rows, then canonical calculation and evidence persistence rebuild
-chargebacks, pipeline state, source evidence, and allocation lineage. Repair
-never copies or infers calculation metadata or evidence from legacy aggregates.</p>
-<p>The selected range can change billing, chargebacks, and generic exports; other
-dates and tenants are preserved. Repair creates no requested package or
-published revision. After successful repair, create a normal Daily or Monthly
-Preview request.</p>
-<p>Submitting the same range again creates a new operation. Exact-date replacement
-makes retry deterministic without duplicate current lineage. On restart,
-interrupted operations and unfinished <code>queued</code>, <code>running</code>, or
-<code>daily_validated</code> dates are marked failed and are not automatically resumed.
-After successful recovery, readiness reports the interrupted repair as
-<code>degraded</code> with explicit retry guidance. If recovery for a tenant cannot
-complete at startup, that tenant's next repair submission retries recovery
-first. Recovery success continues normal submission checks; recovery failure
-returns HTTP 503 with exact detail
-<code>FOCUS Mapping Preview repair worker is unavailable</code> and creates no new repair.</p>
-<p>Repair admission is process-local. At most <code>preview.max_workers</code> repairs run
-and at most <code>preview.max_queued_repairs</code> additional repairs wait in each
-process. The existing one-active-repair-per-tenant rule still applies.
-Generation and repair have separate capacity bounds and can run concurrently.
-When repair capacity is full, submission returns HTTP 429:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">&quot;detail&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;focus_preview_repair_capacity_exhausted&quot;</span><span class="p">,</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;FOCUS Mapping Preview repair capacity is exhausted.&quot;</span><span class="p">,</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="nt">&quot;retryable&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="p">}</span>
-</code></pre></div>
-<p>No repair operation is persisted for this response. Wait for admitted repair
-work to finish, then submit again; the API does not retry automatically.</p>
+<code>daily_validated</code>, <code>succeeded</code>, or <code>failed</code>. Failure stage is <code>retained_state</code>,
+<code>provider_source</code>, <code>calculation</code>, <code>evidence</code>, <code>preview_validation</code>, or <code>worker</code>.
+<code>daily_validated</code> is nonterminal: Daily validation passed, but validation of the
+selected UTC month has not completed. Diagnostics contain <code>code</code>, <code>message</code>,
+<code>retryable</code>, and optional <code>source_correlation_ids</code>.</p>
+<p>Repair reacquires billing data and runs the ordinary calculation for the
+selected tenant/date scope. It can replace billing, chargebacks, pipeline state,
+source evidence, and allocation lineage in that range. It creates no requested
+package or published revision.</p>
+<p>Only one repair can be active per tenant. Process-wide repair admission uses
+<code>preview.max_workers</code> and <code>preview.max_queued_repairs</code>. A rejected capacity
+request creates no operation and is not retried automatically.</p>
 <table>
 <thead>
 <tr>
@@ -3839,52 +3780,42 @@ work to finish, then submit again; the API does not retry automatically.</p>
 <tr>
 <td>Disabled tenant</td>
 <td style="text-align: right;">409</td>
-<td><code>preview_commercial_profile_unavailable</code> diagnostic</td>
+<td><code>preview_commercial_profile_unavailable</code></td>
 </tr>
 <tr>
-<td>Start is not before end</td>
+<td>Invalid or future range</td>
 <td style="text-align: right;">400</td>
-<td><code>focus_preview_repair_range_invalid</code> diagnostic</td>
+<td><code>focus_preview_repair_range_invalid</code> or <code>focus_preview_repair_future_range</code></td>
 </tr>
 <tr>
-<td>Future date included</td>
+<td>Outside the eligible interval or over 364 dates</td>
 <td style="text-align: right;">400</td>
-<td><code>focus_preview_repair_future_range</code> diagnostic</td>
+<td><code>focus_preview_repair_range_ineligible</code></td>
 </tr>
 <tr>
-<td>Outside effective/acquisition/retention interval or over 364 dates</td>
-<td style="text-align: right;">400</td>
-<td><code>focus_preview_repair_range_ineligible</code> diagnostic</td>
-</tr>
-<tr>
-<td>API-only mode or missing repair runtime</td>
+<td>Worker unavailable</td>
 <td style="text-align: right;">503</td>
 <td><code>FOCUS Mapping Preview repair worker is unavailable</code></td>
 </tr>
 <tr>
-<td>Repair storage unavailable</td>
+<td>Storage unavailable</td>
 <td style="text-align: right;">503</td>
 <td><code>FOCUS Mapping Preview repair storage is unavailable</code></td>
 </tr>
 <tr>
-<td>Queued/running repair already exists for tenant</td>
+<td>Repair already active</td>
 <td style="text-align: right;">409</td>
-<td><code>focus_preview_repair_in_progress</code> diagnostic</td>
+<td><code>focus_preview_repair_in_progress</code></td>
 </tr>
 <tr>
-<td>Target tenant is executing pipeline or maintenance work</td>
+<td>Tenant busy</td>
 <td style="text-align: right;">409</td>
-<td><code>focus_preview_repair_tenant_busy</code> diagnostic</td>
+<td><code>focus_preview_repair_tenant_busy</code></td>
 </tr>
 <tr>
-<td>Target tenant recovery cannot complete</td>
-<td style="text-align: right;">503</td>
-<td><code>FOCUS Mapping Preview repair worker is unavailable</code>; no new repair</td>
-</tr>
-<tr>
-<td>Process-local repair capacity is full</td>
+<td>Capacity full</td>
 <td style="text-align: right;">429</td>
-<td><code>focus_preview_repair_capacity_exhausted</code> diagnostic; no new repair</td>
+<td><code>focus_preview_repair_capacity_exhausted</code></td>
 </tr>
 </tbody>
 </table>
@@ -3900,23 +3831,23 @@ runtime validation.</p>
 <p>The creation response requires <code>target_focus_version: "1.4"</code> and
 <code>conformance_status: "non_conforming"</code>. The same fields remain present on every
 subsequent request status/detail representation and recent-request list item.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">&quot;grain&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;daily&quot;</span><span class="p">,</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">&quot;start_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-07-01&quot;</span><span class="p">,</span>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">&quot;end_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-08-01&quot;</span><span class="p">,</span>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">&quot;column_profile&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;full&quot;</span>
-<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">&quot;grain&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;daily&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">&quot;start_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-07-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">&quot;end_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-08-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span><span class="nt">&quot;column_profile&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;full&quot;</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">}</span>
 </code></pre></div>
 <p>Dates are UTC and use inclusive-start/exclusive-end semantics. The request must
 contain 1–31 days within the UTC calendar month containing <code>start_date</code>; the
 exclusive end may be the first day of the following month.</p>
 <p>Monthly requests supply one exact ASCII <code>YYYY-MM</code>; public start/end dates are
 not accepted for Monthly submission:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">&quot;grain&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;monthly&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">&quot;month&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-07&quot;</span><span class="p">,</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">&quot;column_profile&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;summary&quot;</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">&quot;grain&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;monthly&quot;</span><span class="p">,</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">&quot;month&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-07&quot;</span><span class="p">,</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">&quot;column_profile&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;summary&quot;</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="p">}</span>
 </code></pre></div>
 <p><code>column_profile</code> defaults to <code>full</code>. Summary uses the fixed profile subset.
 Custom supplies <code>columns</code>, for example
@@ -3926,13 +3857,13 @@ entries are logged and ignored. Full and Summary reject <code>columns</code>, an
 rejects a selection with no supported Full-profile columns.</p>
 <p>When the process-local global or per-tenant capacity limit is full, the
 submission returns HTTP 429:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">&quot;detail&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;preview_capacity_exhausted&quot;</span><span class="p">,</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;FOCUS Mapping Preview generation capacity is exhausted.&quot;</span><span class="p">,</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="nt">&quot;retryable&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">&quot;detail&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;preview_capacity_exhausted&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;FOCUS Mapping Preview generation capacity is exhausted.&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="nt">&quot;retryable&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="p">}</span>
 </code></pre></div>
 <p>No request ID or artifacts are created for this response. Clients, including
 <code>chitragupta-preview</code>, should wait and submit the request again; the CLI does
@@ -3971,174 +3902,63 @@ request representation, including required <code>target_focus_version: "1.4"</co
 exists. A missing cursor and a cursor owned by another tenant both return 400
 <code>Preview request cursor is invalid</code>.</p>
 <h3 id="get-apiv1tenantstenant_namefocus-previewrequestsrequest_id"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_id" title="Permanent link">&para;</a></h3>
-<p>Return the tenant-scoped request. The lifecycle is <code>queued</code>, <code>running</code>, then
+<p>Return a tenant-scoped request. Lifecycle is <code>queued</code>, <code>running</code>, then
 <code>ready</code> or <code>failed</code>; a ready request becomes <code>expired</code> at its fixed cutoff.</p>
-<p>Common response fields are <code>request_id</code>, <code>tenant_name</code>,
-<code>target_focus_version: "1.4"</code>, <code>conformance_status: "non_conforming"</code>, <code>grain</code>,
-<code>start_date</code>, <code>end_date</code>, derived nullable <code>month</code>, <code>column_profile</code>, ordered
-<code>effective_columns</code>, <code>status</code>, <code>created_at</code>, <code>started_at</code>, <code>completed_at</code>,
-<code>expires_at</code>, <code>diagnostic</code>, <code>source_snapshot</code>, and <code>package</code>.</p>
+<p>The response fields are <code>request_id</code>, <code>tenant_name</code>, <code>target_focus_version</code>,
+<code>conformance_status</code>, <code>grain</code>, <code>start_date</code>, <code>end_date</code>, nullable <code>month</code>,
+<code>column_profile</code>, ordered <code>effective_columns</code>, <code>status</code>, <code>created_at</code>, nullable
+<code>started_at</code>, nullable <code>completed_at</code>, nullable <code>expires_at</code>, nullable
+<code>diagnostic</code>, nullable <code>source_snapshot</code>, and nullable <code>package</code>.</p>
 <ul>
-<li>Queued/running responses have no diagnostic, source snapshot, or package.</li>
-<li>Failed responses contain <code>{code, message, retryable}</code> and no package. Source-
-  related failures can also contain <code>source_correlation_ids</code>, a sorted, unique,
-  maximum-20 list of opaque <code>src:v1:&lt;64 lowercase hex&gt;</code> values. These values do
-  not reveal provider record IDs, tenant IDs, raw fields, secrets, or paths.</li>
-<li>Ready responses contain a source snapshot and package metadata.</li>
-<li>Expired responses retain source snapshot and expiry metadata but return
+<li>Queued and running requests have no diagnostic, source snapshot, or package.</li>
+<li>Failed requests contain <code>{code, message, retryable}</code> and no package. Source
+  failures may also contain <code>source_correlation_ids</code>: at most 20 sorted, unique,
+  opaque <code>src:v1:&lt;64 lowercase hex&gt;</code> values.</li>
+<li>Ready requests contain source coverage and package download metadata.</li>
+<li>Expired requests retain their source snapshot and expiry but return
   <code>package: null</code>.</li>
 </ul>
-<p>The source snapshot contains nullable <code>calculation_timestamp</code>, date-ordered
-<code>calculation_coverage</code> entries, nullable <code>source_through</code>,
+<p><code>source_snapshot</code> contains nullable <code>calculation_timestamp</code>, date-ordered
+<code>calculation_coverage</code>, nullable <code>source_through</code>,
 <code>effective_coverage_start_date</code>, <code>effective_coverage_end_date</code>, nullable
 <code>evidence_through_date</code>, nullable <code>availability_cutoff_end_date</code>, and nullable
-<code>monthly_status</code>. Each coverage entry has
-<code>tracking_date</code>, <code>calculation_id</code>, <code>calculation_completed_at</code>, and optional
-<code>calculation_run_id</code>. A ready package contains <code>manifest</code>, ordered <code>files</code>,
-<code>download_all_name</code>, and <code>download_all_url</code>. Each artifact contains public
-<code>name</code>, <code>media_type</code>, <code>size_bytes</code>, <code>sha256</code>, optional <code>order</code>, and
-<code>download_url</code>. It contains no artifact root, storage key, or server path.</p>
-<p>A ready package stores <code>focus-1.4-preview-v1</code> output using the exact ordered
-effective columns. Full is the current 65 ordered FOCUS columns plus 12 custom
-evidence columns; Summary and Custom are projections of those same validated
-rows. The stored manifest uses the first-release
-<code>chitragupta.preview-manifest.v1</code> schema and declares <code>conformance_status:
-non_conforming</code>, profile version, grain, requested bounds, derived month,
-column profile, effective columns,
-calculation/source coverage, exact known gaps, validation status/counts, cost
-and quantity reconciliation, seven-day lifecycle, and ordered file checksums.
-Mapping/profile validation completes before atomic publication. Requested
-manifests validate the complete current request identity, tenant, interval,
-effective columns, target, status, canonical gaps, snapshot, evidence,
-lifecycle, validation, reconciliation, and file checks. Revision manifests
-validate current revision identity, snapshot, Full-profile authority, material
-digest, validation summary, and file correlation. Both use the same current
-schema and mapping authority and enforce canonical gaps plus file order, size,
-and checksums where applicable. A pre-release development package is unsupported
-and fails closed.
-Before any artifact response starts, the API incrementally validates the stored
-manifest against persisted package metadata and incrementally verifies the
-selected artifact's size and SHA-256. Manifest, CSV, and ZIP bodies are then
-streamed in fixed chunks rather than loaded as complete response bodies. The
-API, UI, and CLI do not remap the verified bytes.</p>
-<p>Both requested-package and published-revision manifests contain the same
-complete ordered <code>known_gaps</code> array. Each object contains exactly <code>code</code>,
-<code>description</code>, and ordered <code>columns</code>; internal ownership and delivery-process
-metadata have no public field or alias. Fallback classification adds no
-fallback-specific manifest fields, and does not change the schema or canonical
-gap catalog:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="p">[</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="p">{</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;invoice_identity_unavailable&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Post-issuance invoice identity is unavailable.&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="nt">&quot;columns&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;InvoiceDetailId&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;InvoiceId&quot;</span><span class="p">]</span>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">  </span><span class="p">{</span>
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;provider_host_display_name_unavailable&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">    </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;HostProviderName contains the raw provider cloud code, not a provider display name.&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">    </span><span class="nt">&quot;columns&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;HostProviderName&quot;</span><span class="p">]</span>
-<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">  </span><span class="p">{</span>
-<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;provider_region_display_name_unavailable&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="w">    </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Confluent inventory does not provide a distinct region display name.&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="w">    </span><span class="nt">&quot;columns&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;RegionName&quot;</span><span class="p">]</span>
-<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="w">  </span><span class="p">{</span>
-<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a><span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;derived_sku_identity_not_provider_authoritative&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a><span class="w">    </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a><span class="w">    </span><span class="nt">&quot;columns&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a><span class="w">      </span><span class="s2">&quot;SkuId&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a><span class="w">      </span><span class="s2">&quot;SkuMeter&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a><span class="w">      </span><span class="s2">&quot;SkuPriceDetails&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a><span class="w">      </span><span class="s2">&quot;SkuPriceId&quot;</span><span class="p">,</span>
-<a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a><span class="w">      </span><span class="s2">&quot;x_ChitraguptaSkuComponents&quot;</span>
-<a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a><span class="w">    </span><span class="p">]</span>
-<a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a><span class="p">]</span>
-</code></pre></div>
-<p>These provider-authority gaps remain unresolved, and
-<code>conformance_status</code> remains <code>non_conforming</code>.</p>
-<p>With <code>preview.max_csv_file_bytes: null</code>, the package has one
-<code>cost-and-usage.csv</code>. A positive byte limit may produce ordered names such as
-<code>cost-and-usage-part-00001-of-00003.csv</code>. Every part repeats the header, no row
-is split, and the limit includes the header and LF record terminators. A header
-or single row that cannot fit fails generation with
-<code>preview_csv_row_exceeds_file_size_limit</code>.</p>
-<p>The package may contain multiple persisted billing origins and multiple actual
-allocation portions per origin. <code>CCloudBillingLineItem</code> remains the sole
-allocation origin; raw Cost rows remain classification/coverage evidence linked
-to that existing billing key. Actual <code>UNALLOCATED</code> portions have null allocated
-resource/name/tag fields. Origin <code>Tags</code> and target <code>AllocatedTags</code> are resolved
-separately at package time and frozen into the stored bytes.</p>
-<p>Monthly requests preserve the full requested calendar bounds while aggregating
-only the frozen effective daily evidence interval. They remain <code>provisional</code>
-until both the 72-hour post-month threshold and configured acquisition cutoff
-permit complete full-month evidence; only then can a fully validated package be
-<code>settled</code>. Monthly aggregation preserves non-additive allocation ratio/method,
-target, classification, tier, pricing, tag, SKU, and provenance distinctions.
-It does not invoke the provider or allocation code.</p>
+<code>monthly_status</code>. Each coverage entry contains <code>tracking_date</code>, <code>calculation_id</code>,
+<code>calculation_completed_at</code>, and nullable <code>calculation_run_id</code>. <code>monthly_status</code>
+is <code>provisional</code>, <code>settled</code>, or null.</p>
+<p>A ready <code>package</code> contains <code>manifest</code>, ordered <code>files</code>, <code>download_all_name</code>, and
+<code>download_all_url</code>. The files include the data parts and metadata file. Each
+artifact includes <code>name</code>, <code>media_type</code>, <code>size_bytes</code>, <code>sha256</code>, optional <code>order</code>,
+and <code>download_url</code>. Storage paths and keys are never returned.</p>
+<p>For package files, lifecycle, manifest authority, and consumer handling, see
+<a href="../focus-mapping-preview/#package-contents-and-lifecycle">Package contents and lifecycle</a>.</p>
 <h3 id="get-apiv1tenantstenant_namefocus-previewrequestsrequest_idmanifest"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/manifest</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idmanifest" title="Permanent link">&para;</a></h3>
 <p>Return the exact stored <code>manifest.json</code> bytes for a ready request.</p>
 <h3 id="get-apiv1tenantstenant_namefocus-previewrequestsrequest_idfilesfile_name"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/files/{file_name}</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idfilesfile_name" title="Permanent link">&para;</a></h3>
-<p>Return the exact stored bytes for a file enumerated by a ready request. The
-package contains one or more ordered CSV files followed by
-<code>focus-metadata.json</code>, all declared by <code>package.files</code>. The metadata file uses
-<code>application/json</code> and the CSV files use <code>text/csv</code>.</p>
-<p><code>focus-metadata.json</code> provides nonstandard <code>x_ChitraguptaPreview...</code> Data
-Generator, Dataset Instance, Recency, exact emitted-schema, artifact-linkage,
-and delivery information. It targets the FOCUS 1.4 vocabulary but does not emit
-official FOCUS Schema metadata or <code>Schema.FocusVersion</code>, and it does not claim
-conformance. Importers that require a conforming FOCUS Export must reject the
-Preview package. The Chitragupta manifest remains the only authority for sizes,
-checksums, request expiry, revisions, known gaps, and package lifecycle.</p>
-<p>Requested metadata declares <code>correction_handling: not_a_correction_series</code> and
-<code>delivery_handling: one_off_download</code>. Metadata is validated for canonical
-bytes, freshness, schema, artifact order, internal IDs, and truthful
-non-conformance after staging and before Ready publication. API, remote CLI,
-web UI, individual-file download, and archive paths expose the same stored
-metadata bytes.</p>
+<p>Return exact stored bytes for a file declared by a ready package. CSV files use
+<code>text/csv</code>; <code>focus-metadata.json</code> uses <code>application/json</code>.</p>
 <h3 id="get-apiv1tenantstenant_namefocus-previewrequestsrequest_idarchive"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/archive</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idarchive" title="Permanent link">&para;</a></h3>
-<p>Stream a deterministic ZIP for a ready request. The archive contains
-<code>manifest.json</code> followed by CSV and metadata files in manifest order and is returned as
-<code>application/zip</code> with filename
-<code>focus-mapping-preview-{request_id}.zip</code>. The archive is a transport wrapper and
-is not listed as a manifest data artifact.</p>
-<p>Requested packages are available from ready publication until, but not
-including, <code>expires_at</code>, exactly seven days later. At the cutoff, status remains
-available as <code>expired</code>, while manifest, file, and archive endpoints return 410.</p>
+<p>Return <code>application/zip</code> named
+<code>focus-mapping-preview-{request_id}.zip</code>. The ZIP contains the manifest
+followed by its declared files.</p>
+<p>Requested artifacts are available until <code>expires_at</code>, exactly seven days after
+ready publication. Artifact endpoints return 410 after expiry. See
+<a href="../focus-mapping-preview/#package-contents-and-lifecycle">Package contents and lifecycle</a>
+for the file and consumer contract.</p>
 <h3 id="published-monthly-revisions">Published monthly revisions<a class="headerlink" href="#published-monthly-revisions" title="Permanent link">&para;</a></h3>
-<p>Successful periodic worker cycles automatically evaluate eligible Monthly Full
-output. Active, sub-72-hour, and acquisition-cutoff-incomplete months are
-excluded before package generation. The first automatic revision publishes only
-after complete full-month calculation and source coverage, reconciliation, and
-mapping validation produce a settled result. A later material settled correction
-atomically replaces the current revision. Failed calculation, eligibility,
-reconciliation, validation, artifact, or persistence work leaves the prior
-current revision unchanged.</p>
-<p>Published monthly metadata declares FOCUS Replacement correction handling with
-Overwrite delivery. Every revision is a complete snapshot; consumers use the
-current revision and never add or merge it with superseded revisions. This
-correction-series contract does not apply to one-off requested packages.</p>
-<p>Existing persisted provisional revisions remain available under the ordinary
-supersession and retention rules. The first valid settled revision supersedes a
-current provisional revision, even when logical report content is unchanged.</p>
-<p>Material identity covers the canonical projected rows and mapping semantics.
-Physical CSV partitioning, file names, row counts, provenance, and timestamps do
-not independently trigger replacement. The first successful scheduled pass also
-seeds every settlement-ready valid month in the configured lookback, including a
-valid header-only no-cost month.</p>
-<p>Automatic publication requires <code>features.enable_periodic_refresh: true</code>. It
-runs after the ordinary pipeline cycle; <code>--run-once</code>, direct tenant runs, and
-ad-hoc request endpoints do not publish revisions.</p>
+<p>Periodic workers publish validated Settled Monthly Full revisions. A later
+material correction replaces the current revision; failed candidates leave it
+unchanged. Consumers replace superseded revisions and never aggregate them.</p>
+<p>Publication behavior and consumer handling are documented in
+<a href="../focus-mapping-preview/#published-monthly-revisions">Published monthly revisions</a>.</p>
 <h4 id="get-apiv1tenantstenant_namefocus-previewrevisionscurrent"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/revisions/current</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrevisionscurrent" title="Permanent link">&para;</a></h4>
 <p>Return the current published revision for required query <code>month=YYYY-MM</code>.
 <code>revision_id</code> is optional on this metadata route and acts as a current-revision
 guard when supplied.</p>
 <p>The response contains revision identity and month bounds,
 <code>target_focus_version: "1.4"</code>, <code>conformance_status: "non_conforming"</code>,
-<code>monthly_status</code>, <code>published_at</code>, nullable predecessor/successor IDs,
-<code>lifecycle</code>, <code>material_sha256</code>, <code>source_snapshot</code>, <code>validation</code>, <code>self_url</code>, and
-<code>package</code>.
+<code>monthly_status</code>, <code>published_at</code>, nullable <code>supersedes_revision_id</code>, nullable
+<code>superseded_by_revision_id</code>, <code>lifecycle</code>, <code>material_sha256</code>, <code>source_snapshot</code>,
+<code>validation</code>, <code>self_url</code>, and <code>package</code>.
 The source snapshot reports calculation and source-through freshness, effective
 coverage, evidence-through date, availability cutoff, and Monthly status. The
 validation summary reports the mapping profile, source-record and output-row
@@ -4172,13 +3992,13 @@ current-artifact URL includes both <code>month</code> and <code>revision_id</cod
 <p>The table paths are relative to the tenant Preview prefix. Artifact
 <code>revision_id</code> is required. Each request re-reads the current revision before
 delivery. If the guard no longer matches, the API returns:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">{</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">&quot;detail&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;focus_preview_current_changed&quot;</span><span class="p">,</span>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;The current FOCUS Mapping Preview revision changed; fetch the current revision and retry.&quot;</span><span class="p">,</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">    </span><span class="nt">&quot;retryable&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">&quot;detail&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;focus_preview_current_changed&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;The current FOCUS Mapping Preview revision changed; fetch the current revision and retry.&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="nt">&quot;retryable&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="p">}</span>
 </code></pre></div>
 <p>Clients should fetch metadata, follow its URLs, and repeat that sequence after
 this 409 response.</p>
@@ -4431,9 +4251,8 @@ the report.</p>
 </tbody>
 </table>
 <p>The recovery 503 is retryable operationally after restoring tenant database
-and artifact-root availability. It does not expire a ready request, delete a
-referenced requested package or revision, or authorize automatic deletion of
-an unverifiable legacy finalized path.</p>
+and artifact-root availability. Existing ready packages and revisions remain
+available when their stored data can still be verified.</p>
 <p>A generation whose temporary disk use would exceed
 <code>preview.max_generation_spool_bytes</code> terminates as a failed request with
 <code>diagnostic.code: preview_generation_spool_limit_exceeded</code>,
@@ -4441,13 +4260,15 @@ an unverifiable legacy finalized path.</p>
 generation spool limit.</code>, and <code>retryable: false</code>. It publishes no package.
 Scheduled publication logs the same diagnostic code, publishes no revision,
 and leaves the current revision unchanged.</p>
-<p>Calculation diagnostics use these exact public meanings:</p>
-<p>The message strings below remain unchanged for compatibility. For Daily they
-refer to the explicit requested interval; for Monthly they apply only to the
-frozen effective evidence interval, which can be shorter than the requested
-calendar month while provisional. An empty early-month effective interval
-performs no calculation lookup and therefore does not emit an unavailable or
-incomplete calculation diagnostic.</p>
+<p>If <code>preview.max_csv_file_bytes</code> cannot fit the repeated header and one complete
+row, generation fails with diagnostic code
+<code>preview_csv_row_exceeds_file_size_limit</code>, message <code>A Preview CSV header or row
+exceeds the configured file-size limit.</code>, and <code>retryable: false</code>. Increase the
+part limit or set it to <code>null</code>; see
+<a href="../operations/troubleshooting/#preview_csv_row_exceeds_file_size_limit">Preview CSV part sizing</a>.</p>
+<p>Calculation diagnostics use these exact public meanings. Daily diagnostics
+apply to the requested interval; Monthly diagnostics apply to the effective
+evidence interval.</p>
 <table>
 <thead>
 <tr>
@@ -4608,25 +4429,13 @@ record, provider-context, lineage, and reconciliation checks retain precedence.<
 </tr>
 </tbody>
 </table>
-<p>Known and fallback-mapped native line types use persisted calculation lineage,
-including organization-wide rows, provider-null promotional allowances, and
-signed refunds. Fallback does not recalculate allocation. TABLEFLOW still
-returns <code>preview_provider_context_incomplete</code> because current inventory cannot
-prove its provider context. Missing legacy billing association is recovered
-locally when retained legacy evidence is valid; unreadable or ambiguous legacy
-evidence remains fail-closed. A later ordinary provider gather and calculation
-can establish new current evidence. Missing or invalid lineage returns
-<code>preview_allocation_lineage_incomplete</code>; exact cost or quantity shortfall or
-overage returns <code>preview_source_reconciliation_failed</code>. These failures are
-non-retryable, carry at most 20 sorted safe correlations, and persist null
-source snapshot and package fields; manifest/file retrieval remains unavailable.</p>
-<p>Incomplete persisted calculation metadata has precedence over acquisition,
-commercial, currency, source, and mapping diagnostics. <code>lookback_days</code> is capped
-at 364 and classifies the current acquisition/recalculation window; it is not a
-retention or reconstruction promise. The explicit repair endpoints above
-reacquire authoritative provider history and run canonical calculation for a
-bounded retained interval; they never create correlation or evidence by editing
-legacy aggregate metadata.</p>
+<p>Fallback-mapped line types still use persisted allocation results; Preview does
+not recalculate them. Missing lineage returns
+<code>preview_allocation_lineage_incomplete</code>, and reconciliation differences return
+<code>preview_source_reconciliation_failed</code>. These failures expose no package.</p>
+<p><code>lookback_days</code> defines acquisition eligibility, not retention or guaranteed
+reconstruction. Use historical repair only while the required provider and
+metrics history remains available.</p>
 <hr />
 <h2 id="topic-attributions">Topic Attributions<a class="headerlink" href="#topic-attributions" title="Permanent link">&para;</a></h2>
 <p>Topic attribution rows are produced by the optional <code>topic_overlay</code> pipeline
@@ -4801,24 +4610,24 @@ in plugin settings.</p>
 </ul>
 <p>Tag key format: must start with an alphanumeric character, then alphanumeric, <code>_</code>, or <code>-</code>, up to 63 characters total. Invalid keys return HTTP 400.</p>
 <p><strong>Response:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">&quot;buckets&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="p">{</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">      </span><span class="nt">&quot;dimensions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;tag:owner&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;alice&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;topic_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;payments-events&quot;</span><span class="p">},</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">      </span><span class="nt">&quot;time_bucket&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">      </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;10.00&quot;</span><span class="p">,</span>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">      </span><span class="nt">&quot;row_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="p">},</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">    </span><span class="p">{</span>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">      </span><span class="nt">&quot;dimensions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;tag:owner&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;UNTAGGED&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;topic_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;untagged-events&quot;</span><span class="p">},</span>
-<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">      </span><span class="nt">&quot;time_bucket&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
-<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="w">      </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;25.00&quot;</span><span class="p">,</span>
-<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="w">      </span><span class="nt">&quot;row_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
-<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="w">  </span><span class="p">],</span>
-<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="w">  </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;35.00&quot;</span><span class="p">,</span>
-<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a><span class="w">  </span><span class="nt">&quot;total_rows&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span>
-<a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="p">{</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">&quot;buckets&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">      </span><span class="nt">&quot;dimensions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;tag:owner&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;alice&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;topic_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;payments-events&quot;</span><span class="p">},</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">      </span><span class="nt">&quot;time_bucket&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">      </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;10.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">      </span><span class="nt">&quot;row_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">      </span><span class="nt">&quot;dimensions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;tag:owner&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;UNTAGGED&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;topic_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;untagged-events&quot;</span><span class="p">},</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">      </span><span class="nt">&quot;time_bucket&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">      </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;25.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">      </span><span class="nt">&quot;row_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="w">  </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;35.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="w">  </span><span class="nt">&quot;total_rows&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span>
+<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a><span class="p">}</span>
 </code></pre></div>
 <p>Tag dimensions appear in <code>dimensions</code> with the <code>tag:</code> prefix (e.g. <code>"tag:owner": "alice"</code>). Rows with no matching tag appear under <code>"UNTAGGED"</code>.</p>
 <h3 id="get-apiv1tenantstenant_nametopic-attributionsdates"><code>GET /api/v1/tenants/{tenant_name}/topic-attributions/dates</code><a class="headerlink" href="#get-apiv1tenantstenant_nametopic-attributionsdates" title="Permanent link">&para;</a></h3>
@@ -4919,32 +4728,32 @@ in plugin settings.</p>
 </ul>
 <p><strong>Billing period:</strong> when <code>start_date</code>/<code>end_date</code> are omitted, the cost window defaults to the full calendar month containing <code>at</code> (e.g. <code>at=2026-03-15</code> → March 1–April 1).</p>
 <p><strong>Response:</strong> <code>GraphResponse</code></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">{</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">&quot;nodes&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="p">{</span>
-<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">      </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
-<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">      </span><span class="nt">&quot;resource_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;environment&quot;</span><span class="p">,</span>
-<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">      </span><span class="nt">&quot;display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production&quot;</span><span class="p">,</span>
-<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">      </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;1234.56&quot;</span><span class="p">,</span>
-<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">      </span><span class="nt">&quot;created_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2025-01-01T00:00:00Z&quot;</span><span class="p">,</span>
-<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">      </span><span class="nt">&quot;deleted_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">      </span><span class="nt">&quot;tags&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;team&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;platform&quot;</span><span class="p">},</span>
-<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="w">      </span><span class="nt">&quot;parent_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
-<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="w">      </span><span class="nt">&quot;cloud&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;aws&quot;</span><span class="p">,</span>
-<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="w">      </span><span class="nt">&quot;region&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;us-east-1&quot;</span><span class="p">,</span>
-<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="w">      </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;active&quot;</span><span class="p">,</span>
-<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a><span class="w">      </span><span class="nt">&quot;cross_references&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
-<a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a><span class="w">  </span><span class="p">],</span>
-<a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a><span class="w">  </span><span class="nt">&quot;edges&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a><span class="w">    </span><span class="p">{</span>
-<a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a><span class="w">      </span><span class="nt">&quot;source&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;org-123&quot;</span><span class="p">,</span>
-<a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a><span class="w">      </span><span class="nt">&quot;target&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
-<a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a><span class="w">      </span><span class="nt">&quot;relationship_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;parent&quot;</span><span class="p">,</span>
-<a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a><span class="w">      </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
-<a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-13-25" name="__codelineno-13-25" href="#__codelineno-13-25"></a><span class="w">  </span><span class="p">]</span>
-<a id="__codelineno-13-26" name="__codelineno-13-26" href="#__codelineno-13-26"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">{</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">&quot;nodes&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">      </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">      </span><span class="nt">&quot;resource_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;environment&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">      </span><span class="nt">&quot;display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">      </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;1234.56&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">      </span><span class="nt">&quot;created_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2025-01-01T00:00:00Z&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">      </span><span class="nt">&quot;deleted_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="w">      </span><span class="nt">&quot;tags&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;team&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;platform&quot;</span><span class="p">},</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="w">      </span><span class="nt">&quot;parent_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="w">      </span><span class="nt">&quot;cloud&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;aws&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="w">      </span><span class="nt">&quot;region&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;us-east-1&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="w">      </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;active&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a><span class="w">      </span><span class="nt">&quot;cross_references&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
+<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a><span class="w">  </span><span class="nt">&quot;edges&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a><span class="w">      </span><span class="nt">&quot;source&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;org-123&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a><span class="w">      </span><span class="nt">&quot;target&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a><span class="w">      </span><span class="nt">&quot;relationship_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;parent&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a><span class="w">      </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a><span class="p">}</span>
 </code></pre></div>
 <p><strong>Node fields:</strong></p>
 <table>
@@ -5042,18 +4851,18 @@ in plugin settings.</p>
 </table>
 <p>Results are ordered by relevance: exact match first, then prefix match, then substring match. Returns at most 20 results. Returns an empty list when no entities match (never 404).</p>
 <p><strong>Response:</strong> <code>GraphSearchResponse</code></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="p">{</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">&quot;results&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="p">{</span>
-<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">      </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;lkc-abc123&quot;</span><span class="p">,</span>
-<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">      </span><span class="nt">&quot;resource_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;kafka_cluster&quot;</span><span class="p">,</span>
-<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">      </span><span class="nt">&quot;display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production Cluster&quot;</span><span class="p">,</span>
-<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">      </span><span class="nt">&quot;parent_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
-<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="w">      </span><span class="nt">&quot;parent_display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production Environment&quot;</span><span class="p">,</span>
-<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">      </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;active&quot;</span>
-<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="w">  </span><span class="p">]</span>
-<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">&quot;results&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">      </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;lkc-abc123&quot;</span><span class="p">,</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">      </span><span class="nt">&quot;resource_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;kafka_cluster&quot;</span><span class="p">,</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">      </span><span class="nt">&quot;display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production Cluster&quot;</span><span class="p">,</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">      </span><span class="nt">&quot;parent_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">      </span><span class="nt">&quot;parent_display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production Environment&quot;</span><span class="p">,</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">      </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;active&quot;</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="p">}</span>
 </code></pre></div>
 <p><strong>Result fields:</strong></p>
 <table>
@@ -5155,21 +4964,21 @@ in plugin settings.</p>
 </tbody>
 </table>
 <p><strong>Response:</strong> <code>GraphDiffResponse</code></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="p">{</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">&quot;nodes&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">    </span><span class="p">{</span>
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">      </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;lkc-abc123&quot;</span><span class="p">,</span>
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">      </span><span class="nt">&quot;resource_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;kafka_cluster&quot;</span><span class="p">,</span>
-<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">      </span><span class="nt">&quot;display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production Cluster&quot;</span><span class="p">,</span>
-<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="w">      </span><span class="nt">&quot;parent_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
-<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">      </span><span class="nt">&quot;cost_before&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;100.00&quot;</span><span class="p">,</span>
-<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="w">      </span><span class="nt">&quot;cost_after&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;150.00&quot;</span><span class="p">,</span>
-<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="w">      </span><span class="nt">&quot;cost_delta&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;50.00&quot;</span><span class="p">,</span>
-<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="w">      </span><span class="nt">&quot;pct_change&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;50.00&quot;</span><span class="p">,</span>
-<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="w">      </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;changed&quot;</span>
-<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="w">  </span><span class="p">]</span>
-<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">{</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">&quot;nodes&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">      </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;lkc-abc123&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">      </span><span class="nt">&quot;resource_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;kafka_cluster&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">      </span><span class="nt">&quot;display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production Cluster&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">      </span><span class="nt">&quot;parent_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">      </span><span class="nt">&quot;cost_before&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;100.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">      </span><span class="nt">&quot;cost_after&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;150.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">      </span><span class="nt">&quot;cost_delta&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;50.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="w">      </span><span class="nt">&quot;pct_change&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;50.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="w">      </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;changed&quot;</span>
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a><span class="p">}</span>
 </code></pre></div>
 <p><strong>Node fields:</strong></p>
 <table>
@@ -5270,14 +5079,14 @@ in plugin settings.</p>
 <p>Entity type routing: topics use <code>topic_attribution_facts</code>; environments use <code>chargeback_facts</code> grouped by <code>env_id</code>; all other resources use <code>chargeback_facts</code> grouped by <code>resource_id</code>; identities use <code>chargeback_facts</code> filtered by <code>identity_id</code>.</p>
 <p>Every calendar day in <code>[start, end]</code> is present in the response. Days with no billing data are returned with <code>cost: "0"</code> (gap filling).</p>
 <p><strong>Response:</strong> <code>GraphTimelineResponse</code></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="p">{</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="nt">&quot;entity_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;lkc-abc123&quot;</span><span class="p">,</span>
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span><span class="nt">&quot;points&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-04-01&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;12.34&quot;</span><span class="p">},</span>
-<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-04-02&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;0&quot;</span><span class="p">},</span>
-<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-04-03&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;15.00&quot;</span><span class="p">}</span>
-<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">  </span><span class="p">]</span>
-<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="p">{</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">&quot;entity_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;lkc-abc123&quot;</span><span class="p">,</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">&quot;points&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-04-01&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;12.34&quot;</span><span class="p">},</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-04-02&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;0&quot;</span><span class="p">},</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-04-03&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;15.00&quot;</span><span class="p">}</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="p">}</span>
 </code></pre></div>
 <p><strong>Point fields:</strong></p>
 <table>

@@ -1681,6 +1681,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#preview_csv_row_exceeds_file_size_limit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        preview_csv_row_exceeds_file_size_limit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#http-409-conflict-on-post-apiv1tenantsnamepipelinerun" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2404,6 +2415,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#preview_csv_row_exceeds_file_size_limit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        preview_csv_row_exceeds_file_size_limit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#http-409-conflict-on-post-apiv1tenantsnamepipelinerun" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2843,6 +2865,12 @@ operations remain independent.</p>
 </ul>
 <p>The request diagnostic is non-retryable with the same limit. Scheduled
 publication creates no revision and leaves the current pointer unchanged.</p>
+<h3 id="preview_csv_row_exceeds_file_size_limit"><code>preview_csv_row_exceeds_file_size_limit</code><a class="headerlink" href="#preview_csv_row_exceeds_file_size_limit" title="Permanent link">&para;</a></h3>
+<p><strong>Cause</strong>: <code>preview.max_csv_file_bytes</code> is smaller than the repeated CSV header
+plus one complete row. Rows are never split across files.</p>
+<p><strong>Fix</strong>: Increase <code>preview.max_csv_file_bytes</code> enough to hold the header and the
+largest row, or set it to <code>null</code> to emit one CSV file. Retry the requested
+package; scheduled publication reevaluates the month on a later periodic cycle.</p>
 <h3 id="http-409-conflict-on-post-apiv1tenantsnamepipelinerun"><code>HTTP 409 Conflict</code> on <code>POST /api/v1/tenants/{name}/pipeline/run</code><a class="headerlink" href="#http-409-conflict-on-post-apiv1tenantsnamepipelinerun" title="Permanent link">&para;</a></h3>
 <p><strong>Cause</strong>: Pipeline is already running for that tenant.
 <strong>Fix</strong>: Wait for the current run to complete. Check <code>GET /api/v1/tenants/{name}/pipeline/status</code>.</p>

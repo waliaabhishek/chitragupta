@@ -1012,10 +1012,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#network-costs-counter-metric-summed" class="md-nav__link">
+  <a href="#network-costs-broker-wide-client-counters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Network costs (counter metric, summed)
+        Network costs (broker-wide client counters)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#self-managed-historical-request-bounds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-managed historical request bounds
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#self-managed-kafka-topic-attribution-overlay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-managed Kafka topic-attribution overlay
       
     </span>
   </a>
@@ -1573,10 +1595,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#network-costs-counter-metric-summed" class="md-nav__link">
+  <a href="#network-costs-broker-wide-client-counters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Network costs (counter metric, summed)
+        Network costs (broker-wide client counters)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#self-managed-historical-request-bounds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-managed historical request bounds
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#self-managed-kafka-topic-attribution-overlay" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-managed Kafka topic-attribution overlay
       
     </span>
   </a>
@@ -1893,14 +1937,18 @@ bytes to GiB, and charges per GiB-hour.</p>
 hour 1 does not mean you used 200 GiB — you used 100 GiB for 2 hours.
 Averaging across samples gives the representative GiB held over the day.</p>
 </div>
-<h3 id="network-costs-counter-metric-summed">Network costs (counter metric, summed)<a class="headerlink" href="#network-costs-counter-metric-summed" title="Permanent link">&para;</a></h3>
-<p>Network bytes are cumulative counters. The engine queries
-<code>kafka_server_brokertopicmetrics_bytesin_total</code> (and <code>bytesout</code>) using
-<code>increase()</code> over 1-hour windows, then sums all the hourly deltas to get the
-total bytes transferred in a day.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>total_bytes = sum(all hourly increase values for the day)
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>total_gib   = total_bytes ÷ 1,073,741,824
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>daily_cost  = total_gib × network_per_gib
+<h3 id="network-costs-broker-wide-client-counters">Network costs (broker-wide client counters)<a class="headerlink" href="#network-costs-broker-wide-client-counters" title="Permanent link">&para;</a></h3>
+<p>Network bytes are cumulative counters. For each closed UTC day, the ingress and
+egress pools come from the broker-wide client counters, with no <code>topic</code> label:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>ingress_pool_bytes = sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesin_total[86400s]))
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>egress_pool_bytes  = sum(increase(kafka_server_brokertopicmetrics_alltopics_bytesout_total[86400s]))
+</code></pre></div>
+<p>The expression is evaluated for that day's <code>[00:00 UTC, 00:00 UTC)</code> window.
+The <code>alltopics</code> counters represent client traffic and exclude replication. The
+topic-labelled bytes-in and bytes-out counters are not pool inputs; the optional
+topic-attribution overlay uses them as allocation evidence.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>pool_gib  = pool_bytes ÷ 1,073,741,824
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>daily_cost = pool_gib × network_per_gib
 </code></pre></div>
 <table>
 <thead>
@@ -1911,8 +1959,8 @@ total bytes transferred in a day.</p>
 </thead>
 <tbody>
 <tr>
-<td>Hourly increases (24 values)</td>
-<td>Sum = 53,687,091,200 bytes</td>
+<td>Closed-day broker-wide client increase</td>
+<td>53,687,091,200 bytes</td>
 </tr>
 <tr>
 <td><code>network_ingress_per_gib</code></td>
@@ -1920,15 +1968,94 @@ total bytes transferred in a day.</p>
 </tr>
 </tbody>
 </table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>total_gib  = 53,687,091,200 ÷ 1,073,741,824 = 50.0 GiB
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>daily_cost = 50.0 × $0.01 = $0.50
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>pool_gib   = 53,687,091,200 ÷ 1,073,741,824 = 50.0 GiB
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>daily_cost = 50.0 × $0.01 = $0.50
 </code></pre></div>
 <div class="admonition note">
-<p class="admonition-title">Why sum, not average?</p>
-<p>Network bytes are a running total. <code>increase()</code> gives bytes transferred in
-each hour. Summing gives total daily transfer. This is the actual volume
-that crossed the network.</p>
+<p class="admonition-title">Why <code>increase()</code>?</p>
+<p>Network bytes are a running total. <code>increase(...[86400s])</code> gives the client
+bytes transferred during the closed day. It does not average the counter or
+reconstruct the pool from topic-labelled series.</p>
 </div>
+<h3 id="self-managed-historical-request-bounds">Self-managed historical request bounds<a class="headerlink" href="#self-managed-historical-request-bounds" title="Permanent link">&para;</a></h3>
+<p>Self-managed Kafka uses <code>historical_acquisition_chunk_days</code> to cap each scope,
+cluster, and topic workload response at <code>H</code> closed UTC days. The omitted/default
+value is <code>H=5</code>; <code>1..30</code> is valid, and <code>30</code> is an explicit operator-selected maximum.
+Smaller <code>H</code> values reduce response size and reduced-evidence memory while increasing
+request count. One reduced chunk is retained at a time and is released before the
+next chunk is acquired.</p>
+<p>Within a run, exact target-scope evidence is reused for the same tenant, target
+identifier and label, step, start, and end. An open scope executes one newest-point
+probe. A failed probe permits no workload, progress, or writes; a successful probe
+is persisted before complete bounded validation is rerun. Billing windows remain
+calculation-owned.</p>
+<p>Let <code>C_cluster</code> and <code>C_topic</code> be the sums of <code>ceil(run_length / H)</code> over the
+independent contiguous cluster and topic date runs. With a step that divides one
+UTC day, successful workload family counts are:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>B_cluster = 3 × C_cluster
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>B_topic   = 3 × C_topic
+</code></pre></div>
+<p>For a non-divisor step, the exact per-family residue-request sums add <code>G</code> requests:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>B_cluster = 2 × C_cluster + G_cluster
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>B_topic   = 2 × C_topic   + G_topic
+</code></pre></div>
+<p>Use <code>D = 86,400</code> seconds per UTC day, <code>S = metrics_step_seconds</code>, and <code>h_j</code> for
+the days in one actual chunk <code>j</code>. For one actual chunk, <code>g(h_j, S)</code> is the exact
+number of residue-group requests for that gauge family. Sum it once across actual
+chunks:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>g(h, S) = min(h, S / gcd(S, D))
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>G_family = sum_j g(h_j, S)
+</code></pre></div>
+<p>Each returned series is bounded by <code>floor(H × D / S) + 1</code> evaluation timestamps
+before half-open daily filtering. The shorthand <code>6C</code> applies only when cluster and
+topic date sets coincide and the step divides one day, yielding <code>3C</code> on each side.
+The <a href="../../configuration/self-managed-reference/#measured-request-and-transport-bounds">self-managed reference</a>
+defines the symbols, measured values, and fallback examples in one operator-readable
+table.</p>
+<p>If bounded family requests fail, <code>F</code> is the number of owned days retried with daily
+fallback queries, so the affected workload is <code>B + F</code>. A logical family is one
+PromQL family; a transport attempt is one HTTP request. With the existing retry
+ceiling <code>R</code>, cold attempts are at most <code>R×L</code> for <code>L</code> logical families. Warm raw
+cache hits can reduce attempts but never logical-family counts. The measured
+one-day, 31-day, unequal recovery, failed-open, successful recovery, and warm-cache
+values are listed in the <a href="../../configuration/self-managed-reference/#measured-request-and-transport-bounds">self-managed configuration reference</a>.</p>
+<p>Daily semantics remain unchanged: counters use exact UTC day-end ownership of the
+preceding half-open day, gauges preserve the daily start-anchored grid and half-open
+filter, zero and missing evidence remain distinct, and family/day failures remain
+isolated. Residual, reconciliation, retry, and terminal topic behavior is
+unchanged. These bounds apply only to self-managed Kafka; CCloud and generic metrics
+keep their existing configuration, query, progress, and attribution behavior.</p>
+<h3 id="self-managed-kafka-topic-attribution-overlay">Self-managed Kafka topic-attribution overlay<a class="headerlink" href="#self-managed-kafka-topic-attribution-overlay" title="Permanent link">&para;</a></h3>
+<p>Self-managed Kafka can optionally produce a topic-level analytical view without
+changing the cluster chargeback or principal allocation. The overlay retains the
+actual topic rows separately from chargeback and processes each pool on the same
+closed UTC day, <code>[00:00, 00:00)</code>.</p>
+<p>Network pools come from broker-wide <code>alltopics</code> client counters, while
+topic-labelled bytes-in and bytes-out counters determine each topic's ingress and
+egress share. Storage comes from <code>kafka_log_log_size</code>, summed across a topic's
+partitions and averaged over the day. A topic evidence shortfall is retained as
+<code>__UNATTRIBUTED__</code>, so the topic amounts reconcile to the full cluster pool.</p>
+<p>For a measured ingress, egress, or storage pool, let <code>C</code> be the cluster cost,
+<code>P</code> the corresponding pool usage, and <code>U_t</code> a topic's valid usage. The allocation
+uses the measured share and preserves unobserved usage explicitly:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>topic_amount(t) = C × U_t / P
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>unattributed_amount = C × (P - sum(U_t)) / P
+</code></pre></div>
+<p>The second equation is a usage-evidence residual, not a rounding adjustment.
+Emitted monetary amounts are quantized to <code>0.0001</code> USD; any final monetary
+rounding remainder is distributed among the emitted rows. The complete set of
+topic rows, including <code>__UNATTRIBUTED__</code> when present, reconciles to <code>C</code> within
+<code>0.0001</code> USD.</p>
+<p>Compute is not inferred from topic activity. It is disabled in the topic view by
+default. The explicit <code>shared_even_v1</code> policy allocates 100% of a compute pool
+evenly across the complete active-topic universe (<code>compute_amount(t) = C / N</code>).
+It is declared shared policy, not measured usage. The policy name fixes that
+algorithm's meaning; a changed algorithm needs a new name.</p>
+<p>Topic exclusion is a presentation policy, not an allocation rule. The current
+configuration determines it when rows are read: aggregate analytics collapse matches
+to <code>Excluded topics</code>, while detailed results and CSV retain the actual topic name and
+derived status. A normal configuration reload or restart therefore reclassifies
+historical views without recomputing or rewriting their amounts.</p>
 <h3 id="generic-metrics-the-three-quantity-types">Generic metrics: the three quantity types<a class="headerlink" href="#generic-metrics-the-three-quantity-types" title="Permanent link">&para;</a></h3>
 <p>The generic plugin generalizes the above patterns:</p>
 <table>
@@ -1965,27 +2092,27 @@ and the fallback chain.</p>
 <h3 id="even-split">Even split<a class="headerlink" href="#even-split" title="Permanent link">&para;</a></h3>
 <p>Divides the cost equally among a set of identities. Used for shared
 infrastructure costs where no per-identity usage metric exists.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>per_identity = total_cost ÷ identity_count
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>per_identity = total_cost ÷ identity_count
 </code></pre></div>
 <p><strong>Rounding:</strong> All amounts are quantized to 4 decimal places ($0.0001). After
 dividing, the engine distributes any rounding remainder one unit at a time
 across the leading identities to guarantee the sum equals the total.</p>
 <p><strong>Example:</strong> $10.00 across 3 identities</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>base = $10.0000 ÷ 3 = $3.3333 (quantized to 4 decimals)
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>sum  = $3.3333 × 3 = $9.9999
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>diff = $10.0000 - $9.9999 = $0.0001
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>Final:
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>  identity-a: $3.3334  (+$0.0001 remainder)
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>  identity-b: $3.3333
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>  identity-c: $3.3333
-<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>  total:      $10.0000 ✓
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>base = $10.0000 ÷ 3 = $3.3333 (quantized to 4 decimals)
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>sum  = $3.3333 × 3 = $9.9999
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>diff = $10.0000 - $9.9999 = $0.0001
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>Final:
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>  identity-a: $3.3334  (+$0.0001 remainder)
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>  identity-b: $3.3333
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>  identity-c: $3.3333
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>  total:      $10.0000 ✓
 </code></pre></div>
 <h3 id="usage-ratio">Usage ratio<a class="headerlink" href="#usage-ratio" title="Permanent link">&para;</a></h3>
 <p>Divides the cost proportionally to a usage metric (e.g., bytes produced).
 Used for network costs and other usage-driven costs.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ratio_i    = usage_i ÷ total_usage
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>amount_i   = total_cost × ratio_i
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>ratio_i    = usage_i ÷ total_usage
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>amount_i   = total_cost × ratio_i
 </code></pre></div>
 <p><strong>Rounding:</strong> Same approach — quantize each amount, then distribute remainder.</p>
 <p><strong>Example:</strong> $100.00 split by bytes</p>
@@ -2091,13 +2218,13 @@ This isn't just a label — it indicates <em>why</em> the cost was allocated tha
 <h3 id="tiered-fallback-chainmodel">Tiered fallback (ChainModel)<a class="headerlink" href="#tiered-fallback-chainmodel" title="Permanent link">&para;</a></h3>
 <p>Most allocators use a tiered fallback chain. The engine tries each tier in order
 and uses the first one that succeeds (has data to work with).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>Tier 0: Usage ratio (metrics available?)
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    ↓ no metrics
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>Tier 1: Even split across active identities (identities known?)
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    ↓ no active identities
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>Tier 2: Even split across all tenant identities for the period
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    ↓ no identities at all
-<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>Tier 3: Terminal — allocate to the resource ID itself
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>Tier 0: Usage ratio (metrics available?)
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    ↓ no metrics
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>Tier 1: Even split across active identities (identities known?)
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    ↓ no active identities
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>Tier 2: Even split across all tenant identities for the period
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    ↓ no identities at all
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>Tier 3: Terminal — allocate to the resource ID itself
 </code></pre></div>
 <p>Each chargeback row records which tier was used in the <code>allocation_detail</code> field.
 Common values:</p>
@@ -2134,14 +2261,14 @@ Common values:</p>
 <h3 id="composite-allocation-cku-model">Composite allocation (CKU model)<a class="headerlink" href="#composite-allocation-cku-model" title="Permanent link">&para;</a></h3>
 <p>Some costs use a hybrid model that splits the cost into portions before allocating.
 The Kafka CKU model is the primary example:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Total CKU cost: $100.00
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    ├── 70% ($70.00) → Usage ratio chain (bytes in + bytes out)
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    │   ├── Tier 0: proportional by bytes → USAGE rows
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    │   ├── Tier 1: even split (active) → SHARED rows
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    │   └── ...
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    └── 30% ($30.00) → Shared chain (even split)
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>        ├── Tier 0: even split (active) → SHARED rows
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>        └── ...
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>Total CKU cost: $100.00
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>    ├── 70% ($70.00) → Usage ratio chain (bytes in + bytes out)
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>    │   ├── Tier 0: proportional by bytes → USAGE rows
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>    │   ├── Tier 1: even split (active) → SHARED rows
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>    │   └── ...
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>    └── 30% ($30.00) → Shared chain (even split)
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>        ├── Tier 0: even split (active) → SHARED rows
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>        └── ...
 </code></pre></div>
 <p>The ratios are configurable via <code>allocator_params.kafka_cku_usage_ratio</code> and
 <code>kafka_cku_shared_ratio</code>. Each portion runs its own fallback chain independently.</p>
@@ -2211,8 +2338,8 @@ chargeback rows.</p>
 only active for part of the billing window (e.g., it was created mid-day or
 deleted mid-day), the engine computes an <code>active_fraction</code> and adjusts the
 cost proportionally.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>active_fraction = active_hours ÷ billing_window_hours
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>split_amount    = total_cost × active_fraction
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>active_fraction = active_hours ÷ billing_window_hours
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>split_amount    = total_cost × active_fraction
 </code></pre></div>
 <p>A resource created at noon on a daily billing window has <code>active_fraction = 0.5</code>,
 so only half the daily cost is allocated. The remaining half stays with the

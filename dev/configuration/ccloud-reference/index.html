@@ -2095,7 +2095,8 @@ Attribution page. Correct the config and restart to resolve.</p>
 <p>For bytes_ratio product types, if Prometheus returns all-zero values, the
 <code>missing_metrics_behavior</code> setting determines the fallback.</p>
 <h3 id="topic-attribution-retry-behavior">Topic attribution retry behavior<a class="headerlink" href="#topic-attribution-retry-behavior" title="Permanent link">&para;</a></h3>
-<p>When Prometheus is unreachable for a cluster, the pipeline leaves that date pending and retries on the next run. The per-billing-line attempt count is stored in <code>billing.topic_attribution_attempts</code> (migration 016).</p>
+<p>When Prometheus is unreachable for a cluster, the pipeline leaves that date
+pending and retries on the next run. Retry state is preserved across restarts.</p>
 <p>Once all billing lines for a cluster reach <code>topic_attribution_retry_limit</code> attempts without a successful metrics fetch, the pipeline produces sentinel rows instead of retrying indefinitely:</p>
 <ul>
 <li><code>topic_name</code>: <code>__UNATTRIBUTED__</code></li>
