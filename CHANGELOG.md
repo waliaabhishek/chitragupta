@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-08-25
+
+### Added
+- Feat: Trustworthy self-managed Kafka cost attribution ([a9413b2](https://github.com/waliaabhishek/chitragupta/commit/a9413b2b16baf33cf97f7b16e3d2329780556232))
+
+
+### Changed
+- Merge branch 'main' into fix/task-268-self-managed-kafka-attribution ([13cbf3f](https://github.com/waliaabhishek/chitragupta/commit/13cbf3fad0dcd880f3852f1d8e032f815c287ab9))
+
+
+### Documentation
+- Docs: Centralize FOCUS Mapping Preview guidance ([1f3852c](https://github.com/waliaabhishek/chitragupta/commit/1f3852c25a048f4fa089c7d03b1c49f0f27d0807))
+- Docs: Clarify self-managed Kafka selector values ([3f5c5f9](https://github.com/waliaabhishek/chitragupta/commit/3f5c5f9eebc65a7e2c3e696e24956403496fcc8e))
+
+
+### Fixed
+- Fix: TASK-273 - Reject invalid self-managed Kafka cost-pool inputs ([16df9d3](https://github.com/waliaabhishek/chitragupta/commit/16df9d3b5d2e985b4ea3477e5f14352380471fa3))
+- Fix: TASK-268.06 - Support Prometheus metric and label aliases for self-managed Kafka ([03f6df8](https://github.com/waliaabhishek/chitragupta/commit/03f6df883eb78d1506884d8d87bf6f8d94a0acb1))
+- Fix: TASK-268.05 - Reduce self-managed Kafka Prometheus query volume ([7ee02a1](https://github.com/waliaabhishek/chitragupta/commit/7ee02a179fdc5baf7d5357d5bb1f155f6deb62bc))
+- Fix: TASK-268.04 - Implement quota-backed principal attribution for self-managed Kafka ([af1fbb3](https://github.com/waliaabhishek/chitragupta/commit/af1fbb33786782066ba1fd9b2519f7b924951cd2))
+- Fix: TASK-268.04 - Implement quota-backed principal attribution for self-managed Kafka ([fbcedd1](https://github.com/waliaabhishek/chitragupta/commit/fbcedd1e0b4eb60de576504b482e7a47e124cbb7))
+- Fix: TASK-268.04 - Implement quota-backed principal attribution for self-managed Kafka ([67f4971](https://github.com/waliaabhishek/chitragupta/commit/67f4971fde11fac16930aaf2f8baf0f8493108b5))
+- Fix: TASK-268.03 - Define the quota-backed principal allocation policy for self-managed Kafka ([7709a33](https://github.com/waliaabhishek/chitragupta/commit/7709a33d4d796c5ee5dd9742ff2fbd9bf87ec4a7))
+- Fix: TASK-268.02 - Add topic-level cost attribution for self-managed Kafka ([0be76a5](https://github.com/waliaabhishek/chitragupta/commit/0be76a5dec9b39ffce4e4a1fbc1a2b5422164103))
+- Fix: TASK-268.01 - Correct the self-managed Kafka telemetry and readiness contract ([d91a383](https://github.com/waliaabhishek/chitragupta/commit/d91a383982727ce2886b452075a5289952586198))
+- Fix: TASK-270 - Build a reproducible self-managed Kafka telemetry validation lab ([170c2cc](https://github.com/waliaabhishek/chitragupta/commit/170c2cc93ab0bcd76a2a2b50a1a3b9f6ecf5cedf))
+
+
 ## [2.2.0] - 2026-08-15
 
 ### Added
