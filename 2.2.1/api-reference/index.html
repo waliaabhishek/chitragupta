@@ -1,0 +1,5178 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-ecosystem chargeback engine — allocate infrastructure costs to tenants and teams">
+      
+      
+      
+      
+        <link rel="prev" href="../operations/upgrading/">
+      
+      
+        <link rel="next" href="../changelog/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+    
+    
+      
+        <title>API Reference - Chitragupta</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+  
+  
+  
+  
+  <style>:root{--md-annotation-icon:url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M17%2013h-4v4h-2v-4H7v-2h4V7h2v4h4m-5-9A10%2010%200%200%200%202%2012a10%2010%200%200%200%2010%2010%2010%2010%200%200%200%2010-10A10%2010%200%200%200%2012%202%22/%3E%3C/svg%3E');}</style>
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Chitragupta" class="md-header__button md-logo" aria-label="Chitragupta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Chitragupta
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API Reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/waliaabhishek/chitragupta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    chitragupta
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Chitragupta" class="md-nav__button md-logo" aria-label="Chitragupta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Chitragupta
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/waliaabhishek/chitragupta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    chitragupta
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/prerequisites/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prerequisites
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../configuration/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/ccloud-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Confluent Cloud
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/self-managed-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Managed Kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/generic-metrics-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generic Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/advanced-scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Scenarios
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../focus-mapping-preview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FOCUS Mapping Preview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../architecture/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/plugin-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/data-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/cost-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Costs Work
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/identity-resolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Identity Resolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../operations/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/data-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/upgrading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#general-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        General behavior
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="General behavior">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pagination" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pagination
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#date-range-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Date range defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#error-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#health--readiness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health &amp; Readiness
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Health &amp; Readiness">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /health
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1readiness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/readiness
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tenants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tenants
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tenants">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namestatus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/status
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#billing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Billing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Billing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namebilling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/billing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chargebacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chargebacks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Chargebacks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namechargebacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/chargebacks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namechargebacksdimension_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namechargebacksdates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/chargebacks/dates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namechargebacksallocation-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/chargebacks/allocation-issues
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Aggregation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Aggregation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namechargebacksaggregate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/chargebacks/aggregate
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resources
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Resources">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nameresources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/resources
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#identities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identities
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Identities">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nameidentities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/identities
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inventory
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Inventory">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nameinventorysummary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/inventory/summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tags
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tags">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nameentitiesentity_typeentity_idtags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nameentitiesentity_typeentity_idtags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#put-apiv1tenantstenant_nameentitiesentity_typeentity_idtagstag_key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PUT /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags/{tag_key}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-apiv1tenantstenant_nameentitiesentity_typeentity_idtagstag_key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DELETE /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags/{tag_key}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/tags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametagskeys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/tags/keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametagskeystag_keyvalues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/tags/keys/{tag_key}/values
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nametagsbulk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/tags/bulk
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nametagsbulk-by-filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/tags/bulk-by-filter
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pipeline
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Pipeline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_namepipelinerun" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/pipeline/run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namepipelinestatus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/pipeline/status
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Export">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nameexport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#focus-mapping-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FOCUS Mapping Preview
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FOCUS Mapping Preview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewprofile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/profile
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_namefocus-previewrepairs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/focus-preview/repairs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrepairsrepair_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/repairs/{repair_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_namefocus-previewrequests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/focus-preview/requests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrequests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/requests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idmanifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/manifest
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idfilesfile_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/files/{file_name}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idarchive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/archive
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#published-monthly-revisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Published monthly revisions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#preview-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preview errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topic-attributions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic Attributions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Topic Attributions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributionsaggregate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions/aggregate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributionsdates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions/dates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nametopic-attributionsexport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/topic-attributions/export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Graph
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Graph">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphsearch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/search
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphdiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/diff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphtimeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/timeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#general-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        General behavior
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="General behavior">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pagination" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pagination
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#date-range-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Date range defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#error-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#health--readiness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health &amp; Readiness
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Health &amp; Readiness">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-health" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /health
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1readiness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/readiness
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tenants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tenants
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tenants">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namestatus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/status
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#billing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Billing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Billing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namebilling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/billing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chargebacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chargebacks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Chargebacks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namechargebacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/chargebacks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namechargebacksdimension_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namechargebacksdates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/chargebacks/dates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namechargebacksallocation-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/chargebacks/allocation-issues
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#aggregation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Aggregation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Aggregation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namechargebacksaggregate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/chargebacks/aggregate
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resources
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Resources">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nameresources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/resources
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#identities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identities
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Identities">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nameidentities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/identities
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inventory
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Inventory">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nameinventorysummary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/inventory/summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tags
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tags">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nameentitiesentity_typeentity_idtags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nameentitiesentity_typeentity_idtags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#put-apiv1tenantstenant_nameentitiesentity_typeentity_idtagstag_key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PUT /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags/{tag_key}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete-apiv1tenantstenant_nameentitiesentity_typeentity_idtagstag_key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DELETE /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags/{tag_key}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/tags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametagskeys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/tags/keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametagskeystag_keyvalues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/tags/keys/{tag_key}/values
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nametagsbulk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/tags/bulk
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nametagsbulk-by-filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/tags/bulk-by-filter
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pipeline
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Pipeline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_namepipelinerun" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/pipeline/run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namepipelinestatus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/pipeline/status
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Export">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nameexport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#focus-mapping-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FOCUS Mapping Preview
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FOCUS Mapping Preview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewprofile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/profile
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_namefocus-previewrepairs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/focus-preview/repairs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrepairsrepair_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/repairs/{repair_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_namefocus-previewrequests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/focus-preview/requests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrequests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/requests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idmanifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/manifest
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idfilesfile_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/files/{file_name}
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idarchive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/archive
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#published-monthly-revisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Published monthly revisions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#preview-errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preview errors
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#topic-attributions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Topic Attributions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Topic Attributions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributionsaggregate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions/aggregate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_nametopic-attributionsdates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/topic-attributions/dates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-apiv1tenantstenant_nametopic-attributionsexport" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        POST /api/v1/tenants/{tenant_name}/topic-attributions/export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Graph
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Graph">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphsearch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/search
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphdiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/diff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get-apiv1tenantstenant_namegraphtimeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/v1/tenants/{tenant_name}/graph/timeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="api-reference">API Reference<a class="headerlink" href="#api-reference" title="Permanent link">&para;</a></h1>
+<p>Base URL: <code>http://localhost:8080</code> (configurable via <code>api.host</code> and <code>api.port</code>)</p>
+<p>All endpoints except <code>/health</code> are prefixed with <code>/api/v1</code>.</p>
+<h2 id="general-behavior">General behavior<a class="headerlink" href="#general-behavior" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Authentication:</strong> None built-in. Use a reverse proxy for auth.</li>
+<li><strong>CORS:</strong> Configurable via <code>api.enable_cors</code> and <code>api.cors_origins</code>. Allowed methods: GET, POST, PATCH, DELETE.</li>
+<li><strong>Request timeout:</strong> Requests exceeding <code>api.request_timeout_seconds</code> (default 30, max 300) return HTTP 504.</li>
+<li><strong>Content type:</strong> JSON for API data. Export and Preview artifact endpoints
+  return their declared CSV or manifest media type.</li>
+</ul>
+<h3 id="pagination">Pagination<a class="headerlink" href="#pagination" title="Permanent link">&para;</a></h3>
+<p>List endpoints accept:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Constraints</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>page</code></td>
+<td>int</td>
+<td>1</td>
+<td>&gt;= 1</td>
+</tr>
+<tr>
+<td><code>page_size</code></td>
+<td>int</td>
+<td>100</td>
+<td>1–1000</td>
+</tr>
+</tbody>
+</table>
+<p>Response includes: <code>items</code>, <code>total</code>, <code>page</code>, <code>page_size</code>, <code>pages</code>.</p>
+<h3 id="date-range-defaults">Date range defaults<a class="headerlink" href="#date-range-defaults" title="Permanent link">&para;</a></h3>
+<p>When <code>start_date</code> / <code>end_date</code> are omitted on list endpoints, the API uses the
+tenant's configured lookback window. FOCUS Mapping Preview requires both dates.</p>
+<h3 id="error-responses">Error responses<a class="headerlink" href="#error-responses" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>400</td>
+<td>Invalid parameters (bad filter, unknown column, etc.)</td>
+</tr>
+<tr>
+<td>404</td>
+<td>Tenant or resource not found</td>
+</tr>
+<tr>
+<td>409</td>
+<td>Pipeline already running (trigger endpoint)</td>
+</tr>
+<tr>
+<td>504</td>
+<td>Request timeout</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="health--readiness">Health &amp; Readiness<a class="headerlink" href="#health--readiness" title="Permanent link">&para;</a></h2>
+<h3 id="get-health"><code>GET /health</code><a class="headerlink" href="#get-health" title="Permanent link">&para;</a></h3>
+<p>Lightweight liveness check.</p>
+<p><strong>Response:</strong> <code>{"status": "ok", "version": "&lt;version&gt;"}</code></p>
+<h3 id="get-apiv1readiness"><code>GET /api/v1/readiness</code><a class="headerlink" href="#get-apiv1readiness" title="Permanent link">&para;</a></h3>
+<p>Per-tenant readiness with pipeline state. TTL-cached for 2 seconds.</p>
+<p><strong>Response fields:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>status</code></td>
+<td>string</td>
+<td><code>ready</code>, <code>initializing</code>, <code>no_data</code>, or <code>error</code></td>
+</tr>
+<tr>
+<td><code>version</code></td>
+<td>string</td>
+<td>Package version</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td>string</td>
+<td>Run mode (<code>api</code>, <code>worker</code>, <code>both</code>)</td>
+</tr>
+<tr>
+<td><code>tenants</code></td>
+<td>list</td>
+<td>Per-tenant status (see below)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Per-tenant fields:</strong> <code>tenant_name</code>, <code>tables_ready</code>, <code>has_data</code>,
+<code>pipeline_running</code>, <code>pipeline_stage</code>, <code>pipeline_current_date</code>,
+<code>last_run_status</code>, <code>last_run_at</code>, <code>permanent_failure</code>,
+<code>topic_attribution_status</code>, <code>topic_attribution_error</code>,
+<code>focus_preview_state</code>, <code>focus_preview_completed_repair_dates</code>,
+<code>focus_preview_total_repair_dates</code>, <code>focus_preview_message</code>,
+<code>focus_preview_ordinary_retention</code>, and
+<code>focus_preview_evidence_retention</code>.</p>
+<p><code>topic_attribution_status</code> is one of <code>"disabled"</code> | <code>"enabled"</code> | <code>"config_error"</code>. <code>topic_attribution_error</code> is a string describing the validation failure when <code>topic_attribution_status</code> is <code>"config_error"</code>, otherwise null.</p>
+<p><code>focus_preview_state</code> is one of <code>disabled</code>, <code>ready</code>, <code>upgrading</code>, <code>degraded</code>,
+or <code>unavailable</code>:</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>disabled</code></td>
+<td>The tenant does not enable FOCUS Mapping Preview. Progress is null.</td>
+</tr>
+<tr>
+<td><code>ready</code></td>
+<td>Preview is available and no repair or retention cause needs attention. Progress is null before the first repair and total/total after a successful repair.</td>
+</tr>
+<tr>
+<td><code>upgrading</code></td>
+<td>A historical repair is queued or running. Existing valid Preview data remains available.</td>
+</tr>
+<tr>
+<td><code>degraded</code></td>
+<td>Historical repair or retention cleanup needs attention. Existing valid Preview data remains available; use the repair progress and structured retention outcomes to choose the operator action.</td>
+</tr>
+<tr>
+<td><code>unavailable</code></td>
+<td>Preview readiness cannot be determined safely, including unavailable Preview storage. Progress is null.</td>
+</tr>
+</tbody>
+</table>
+<p>When repair work exists, the completed and total fields report <strong>Date
+progress</strong>. A completed date is durably terminal, whether it succeeded or
+failed. The ratio is lifecycle progress, not data volume or successful-row
+progress.</p>
+<p>The two retention fields report the latest recorded attempt independently:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Cleanup represented</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>focus_preview_ordinary_retention</code></td>
+<td>Ordinary tenant pipeline and configured overlay retention</td>
+</tr>
+<tr>
+<td><code>focus_preview_evidence_retention</code></td>
+<td>Preview source, readiness, allocation-lineage, and organization-authority retention</td>
+</tr>
+</tbody>
+</table>
+<p>Each field is null before an outcome is available. Otherwise it contains
+<code>attempted_at</code>, <code>status</code> (<code>success</code> or <code>failure</code>), and <code>diagnostic</code>. A successful
+outcome has a null diagnostic. A failure includes a stable <code>code</code>, an
+operator-facing <code>message</code>, and a redacted <code>error_type</code>. A later successful
+attempt replaces only the matching cleanup outcome and clears its diagnostic;
+the other cleanup outcome and historical repair progress remain independent.
+Any recorded retention failure makes Preview <code>degraded</code>, including while a
+repair is queued, running, or already degraded.</p>
+<p>Preview state does not change top-level application readiness or disable
+unrelated billing, chargeback, inventory, and pipeline operations. Existing
+valid Preview packages and revisions remain available while retention cleanup
+needs attention.</p>
+<hr />
+<h2 id="tenants">Tenants<a class="headerlink" href="#tenants" title="Permanent link">&para;</a></h2>
+<h3 id="get-apiv1tenants"><code>GET /api/v1/tenants</code><a class="headerlink" href="#get-apiv1tenants" title="Permanent link">&para;</a></h3>
+<p>List all configured tenants with summary pipeline state.</p>
+<p><strong>Response fields per tenant:</strong> <code>tenant_name</code>, <code>tenant_id</code>, <code>ecosystem</code>, <code>dates_pending</code>, <code>dates_calculated</code>, <code>last_calculated_date</code>, <code>topic_attribution_status</code>, <code>topic_attribution_error</code>.</p>
+<p><code>topic_attribution_status</code> is one of <code>"disabled"</code> | <code>"enabled"</code> | <code>"config_error"</code>. See <code>GET /api/v1/readiness</code> above for field semantics.</p>
+<h3 id="get-apiv1tenantstenant_namestatus"><code>GET /api/v1/tenants/{tenant_name}/status</code><a class="headerlink" href="#get-apiv1tenantstenant_namestatus" title="Permanent link">&para;</a></h3>
+<p>Detailed per-date pipeline state for a tenant.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter from this date</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter to this date</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong> <code>{tenant_name, tenant_id, ecosystem, topic_attribution_status, topic_attribution_error, states}</code> where <code>states</code> is a list of <code>{tracking_date, billing_gathered, resources_gathered, chargeback_calculated, topic_overlay_gathered, topic_attribution_calculated}</code> per date. The <code>topic_overlay_gathered</code> and <code>topic_attribution_calculated</code> fields are <code>false</code> when topic attribution is disabled or in <code>config_error</code> state.</p>
+<hr />
+<h2 id="billing">Billing<a class="headerlink" href="#billing" title="Permanent link">&para;</a></h2>
+<h3 id="get-apiv1tenantstenant_namebilling"><code>GET /api/v1/tenants/{tenant_name}/billing</code><a class="headerlink" href="#get-apiv1tenantstenant_namebilling" title="Permanent link">&para;</a></h3>
+<p>List raw billing line items. Paginated.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter start</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries (e.g. <code>America/Denver</code>). Defaults to UTC.</td>
+</tr>
+<tr>
+<td><code>product_type</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by product type</td>
+</tr>
+<tr>
+<td><code>resource_id</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by resource</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response fields per item:</strong> <code>ecosystem</code>, <code>tenant_id</code>, <code>timestamp</code>, <code>resource_id</code>, <code>product_category</code>, <code>product_type</code>, <code>quantity</code>, <code>unit_price</code>, <code>total_cost</code>, <code>currency</code>, <code>granularity</code>, <code>metadata</code>.</p>
+<hr />
+<h2 id="chargebacks">Chargebacks<a class="headerlink" href="#chargebacks" title="Permanent link">&para;</a></h2>
+<h3 id="get-apiv1tenantstenant_namechargebacks"><code>GET /api/v1/tenants/{tenant_name}/chargebacks</code><a class="headerlink" href="#get-apiv1tenantstenant_namechargebacks" title="Permanent link">&para;</a></h3>
+<p>List allocated chargeback rows. Paginated.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter start</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries (e.g. <code>America/Denver</code>). Defaults to UTC.</td>
+</tr>
+<tr>
+<td><code>identity_id</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by identity</td>
+</tr>
+<tr>
+<td><code>product_type</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by product type</td>
+</tr>
+<tr>
+<td><code>resource_id</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by resource</td>
+</tr>
+<tr>
+<td><code>cost_type</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by cost type</td>
+</tr>
+<tr>
+<td><code>tag_key</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by tag key</td>
+</tr>
+<tr>
+<td><code>tag_value</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by tag value (requires tag_key)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response fields per item:</strong> <code>dimension_id</code>, <code>ecosystem</code>, <code>tenant_id</code>, <code>timestamp</code>, <code>resource_id</code>, <code>product_category</code>, <code>product_type</code>, <code>identity_id</code>, <code>cost_type</code>, <code>amount</code>, <code>allocation_method</code>, <code>allocation_detail</code>, <code>tags</code>, <code>metadata</code>.</p>
+<p><code>tags</code> is a <code>dict[str, str]</code> mapping tag keys to tag values (e.g. <code>{"team": "platform", "env": "prod"}</code>). Tags are resolved at query time from the linked resource or identity.</p>
+<h3 id="get-apiv1tenantstenant_namechargebacksdimension_id"><code>GET /api/v1/tenants/{tenant_name}/chargebacks/{dimension_id}</code><a class="headerlink" href="#get-apiv1tenantstenant_namechargebacksdimension_id" title="Permanent link">&para;</a></h3>
+<p>Get a single chargeback dimension.</p>
+<p><strong>Response:</strong> Dimension fields (tags not resolved at this level — use <code>/chargebacks</code> list endpoint for tag-enriched rows).</p>
+<h3 id="get-apiv1tenantstenant_namechargebacksdates"><code>GET /api/v1/tenants/{tenant_name}/chargebacks/dates</code><a class="headerlink" href="#get-apiv1tenantstenant_namechargebacksdates" title="Permanent link">&para;</a></h3>
+<p>List all distinct dates with chargeback data.</p>
+<p><strong>Response:</strong> <code>{"dates": ["2026-01-01", "2026-01-02", ...]}</code></p>
+<h3 id="get-apiv1tenantstenant_namechargebacksallocation-issues"><code>GET /api/v1/tenants/{tenant_name}/chargebacks/allocation-issues</code><a class="headerlink" href="#get-apiv1tenantstenant_namechargebacksallocation-issues" title="Permanent link">&para;</a></h3>
+<p>Aggregated view of failed or problematic allocations. Paginated. Same filters as chargebacks list.</p>
+<p><strong>Response fields per item:</strong> <code>ecosystem</code>, <code>resource_id</code>, <code>product_type</code>, <code>identity_id</code>, <code>allocation_detail</code>, <code>row_count</code>, <code>usage_cost</code>, <code>shared_cost</code>, <code>total_cost</code>.</p>
+<hr />
+<h2 id="aggregation">Aggregation<a class="headerlink" href="#aggregation" title="Permanent link">&para;</a></h2>
+<h3 id="get-apiv1tenantstenant_namechargebacksaggregate"><code>GET /api/v1/tenants/{tenant_name}/chargebacks/aggregate</code><a class="headerlink" href="#get-apiv1tenantstenant_namechargebacksaggregate" title="Permanent link">&para;</a></h3>
+<p>Multi-dimensional aggregation with time bucketing. Returns up to 10,000 buckets.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>group_by</code></td>
+<td>list[string]</td>
+<td><code>["identity_id"]</code></td>
+<td>Columns or tag keys to group by (repeatable). Use <code>tag:{key}</code> for tag-based grouping.</td>
+</tr>
+<tr>
+<td><code>time_bucket</code></td>
+<td>string</td>
+<td><code>day</code></td>
+<td><code>hour</code>, <code>day</code>, <code>week</code>, or <code>month</code></td>
+</tr>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter start</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries (e.g. <code>America/Denver</code>). Defaults to UTC.</td>
+</tr>
+<tr>
+<td><code>identity_id</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by identity</td>
+</tr>
+<tr>
+<td><code>product_type</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by product type</td>
+</tr>
+<tr>
+<td><code>resource_id</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by resource</td>
+</tr>
+<tr>
+<td><code>cost_type</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by cost type</td>
+</tr>
+<tr>
+<td><code>tag:{key}</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter to rows where the tag <code>{key}</code> matches the given value. Repeatable for AND semantics. Comma-separated values in a single param are OR-matched.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Valid <code>group_by</code> columns:</strong> <code>identity_id</code>, <code>resource_id</code>, <code>product_type</code>, <code>product_category</code>, <code>cost_type</code>, <code>allocation_method</code>, <code>environment_id</code>.</p>
+<p><strong>Tag-based grouping (<code>group_by=tag:{key}</code>):</strong></p>
+<p>Use <code>tag:</code> prefix to group by an entity tag key instead of a dimension column. Examples:</p>
+<ul>
+<li><code>group_by=tag:owner</code> — group by the <code>owner</code> tag; rows with no <code>owner</code> tag land in an <code>UNTAGGED</code> bucket.</li>
+<li><code>group_by=tag:owner&amp;group_by=tag:department</code> — group by two tag keys; each bucket has both keys in <code>dimensions</code>.</li>
+<li><code>group_by=tag:owner&amp;group_by=product_type</code> — mix tag and dimension grouping in one query.</li>
+</ul>
+<p>Tag values are resolved by joining the <code>entity_tags</code> table. When a resource and its linked identity both carry the same tag key, the <strong>resource tag wins</strong> (mirrors the behavior on the list endpoint).</p>
+<p><strong>Tag-based filtering (<code>tag:{key}={value}</code>):</strong></p>
+<p>Dynamic query parameters prefixed <code>tag:</code> are treated as tag filters and are independent of <code>group_by</code>.</p>
+<ul>
+<li><code>tag:department=eng</code> — only rows where <code>department</code> tag equals <code>eng</code>.</li>
+<li><code>tag:team=platform,commerce</code> — <code>team</code> IN (<code>platform</code>, <code>commerce</code>) — comma-separated values are OR-matched within one key.</li>
+<li><code>tag:owner=alice&amp;tag:department=eng</code> — multiple tag params are AND-matched across keys.</li>
+<li>Untagged rows (no matching tag key) are excluded from filtered results.</li>
+</ul>
+<p>Tag key format: must start with an alphanumeric character, then alphanumeric, <code>_</code>, or <code>-</code>, up to 63 characters total. Invalid keys return HTTP 400.</p>
+<p><strong>Response:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">&quot;buckets&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">&quot;dimensions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;tag:owner&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;team-commerce&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;product_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;kafka&quot;</span><span class="p">},</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">&quot;time_bucket&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">      </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;150.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">&quot;usage_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;120.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">&quot;shared_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;30.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">&quot;row_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">      </span><span class="nt">&quot;dimensions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;tag:owner&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;UNTAGGED&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;product_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;kafka&quot;</span><span class="p">},</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">      </span><span class="nt">&quot;time_bucket&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">      </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;30.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">      </span><span class="nt">&quot;usage_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;30.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">      </span><span class="nt">&quot;shared_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;0.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">      </span><span class="nt">&quot;row_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">  </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;180.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">  </span><span class="nt">&quot;usage_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;150.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">  </span><span class="nt">&quot;shared_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;30.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">  </span><span class="nt">&quot;total_rows&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">50</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="p">}</span>
+</code></pre></div>
+<p>Tag dimensions appear in <code>dimensions</code> with the <code>tag:</code> prefix (e.g. <code>"tag:owner": "team-commerce"</code>). <code>usage_amount</code> is cost attributed by actual usage metrics. <code>shared_amount</code> is cost split evenly.</p>
+<hr />
+<h2 id="resources">Resources<a class="headerlink" href="#resources" title="Permanent link">&para;</a></h2>
+<h3 id="get-apiv1tenantstenant_nameresources"><code>GET /api/v1/tenants/{tenant_name}/resources</code><a class="headerlink" href="#get-apiv1tenantstenant_nameresources" title="Permanent link">&para;</a></h3>
+<p>List discovered resources. Paginated. Supports three temporal query modes:</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>resource_type</code></td>
+<td>string</td>
+<td>—</td>
+<td>Filter by type</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>string</td>
+<td>—</td>
+<td>Filter by status (<code>active</code> or <code>deleted</code>)</td>
+</tr>
+<tr>
+<td><code>active_at</code></td>
+<td>datetime</td>
+<td>—</td>
+<td>Resources active at this point in time</td>
+</tr>
+<tr>
+<td><code>period_start</code> + <code>period_end</code></td>
+<td>datetime</td>
+<td>—</td>
+<td>Resources active during this period</td>
+</tr>
+<tr>
+<td><code>search</code></td>
+<td>string</td>
+<td>—</td>
+<td>Case-insensitive substring match on <code>resource_id</code> and <code>display_name</code></td>
+</tr>
+<tr>
+<td><code>sort_by</code></td>
+<td>string</td>
+<td>—</td>
+<td>Column to sort by: <code>resource_id</code>, <code>display_name</code>, <code>resource_type</code>, <code>status</code>. Falls back to <code>resource_id</code> if invalid.</td>
+</tr>
+<tr>
+<td><code>sort_order</code></td>
+<td>string</td>
+<td><code>asc</code></td>
+<td>Sort direction: <code>asc</code> or <code>desc</code>. Applied when no temporal params are set.</td>
+</tr>
+<tr>
+<td><code>tag_key</code></td>
+<td>string</td>
+<td>—</td>
+<td>Filter to resources that have this tag key</td>
+</tr>
+<tr>
+<td><code>tag_value</code></td>
+<td>string</td>
+<td>—</td>
+<td>Narrow <code>tag_key</code> filter to this value (requires <code>tag_key</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>search</code>, <code>sort_by</code>, <code>sort_order</code>, <code>tag_key</code>, and <code>tag_value</code> apply only when no temporal params (<code>active_at</code>, <code>period_start</code>/<code>period_end</code>) are set.</p>
+<p>If no temporal params: returns all resources. Cannot combine <code>active_at</code> with <code>period_start</code>/<code>period_end</code>.</p>
+<p><strong>Response fields per item:</strong> <code>ecosystem</code>, <code>tenant_id</code>, <code>resource_id</code>, <code>resource_type</code>, <code>display_name</code>, <code>parent_id</code>, <code>owner_id</code>, <code>status</code>, <code>created_at</code>, <code>deleted_at</code>, <code>last_seen_at</code>, <code>metadata</code>.</p>
+<hr />
+<h2 id="identities">Identities<a class="headerlink" href="#identities" title="Permanent link">&para;</a></h2>
+<h3 id="get-apiv1tenantstenant_nameidentities"><code>GET /api/v1/tenants/{tenant_name}/identities</code><a class="headerlink" href="#get-apiv1tenantstenant_nameidentities" title="Permanent link">&para;</a></h3>
+<p>List discovered identities. Paginated. Same temporal query modes as resources.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>identity_type</code></td>
+<td>string</td>
+<td>—</td>
+<td>Filter by type</td>
+</tr>
+<tr>
+<td><code>active_at</code></td>
+<td>datetime</td>
+<td>—</td>
+<td>Identities active at this point</td>
+</tr>
+<tr>
+<td><code>period_start</code> + <code>period_end</code></td>
+<td>datetime</td>
+<td>—</td>
+<td>Identities active during period</td>
+</tr>
+<tr>
+<td><code>search</code></td>
+<td>string</td>
+<td>—</td>
+<td>Case-insensitive substring match on <code>identity_id</code> and <code>display_name</code></td>
+</tr>
+<tr>
+<td><code>sort_by</code></td>
+<td>string</td>
+<td>—</td>
+<td>Column to sort by: <code>identity_id</code>, <code>display_name</code>, <code>identity_type</code>. Falls back to <code>identity_id</code> if invalid.</td>
+</tr>
+<tr>
+<td><code>sort_order</code></td>
+<td>string</td>
+<td><code>asc</code></td>
+<td>Sort direction: <code>asc</code> or <code>desc</code>. Applied when no temporal params are set.</td>
+</tr>
+<tr>
+<td><code>tag_key</code></td>
+<td>string</td>
+<td>—</td>
+<td>Filter to identities that have this tag key</td>
+</tr>
+<tr>
+<td><code>tag_value</code></td>
+<td>string</td>
+<td>—</td>
+<td>Narrow <code>tag_key</code> filter to this value (requires <code>tag_key</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>search</code>, <code>sort_by</code>, <code>sort_order</code>, <code>tag_key</code>, and <code>tag_value</code> apply only when no temporal params are set.</p>
+<p><strong>Response fields per item:</strong> <code>ecosystem</code>, <code>tenant_id</code>, <code>identity_id</code>, <code>identity_type</code>, <code>display_name</code>, <code>created_at</code>, <code>deleted_at</code>, <code>last_seen_at</code>, <code>metadata</code>.</p>
+<hr />
+<h2 id="inventory">Inventory<a class="headerlink" href="#inventory" title="Permanent link">&para;</a></h2>
+<h3 id="get-apiv1tenantstenant_nameinventorysummary"><code>GET /api/v1/tenants/{tenant_name}/inventory/summary</code><a class="headerlink" href="#get-apiv1tenantstenant_nameinventorysummary" title="Permanent link">&para;</a></h3>
+<p>Counts of resources and identities grouped by type.</p>
+<p><strong>Response:</strong> <code>{"resource_counts": {"cluster": {"total": 3, "active": 3, "deleted": 0}}, "identity_counts": {"service_account": {"total": 12, "active": 10, "deleted": 2}}}</code></p>
+<hr />
+<h2 id="tags">Tags<a class="headerlink" href="#tags" title="Permanent link">&para;</a></h2>
+<p>Tags attach to entities (resources or identities) and propagate to chargeback rows at query time. <code>entity_type</code> must be <code>"resource"</code> or <code>"identity"</code>.</p>
+<h3 id="get-apiv1tenantstenant_nameentitiesentity_typeentity_idtags"><code>GET /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags</code><a class="headerlink" href="#get-apiv1tenantstenant_nameentitiesentity_typeentity_idtags" title="Permanent link">&para;</a></h3>
+<p>List all tags on an entity.</p>
+<p><strong>Response:</strong> Array of tag objects with fields <code>tag_id</code>, <code>tenant_id</code>, <code>entity_type</code>, <code>entity_id</code>, <code>tag_key</code>, <code>tag_value</code>, <code>created_by</code>, <code>created_at</code>.</p>
+<h3 id="post-apiv1tenantstenant_nameentitiesentity_typeentity_idtags"><code>POST /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags</code><a class="headerlink" href="#post-apiv1tenantstenant_nameentitiesentity_typeentity_idtags" title="Permanent link">&para;</a></h3>
+<p>Create a tag on an entity. Returns 201. Returns 409 if a tag with the same key already exists on this entity.</p>
+<p><strong>Body:</strong> <code>{"tag_key": "team", "tag_value": "platform", "created_by": "admin"}</code></p>
+<h3 id="put-apiv1tenantstenant_nameentitiesentity_typeentity_idtagstag_key"><code>PUT /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags/{tag_key}</code><a class="headerlink" href="#put-apiv1tenantstenant_nameentitiesentity_typeentity_idtagstag_key" title="Permanent link">&para;</a></h3>
+<p>Update a tag's value.</p>
+<p><strong>Body:</strong> <code>{"tag_value": "new-value"}</code></p>
+<h3 id="delete-apiv1tenantstenant_nameentitiesentity_typeentity_idtagstag_key"><code>DELETE /api/v1/tenants/{tenant_name}/entities/{entity_type}/{entity_id}/tags/{tag_key}</code><a class="headerlink" href="#delete-apiv1tenantstenant_nameentitiesentity_typeentity_idtagstag_key" title="Permanent link">&para;</a></h3>
+<p>Delete a tag by key. Returns 204.</p>
+<h3 id="get-apiv1tenantstenant_nametags"><code>GET /api/v1/tenants/{tenant_name}/tags</code><a class="headerlink" href="#get-apiv1tenantstenant_nametags" title="Permanent link">&para;</a></h3>
+<p>List all tags for a tenant. Paginated.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_type</code></td>
+<td>string</td>
+<td>Filter by entity type (<code>"resource"</code> or <code>"identity"</code>)</td>
+</tr>
+<tr>
+<td><code>tag_key</code></td>
+<td>string</td>
+<td>Filter by tag key</td>
+</tr>
+<tr>
+<td><code>page</code></td>
+<td>int</td>
+<td>Page number (default 1)</td>
+</tr>
+<tr>
+<td><code>page_size</code></td>
+<td>int</td>
+<td>Page size 1–1000 (default 100)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong> <code>{"items": [...], "total": N, "page": 1, "page_size": 100, "pages": N}</code></p>
+<h3 id="get-apiv1tenantstenant_nametagskeys"><code>GET /api/v1/tenants/{tenant_name}/tags/keys</code><a class="headerlink" href="#get-apiv1tenantstenant_nametagskeys" title="Permanent link">&para;</a></h3>
+<p>List distinct tag keys for a tenant, sorted alphabetically.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_type</code></td>
+<td>string</td>
+<td>Filter by entity type (<code>"resource"</code> or <code>"identity"</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong> <code>{"keys": ["env", "team", "owner"]}</code></p>
+<h3 id="get-apiv1tenantstenant_nametagskeystag_keyvalues"><code>GET /api/v1/tenants/{tenant_name}/tags/keys/{tag_key}/values</code><a class="headerlink" href="#get-apiv1tenantstenant_nametagskeystag_keyvalues" title="Permanent link">&para;</a></h3>
+<p>List distinct values for a tag key, sorted alphabetically. Returns 400 if <code>tag_key</code> format is invalid.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_type</code></td>
+<td>string</td>
+<td>Filter by entity type (<code>"resource"</code> or <code>"identity"</code>)</td>
+</tr>
+<tr>
+<td><code>q</code></td>
+<td>string</td>
+<td>Prefix filter for autocomplete (case-insensitive)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong> <code>{"values": ["prod", "staging"]}</code></p>
+<h3 id="post-apiv1tenantstenant_nametagsbulk"><code>POST /api/v1/tenants/{tenant_name}/tags/bulk</code><a class="headerlink" href="#post-apiv1tenantstenant_nametagsbulk" title="Permanent link">&para;</a></h3>
+<p>Bulk create/update tags on explicit entity IDs.</p>
+<p><strong>Body:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">&quot;items&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;entity_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;resource&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;entity_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cluster-1&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;tag_key&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;team&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;tag_value&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;platform&quot;</span><span class="p">},</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;entity_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;identity&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;entity_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;sa-abc&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;tag_key&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;team&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;tag_value&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;data&quot;</span><span class="p">}</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="nt">&quot;created_by&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="nt">&quot;override_existing&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Response:</strong> <code>{"created_count": 2, "updated_count": 0, "skipped_count": 0}</code></p>
+<p>When <code>override_existing</code> is true, existing tags with the same key are updated instead of skipped.</p>
+<h3 id="post-apiv1tenantstenant_nametagsbulk-by-filter"><code>POST /api/v1/tenants/{tenant_name}/tags/bulk-by-filter</code><a class="headerlink" href="#post-apiv1tenantstenant_nametagsbulk-by-filter" title="Permanent link">&para;</a></h3>
+<p>Bulk tag all unique resources/identities found in chargebacks matching the given filters. Resolves entities server-side.</p>
+<p><strong>Body:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">&quot;start_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">&quot;end_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-31&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">&quot;timezone&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;America/Denver&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">&quot;identity_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;sa-abc&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">&quot;tag_key&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;team&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">&quot;display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Platform&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="nt">&quot;created_by&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="nt">&quot;override_existing&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>display_name</code> is stored as the tag value. <code>identity_id</code> narrows which chargebacks are scanned.</p>
+<p><strong>Response:</strong> <code>{"created_count": 2, "updated_count": 0, "skipped_count": 0}</code></p>
+<hr />
+<h2 id="pipeline">Pipeline<a class="headerlink" href="#pipeline" title="Permanent link">&para;</a></h2>
+<h3 id="post-apiv1tenantstenant_namepipelinerun"><code>POST /api/v1/tenants/{tenant_name}/pipeline/run</code><a class="headerlink" href="#post-apiv1tenantstenant_namepipelinerun" title="Permanent link">&para;</a></h3>
+<p>Trigger a pipeline run for a tenant. Returns 202 (accepted).</p>
+<p>Returns HTTP 409 if a run is already in progress. Requires <code>both</code> mode — API-only mode cannot trigger runs.</p>
+<h3 id="get-apiv1tenantstenant_namepipelinestatus"><code>GET /api/v1/tenants/{tenant_name}/pipeline/status</code><a class="headerlink" href="#get-apiv1tenantstenant_namepipelinestatus" title="Permanent link">&para;</a></h3>
+<p>Get latest pipeline run status.</p>
+<p><strong>Response:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">&quot;tenant_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;my-org&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">&quot;is_running&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">&quot;last_run&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-03-17T12:00:00Z&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">&quot;last_result&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="nt">&quot;dates_gathered&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">&quot;dates_calculated&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="nt">&quot;chargeback_rows_written&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">142</span><span class="p">,</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">    </span><span class="nt">&quot;errors&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="nt">&quot;completed_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-03-17T12:00:00Z&quot;</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>last_result</code> is <code>null</code> if no completed or failed runs exist.</p>
+<hr />
+<h2 id="export">Export<a class="headerlink" href="#export" title="Permanent link">&para;</a></h2>
+<h3 id="post-apiv1tenantstenant_nameexport"><code>POST /api/v1/tenants/{tenant_name}/export</code><a class="headerlink" href="#post-apiv1tenantstenant_nameexport" title="Permanent link">&para;</a></h3>
+<p>Stream chargeback data as CSV. Returns <code>text/csv</code> with <code>Content-Disposition: attachment</code>.</p>
+<p><strong>Body:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">&quot;columns&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;resource_id&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;product_type&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;identity_id&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;amount&quot;</span><span class="p">],</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">&quot;start_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">&quot;end_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-31&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">&quot;timezone&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;America/Denver&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="nt">&quot;filters&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">    </span><span class="nt">&quot;identity_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;sa-12345&quot;</span><span class="p">,</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="nt">&quot;product_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;KAFKA_NUM_CKU&quot;</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="p">}</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>columns</code></td>
+<td>list[string]</td>
+<td>9 default columns</td>
+<td>Columns to include</td>
+</tr>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter start</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries (e.g. <code>America/Denver</code>). Defaults to UTC.</td>
+</tr>
+<tr>
+<td><code>filters</code></td>
+<td>dict</td>
+<td>no</td>
+<td>Key-value filters (<code>identity_id</code>, <code>product_type</code>, <code>resource_id</code>, <code>cost_type</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>All available columns:</strong> <code>ecosystem</code>, <code>tenant_id</code>, <code>timestamp</code>, <code>resource_id</code>, <code>product_category</code>, <code>product_type</code>, <code>identity_id</code>, <code>cost_type</code>, <code>amount</code>, <code>allocation_method</code>, <code>allocation_detail</code>, <code>tags</code>, <code>metadata</code>.</p>
+<p>The <code>tags</code> column is serialized as <code>key=value;key=value</code> pairs (e.g. <code>team=platform;env=prod</code>).</p>
+<p><strong>Default columns:</strong> <code>timestamp</code>, <code>resource_id</code>, <code>product_category</code>, <code>product_type</code>, <code>identity_id</code>, <code>cost_type</code>, <code>amount</code>, <code>allocation_method</code>, <code>tags</code>.</p>
+<hr />
+<h2 id="focus-mapping-preview">FOCUS Mapping Preview<a class="headerlink" href="#focus-mapping-preview" title="Permanent link">&para;</a></h2>
+<p>FOCUS Mapping Preview is an asynchronous, Confluent Cloud-only API under
+<code>/api/v1/tenants/{tenant_name}/focus-preview</code>. Requested packages and monthly
+revisions read persisted calculation and source evidence. Historical repair is
+the only Preview operation that reacquires provider data and runs calculation.</p>
+<p>The tenant must enable <code>focus_preview</code> for the requested interval. Disabled
+tenants receive HTTP 409 <code>preview_commercial_profile_unavailable</code>; unrelated
+billing, chargeback, and export endpoints remain available.</p>
+<p>The API has no built-in authentication. Protect the complete Preview prefix with
+an authenticated reverse proxy or API gateway. For configuration and UI/CLI
+workflows, use <a href="../focus-mapping-preview/">FOCUS Mapping Preview</a>. This section
+defines only the HTTP contract.</p>
+<h3 id="get-apiv1tenantstenant_namefocus-previewprofile"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/profile</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewprofile" title="Permanent link">&para;</a></h3>
+<p>Return static capability metadata for <code>focus-1.4-preview-v1</code>:</p>
+<ul>
+<li><code>mapping_profile_version</code>;</li>
+<li><code>target_focus_version: "1.4"</code>;</li>
+<li><code>conformance_status: "non_conforming"</code>;</li>
+<li>ordered <code>full_columns</code> and <code>summary_columns</code>; and</li>
+<li>ordered <code>known_gaps</code>, each containing <code>code</code>, <code>description</code>, and
+  affected <code>columns</code>.</li>
+</ul>
+<p>The current authority gaps are:</p>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Description</th>
+<th>Affected columns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>invoice_identity_unavailable</code></td>
+<td>Post-issuance invoice identity is unavailable.</td>
+<td><code>InvoiceDetailId</code>, <code>InvoiceId</code></td>
+</tr>
+<tr>
+<td><code>provider_host_display_name_unavailable</code></td>
+<td><code>HostProviderName</code> contains the raw provider cloud code, not a provider display name.</td>
+<td><code>HostProviderName</code></td>
+</tr>
+<tr>
+<td><code>provider_region_display_name_unavailable</code></td>
+<td>Confluent inventory does not provide a distinct region display name.</td>
+<td><code>RegionName</code></td>
+</tr>
+<tr>
+<td><code>derived_sku_identity_not_provider_authoritative</code></td>
+<td>SKU values are deterministic Chitragupta-derived evidence, not provider-issued identifiers.</td>
+<td><code>SkuId</code>, <code>SkuMeter</code>, <code>SkuPriceDetails</code>, <code>SkuPriceId</code>, <code>x_ChitraguptaSkuComponents</code></td>
+</tr>
+</tbody>
+</table>
+<p>The endpoint validates tenant existence and the Confluent Cloud ecosystem but
+does not initialize Preview storage or workers.</p>
+<h3 id="post-apiv1tenantstenant_namefocus-previewrepairs"><code>POST /api/v1/tenants/{tenant_name}/focus-preview/repairs</code><a class="headerlink" href="#post-apiv1tenantstenant_namefocus-previewrepairs" title="Permanent link">&para;</a></h3>
+<p>Create an asynchronous historical repair. New repairs are accepted only in
+<code>both</code> mode.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">&quot;start_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">&quot;end_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-02-01&quot;</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="p">}</span>
+</code></pre></div>
+<p>Dates use inclusive-start/exclusive-end UTC semantics. The 1–364 date range must
+fit inside the tenant's commercial, acquisition, cutoff, and retention
+intervals and cannot include future dates.</p>
+<p>A valid request returns HTTP 202, a <code>Location</code> header, and these operation
+fields: <code>repair_id</code>, <code>tenant_name</code>, <code>start_date</code>, <code>end_date</code>, <code>status</code>,
+<code>created_at</code>, nullable <code>started_at</code>, nullable <code>completed_at</code>, nullable
+<code>diagnostic</code>, and date-ordered <code>dates</code>. Operation status is <code>queued</code>, <code>running</code>,
+<code>completed</code>, <code>completed_with_failures</code>, or <code>failed</code>.</p>
+<p>Each date contains <code>tracking_date</code>, <code>status</code>, and nullable <code>started_at</code>,
+<code>completed_at</code>, <code>calculation_id</code>, <code>calculation_completed_at</code>, <code>rows_written</code>,
+<code>failure_stage</code>, and <code>diagnostic</code>. Date status is <code>queued</code>, <code>running</code>,
+<code>daily_validated</code>, <code>succeeded</code>, or <code>failed</code>. Failure stage is <code>retained_state</code>,
+<code>provider_source</code>, <code>calculation</code>, <code>evidence</code>, <code>preview_validation</code>, or <code>worker</code>.
+<code>daily_validated</code> is nonterminal: Daily validation passed, but validation of the
+selected UTC month has not completed. Diagnostics contain <code>code</code>, <code>message</code>,
+<code>retryable</code>, and optional <code>source_correlation_ids</code>.</p>
+<p>Repair reacquires billing data and runs the ordinary calculation for the
+selected tenant/date scope. It can replace billing, chargebacks, pipeline state,
+source evidence, and allocation lineage in that range. It creates no requested
+package or published revision.</p>
+<p>Only one repair can be active per tenant. Process-wide repair admission uses
+<code>preview.max_workers</code> and <code>preview.max_queued_repairs</code>. A rejected capacity
+request creates no operation and is not retried automatically.</p>
+<table>
+<thead>
+<tr>
+<th>Condition</th>
+<th style="text-align: right;">Status</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Malformed, missing, or extra body field</td>
+<td style="text-align: right;">422</td>
+<td>FastAPI validation body</td>
+</tr>
+<tr>
+<td>Unknown tenant</td>
+<td style="text-align: right;">404</td>
+<td><code>Tenant '&lt;tenant_name&gt;' not found</code></td>
+</tr>
+<tr>
+<td>Unsupported ecosystem</td>
+<td style="text-align: right;">400</td>
+<td><code>FOCUS Mapping Preview currently supports only Confluent Cloud tenants</code></td>
+</tr>
+<tr>
+<td>Disabled tenant</td>
+<td style="text-align: right;">409</td>
+<td><code>preview_commercial_profile_unavailable</code></td>
+</tr>
+<tr>
+<td>Invalid or future range</td>
+<td style="text-align: right;">400</td>
+<td><code>focus_preview_repair_range_invalid</code> or <code>focus_preview_repair_future_range</code></td>
+</tr>
+<tr>
+<td>Outside the eligible interval or over 364 dates</td>
+<td style="text-align: right;">400</td>
+<td><code>focus_preview_repair_range_ineligible</code></td>
+</tr>
+<tr>
+<td>Worker unavailable</td>
+<td style="text-align: right;">503</td>
+<td><code>FOCUS Mapping Preview repair worker is unavailable</code></td>
+</tr>
+<tr>
+<td>Storage unavailable</td>
+<td style="text-align: right;">503</td>
+<td><code>FOCUS Mapping Preview repair storage is unavailable</code></td>
+</tr>
+<tr>
+<td>Repair already active</td>
+<td style="text-align: right;">409</td>
+<td><code>focus_preview_repair_in_progress</code></td>
+</tr>
+<tr>
+<td>Tenant busy</td>
+<td style="text-align: right;">409</td>
+<td><code>focus_preview_repair_tenant_busy</code></td>
+</tr>
+<tr>
+<td>Capacity full</td>
+<td style="text-align: right;">429</td>
+<td><code>focus_preview_repair_capacity_exhausted</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="get-apiv1tenantstenant_namefocus-previewrepairsrepair_id"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/repairs/{repair_id}</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrepairsrepair_id" title="Permanent link">&para;</a></h3>
+<p>Return the same durable operation and complete per-date result list. GET is
+available in <code>api</code> and <code>both</code> modes for an enabled tenant and does not require a
+running repair worker. A missing repair or a repair owned by another tenant
+returns 404. Disabled tenants retain the normal 409 enablement boundary.</p>
+<h3 id="post-apiv1tenantstenant_namefocus-previewrequests"><code>POST /api/v1/tenants/{tenant_name}/focus-preview/requests</code><a class="headerlink" href="#post-apiv1tenantstenant_namefocus-previewrequests" title="Permanent link">&para;</a></h3>
+<p>Create a request. An admitted request returns HTTP 202 with a queued status
+document. Capacity admission follows tenant, ecosystem, input, enablement, and
+runtime validation.</p>
+<p>The creation response requires <code>target_focus_version: "1.4"</code> and
+<code>conformance_status: "non_conforming"</code>. The same fields remain present on every
+subsequent request status/detail representation and recent-request list item.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">&quot;grain&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;daily&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">&quot;start_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-07-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">&quot;end_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-08-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span><span class="nt">&quot;column_profile&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;full&quot;</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">}</span>
+</code></pre></div>
+<p>Dates are UTC and use inclusive-start/exclusive-end semantics. The request must
+contain 1–31 days within the UTC calendar month containing <code>start_date</code>; the
+exclusive end may be the first day of the following month.</p>
+<p>Monthly requests supply one exact ASCII <code>YYYY-MM</code>; public start/end dates are
+not accepted for Monthly submission:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">&quot;grain&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;monthly&quot;</span><span class="p">,</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">&quot;month&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-07&quot;</span><span class="p">,</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">&quot;column_profile&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;summary&quot;</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>column_profile</code> defaults to <code>full</code>. Summary uses the fixed profile subset.
+Custom supplies <code>columns</code>, for example
+<code>{"column_profile":"custom","columns":["BilledCost","ResourceId"]}</code>.
+Supported names retain first-occurrence caller order; unknown and duplicate
+entries are logged and ignored. Full and Summary reject <code>columns</code>, and Custom
+rejects a selection with no supported Full-profile columns.</p>
+<p>When the process-local global or per-tenant capacity limit is full, the
+submission returns HTTP 429:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">&quot;detail&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;preview_capacity_exhausted&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;FOCUS Mapping Preview generation capacity is exhausted.&quot;</span><span class="p">,</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="nt">&quot;retryable&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="p">}</span>
+</code></pre></div>
+<p>No request ID or artifacts are created for this response. Clients, including
+<code>chitragupta-preview</code>, should wait and submit the request again; the CLI does
+not automatically retry a capacity rejection.</p>
+<h3 id="get-apiv1tenantstenant_namefocus-previewrequests"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/requests</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrequests" title="Permanent link">&para;</a></h3>
+<p>Return recent requests newest first, including queued, running, ready, failed,
+and expired requests. Ordering is descending by the immutable
+<code>(created_at, request_id)</code> pair.</p>
+<table>
+<thead>
+<tr>
+<th>Query</th>
+<th style="text-align: right;">Default</th>
+<th>Constraints</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>limit</code></td>
+<td style="text-align: right;"><code>20</code></td>
+<td>1–100</td>
+<td>Maximum items returned.</td>
+</tr>
+<tr>
+<td><code>cursor</code></td>
+<td style="text-align: right;">none</td>
+<td>Non-empty request ID</td>
+<td>Continue after the prior page's <code>next_cursor</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The response is <code>{"items":[...],"next_cursor":"..."}</code>. Every item uses the
+request representation, including required <code>target_focus_version: "1.4"</code> and
+<code>conformance_status: "non_conforming"</code>. <code>next_cursor</code> is null when no later page
+exists. A missing cursor and a cursor owned by another tenant both return 400
+<code>Preview request cursor is invalid</code>.</p>
+<h3 id="get-apiv1tenantstenant_namefocus-previewrequestsrequest_id"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_id" title="Permanent link">&para;</a></h3>
+<p>Return a tenant-scoped request. Lifecycle is <code>queued</code>, <code>running</code>, then
+<code>ready</code> or <code>failed</code>; a ready request becomes <code>expired</code> at its fixed cutoff.</p>
+<p>The response fields are <code>request_id</code>, <code>tenant_name</code>, <code>target_focus_version</code>,
+<code>conformance_status</code>, <code>grain</code>, <code>start_date</code>, <code>end_date</code>, nullable <code>month</code>,
+<code>column_profile</code>, ordered <code>effective_columns</code>, <code>status</code>, <code>created_at</code>, nullable
+<code>started_at</code>, nullable <code>completed_at</code>, nullable <code>expires_at</code>, nullable
+<code>diagnostic</code>, nullable <code>source_snapshot</code>, and nullable <code>package</code>.</p>
+<ul>
+<li>Queued and running requests have no diagnostic, source snapshot, or package.</li>
+<li>Failed requests contain <code>{code, message, retryable}</code> and no package. Source
+  failures may also contain <code>source_correlation_ids</code>: at most 20 sorted, unique,
+  opaque <code>src:v1:&lt;64 lowercase hex&gt;</code> values.</li>
+<li>Ready requests contain source coverage and package download metadata.</li>
+<li>Expired requests retain their source snapshot and expiry but return
+  <code>package: null</code>.</li>
+</ul>
+<p><code>source_snapshot</code> contains nullable <code>calculation_timestamp</code>, date-ordered
+<code>calculation_coverage</code>, nullable <code>source_through</code>,
+<code>effective_coverage_start_date</code>, <code>effective_coverage_end_date</code>, nullable
+<code>evidence_through_date</code>, nullable <code>availability_cutoff_end_date</code>, and nullable
+<code>monthly_status</code>. Each coverage entry contains <code>tracking_date</code>, <code>calculation_id</code>,
+<code>calculation_completed_at</code>, and nullable <code>calculation_run_id</code>. <code>monthly_status</code>
+is <code>provisional</code>, <code>settled</code>, or null.</p>
+<p>A ready <code>package</code> contains <code>manifest</code>, ordered <code>files</code>, <code>download_all_name</code>, and
+<code>download_all_url</code>. The files include the data parts and metadata file. Each
+artifact includes <code>name</code>, <code>media_type</code>, <code>size_bytes</code>, <code>sha256</code>, optional <code>order</code>,
+and <code>download_url</code>. Storage paths and keys are never returned.</p>
+<p>For package files, lifecycle, manifest authority, and consumer handling, see
+<a href="../focus-mapping-preview/#package-contents-and-lifecycle">Package contents and lifecycle</a>.</p>
+<h3 id="get-apiv1tenantstenant_namefocus-previewrequestsrequest_idmanifest"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/manifest</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idmanifest" title="Permanent link">&para;</a></h3>
+<p>Return the exact stored <code>manifest.json</code> bytes for a ready request.</p>
+<h3 id="get-apiv1tenantstenant_namefocus-previewrequestsrequest_idfilesfile_name"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/files/{file_name}</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idfilesfile_name" title="Permanent link">&para;</a></h3>
+<p>Return exact stored bytes for a file declared by a ready package. CSV files use
+<code>text/csv</code>; <code>focus-metadata.json</code> uses <code>application/json</code>.</p>
+<h3 id="get-apiv1tenantstenant_namefocus-previewrequestsrequest_idarchive"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/requests/{request_id}/archive</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrequestsrequest_idarchive" title="Permanent link">&para;</a></h3>
+<p>Return <code>application/zip</code> named
+<code>focus-mapping-preview-{request_id}.zip</code>. The ZIP contains the manifest
+followed by its declared files.</p>
+<p>Requested artifacts are available until <code>expires_at</code>, exactly seven days after
+ready publication. Artifact endpoints return 410 after expiry. See
+<a href="../focus-mapping-preview/#package-contents-and-lifecycle">Package contents and lifecycle</a>
+for the file and consumer contract.</p>
+<h3 id="published-monthly-revisions">Published monthly revisions<a class="headerlink" href="#published-monthly-revisions" title="Permanent link">&para;</a></h3>
+<p>Periodic workers publish validated Settled Monthly Full revisions. A later
+material correction replaces the current revision; failed candidates leave it
+unchanged. Consumers replace superseded revisions and never aggregate them.</p>
+<p>Publication behavior and consumer handling are documented in
+<a href="../focus-mapping-preview/#published-monthly-revisions">Published monthly revisions</a>.</p>
+<h4 id="get-apiv1tenantstenant_namefocus-previewrevisionscurrent"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/revisions/current</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrevisionscurrent" title="Permanent link">&para;</a></h4>
+<p>Return the current published revision for required query <code>month=YYYY-MM</code>.
+<code>revision_id</code> is optional on this metadata route and acts as a current-revision
+guard when supplied.</p>
+<p>The response contains revision identity and month bounds,
+<code>target_focus_version: "1.4"</code>, <code>conformance_status: "non_conforming"</code>,
+<code>monthly_status</code>, <code>published_at</code>, nullable <code>supersedes_revision_id</code>, nullable
+<code>superseded_by_revision_id</code>, <code>lifecycle</code>, <code>material_sha256</code>, <code>source_snapshot</code>,
+<code>validation</code>, <code>self_url</code>, and <code>package</code>.
+The source snapshot reports calculation and source-through freshness, effective
+coverage, evidence-through date, availability cutoff, and Monthly status. The
+validation summary reports the mapping profile, source-record and output-row
+counts, zero mapping errors, and passed artifact integrity. Package metadata
+contains the manifest, ordered CSV files, final <code>focus-metadata.json</code>, and ZIP
+download URL. Every returned
+current-artifact URL includes both <code>month</code> and <code>revision_id</code>.</p>
+<h4 id="current-revision-artifact-endpoints">Current revision artifact endpoints<a class="headerlink" href="#current-revision-artifact-endpoints" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /revisions/current/manifest?month=YYYY-MM&amp;revision_id=...</code></td>
+<td>Exact validated <code>manifest.json</code> bytes.</td>
+</tr>
+<tr>
+<td><code>GET /revisions/current/files/{file_name}?month=YYYY-MM&amp;revision_id=...</code></td>
+<td>Exact validated bytes for one declared CSV or metadata artifact.</td>
+</tr>
+<tr>
+<td><code>GET /revisions/current/archive?month=YYYY-MM&amp;revision_id=...</code></td>
+<td><code>application/zip</code> stream named <code>focus-mapping-preview-{month}-{revision_id}.zip</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The table paths are relative to the tenant Preview prefix. Artifact
+<code>revision_id</code> is required. Each request re-reads the current revision before
+delivery. If the guard no longer matches, the API returns:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">&quot;detail&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;focus_preview_current_changed&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nt">&quot;message&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;The current FOCUS Mapping Preview revision changed; fetch the current revision and retry.&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="nt">&quot;retryable&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="p">}</span>
+</code></pre></div>
+<p>Clients should fetch metadata, follow its URLs, and repeat that sequence after
+this 409 response.</p>
+<h4 id="get-apiv1tenantstenant_namefocus-previewrevisions"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/revisions</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrevisions" title="Permanent link">&para;</a></h4>
+<p>List retained current and superseded revisions newest first for required query
+<code>month=YYYY-MM</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Query</th>
+<th style="text-align: right;">Default</th>
+<th>Constraints</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>limit</code></td>
+<td style="text-align: right;"><code>20</code></td>
+<td>1–100</td>
+<td>Maximum revisions returned.</td>
+</tr>
+<tr>
+<td><code>cursor</code></td>
+<td style="text-align: right;">none</td>
+<td>Non-empty revision ID</td>
+<td>Continue after the prior page's <code>next_cursor</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The response is <code>{"items":[...],"next_cursor":"...","replacement_semantics":"complete_replacement","consumer_action":"replace_do_not_aggregate"}</code>.
+Each item contains the same target, conformance, lifecycle, freshness,
+validation, and replacement fields as revision detail plus <code>detail_url</code>,
+including required <code>target_focus_version: "1.4"</code> and
+<code>conformance_status: "non_conforming"</code>. An unknown cursor, a cursor for a
+different tenant/month, or a revision that is no longer publicly retained
+returns 400 <code>FOCUS Mapping Preview revision cursor is invalid</code>.</p>
+<h4 id="get-apiv1tenantstenant_namefocus-previewrevisionsrevision_id"><code>GET /api/v1/tenants/{tenant_name}/focus-preview/revisions/{revision_id}</code><a class="headerlink" href="#get-apiv1tenantstenant_namefocus-previewrevisionsrevision_id" title="Permanent link">&para;</a></h4>
+<p>Return one publicly retained revision by immutable ID. Its manifest, individual
+file, and archive URLs address that revision directly and do not use a
+current-revision guard. A superseded revision therefore remains retrievable
+until the billing-scope retention cutoff removes its month from public history.
+The retained detail uses the same required <code>target_focus_version: "1.4"</code> and
+<code>conformance_status: "non_conforming"</code> fields as current revision detail and
+revision list items.</p>
+<h4 id="retained-revision-artifact-endpoints">Retained revision artifact endpoints<a class="headerlink" href="#retained-revision-artifact-endpoints" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /revisions/{revision_id}/manifest</code></td>
+<td>Exact validated <code>manifest.json</code> bytes.</td>
+</tr>
+<tr>
+<td><code>GET /revisions/{revision_id}/files/{file_name}</code></td>
+<td>Exact validated bytes for one declared CSV or metadata artifact.</td>
+</tr>
+<tr>
+<td><code>GET /revisions/{revision_id}/archive</code></td>
+<td><code>application/zip</code> stream named <code>focus-mapping-preview-{month}-{revision_id}.zip</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>All revision list/detail responses state
+<code>replacement_semantics: complete_replacement</code> and
+<code>consumer_action: replace_do_not_aggregate</code>. Consumers must replace the prior
+monthly revision; adding current and superseded revisions would double-count
+the report.</p>
+<table>
+<thead>
+<tr>
+<th>Condition</th>
+<th style="text-align: right;">Status</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Missing required <code>month</code> or artifact <code>revision_id</code></td>
+<td style="text-align: right;">422</td>
+<td>FastAPI missing-field response</td>
+</tr>
+<tr>
+<td>Invalid or unrepresentable month</td>
+<td style="text-align: right;">400</td>
+<td><code>month must use YYYY-MM</code></td>
+</tr>
+<tr>
+<td>No current revision for this tenant/month</td>
+<td style="text-align: right;">404</td>
+<td><code>Current FOCUS Mapping Preview revision not found</code></td>
+</tr>
+<tr>
+<td>Unknown file on the matching current revision</td>
+<td style="text-align: right;">404</td>
+<td><code>FOCUS Mapping Preview file not found for current revision</code></td>
+</tr>
+<tr>
+<td>Guard differs from the current revision</td>
+<td style="text-align: right;">409</td>
+<td><code>focus_preview_current_changed</code> retry response shown above</td>
+</tr>
+<tr>
+<td>Invalid or foreign revision-history cursor</td>
+<td style="text-align: right;">400</td>
+<td><code>FOCUS Mapping Preview revision cursor is invalid</code></td>
+</tr>
+<tr>
+<td>Direct revision absent, foreign, or pending retention cleanup</td>
+<td style="text-align: right;">404</td>
+<td><code>FOCUS Mapping Preview revision not found</code></td>
+</tr>
+<tr>
+<td>Unknown file on a direct revision</td>
+<td style="text-align: right;">404</td>
+<td><code>FOCUS Mapping Preview file not found for revision</code></td>
+</tr>
+<tr>
+<td>Stored revision artifact is missing, corrupt, or inconsistent</td>
+<td style="text-align: right;">500</td>
+<td><code>Stored FOCUS Mapping Preview revision artifact is unavailable</code></td>
+</tr>
+<tr>
+<td>Revision service is unavailable</td>
+<td style="text-align: right;">503</td>
+<td><code>FOCUS Mapping Preview revision service is unavailable</code></td>
+</tr>
+<tr>
+<td>Revision storage is unavailable</td>
+<td style="text-align: right;">503</td>
+<td><code>FOCUS Mapping Preview revision storage is unavailable</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="preview-errors">Preview errors<a class="headerlink" href="#preview-errors" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Condition</th>
+<th style="text-align: right;">Status</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Invalid JSON, date, grain, or profile</td>
+<td style="text-align: right;">422</td>
+<td>FastAPI validation body</td>
+</tr>
+<tr>
+<td>Unknown tenant</td>
+<td style="text-align: right;">404</td>
+<td><code>Tenant '&lt;tenant_name&gt;' not found</code></td>
+</tr>
+<tr>
+<td>Non-Confluent Cloud tenant</td>
+<td style="text-align: right;">400</td>
+<td><code>FOCUS Mapping Preview currently supports only Confluent Cloud tenants</code></td>
+</tr>
+<tr>
+<td>Tenant has no <code>focus_preview</code> block</td>
+<td style="text-align: right;">409</td>
+<td><code>{"code":"preview_commercial_profile_unavailable","message":"An explicit Direct-billed PAYG profile does not cover the requested interval.","retryable":false}</code></td>
+</tr>
+<tr>
+<td>Start is not before end</td>
+<td style="text-align: right;">400</td>
+<td><code>start_date must be before end_date</code></td>
+</tr>
+<tr>
+<td>Range crosses the allowed UTC month</td>
+<td style="text-align: right;">400</td>
+<td><code>Daily preview range must stay within one UTC calendar month</code></td>
+</tr>
+<tr>
+<td>Invalid or unrepresentable Monthly value</td>
+<td style="text-align: right;">400</td>
+<td><code>month must use YYYY-MM</code></td>
+</tr>
+<tr>
+<td><code>columns</code> supplied for Full or Summary</td>
+<td style="text-align: right;">400</td>
+<td><code>columns may be supplied only when column_profile is custom</code></td>
+</tr>
+<tr>
+<td>Custom has no supported columns</td>
+<td style="text-align: right;">400</td>
+<td><code>Custom column selection must contain at least one supported Full-profile column</code></td>
+</tr>
+<tr>
+<td>Runtime unavailable</td>
+<td style="text-align: right;">503</td>
+<td><code>FOCUS Mapping Preview runtime is unavailable</code></td>
+</tr>
+<tr>
+<td>Generation capacity exhausted</td>
+<td style="text-align: right;">429</td>
+<td><code>{"code":"preview_capacity_exhausted","message":"FOCUS Mapping Preview generation capacity is exhausted.","retryable":true}</code></td>
+</tr>
+<tr>
+<td>Storage unavailable</td>
+<td style="text-align: right;">503</td>
+<td><code>FOCUS Mapping Preview storage is unavailable</code></td>
+</tr>
+<tr>
+<td>Recovery unavailable</td>
+<td style="text-align: right;">503</td>
+<td><code>FOCUS Mapping Preview recovery is unavailable</code></td>
+</tr>
+<tr>
+<td>Worker scheduling unavailable</td>
+<td style="text-align: right;">503</td>
+<td><code>FOCUS Mapping Preview worker is unavailable</code></td>
+</tr>
+<tr>
+<td>Invalid or foreign recent-list cursor</td>
+<td style="text-align: right;">400</td>
+<td><code>Preview request cursor is invalid</code></td>
+</tr>
+<tr>
+<td>Request absent or owned by another tenant</td>
+<td style="text-align: right;">404</td>
+<td><code>Preview request '&lt;request_id&gt;' not found</code></td>
+</tr>
+<tr>
+<td>Manifest/file/archive requested before ready or after failure</td>
+<td style="text-align: right;">409</td>
+<td>Status-specific not-ready detail</td>
+</tr>
+<tr>
+<td>Manifest/file/archive requested after expiry</td>
+<td style="text-align: right;">410</td>
+<td><code>Preview request '&lt;request_id&gt;' expired at &lt;UTC timestamp&gt;</code></td>
+</tr>
+<tr>
+<td>File not enumerated by a ready package</td>
+<td style="text-align: right;">404</td>
+<td>File-specific not-found detail</td>
+</tr>
+<tr>
+<td>Stored bytes unavailable</td>
+<td style="text-align: right;">500</td>
+<td><code>Stored preview artifact is unavailable</code></td>
+</tr>
+</tbody>
+</table>
+<p>The recovery 503 is retryable operationally after restoring tenant database
+and artifact-root availability. Existing ready packages and revisions remain
+available when their stored data can still be verified.</p>
+<p>A generation whose temporary disk use would exceed
+<code>preview.max_generation_spool_bytes</code> terminates as a failed request with
+<code>diagnostic.code: preview_generation_spool_limit_exceeded</code>,
+<code>diagnostic.message: FOCUS Mapping Preview package exceeds the configured
+generation spool limit.</code>, and <code>retryable: false</code>. It publishes no package.
+Scheduled publication logs the same diagnostic code, publishes no revision,
+and leaves the current revision unchanged.</p>
+<p>If <code>preview.max_csv_file_bytes</code> cannot fit the repeated header and one complete
+row, generation fails with diagnostic code
+<code>preview_csv_row_exceeds_file_size_limit</code>, message <code>A Preview CSV header or row
+exceeds the configured file-size limit.</code>, and <code>retryable: false</code>. Increase the
+part limit or set it to <code>null</code>; see
+<a href="../operations/troubleshooting/#preview_csv_row_exceeds_file_size_limit">Preview CSV part sizing</a>.</p>
+<p>Calculation diagnostics use these exact public meanings. Daily diagnostics
+apply to the requested interval; Monthly diagnostics apply to the effective
+evidence interval.</p>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th style="text-align: right;">Retryable</th>
+<th>Message</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>calculation_metadata_unavailable</code></td>
+<td style="text-align: right;">false</td>
+<td><code>One or more requested dates lack preview calculation metadata.</code></td>
+</tr>
+<tr>
+<td><code>calculation_before_acquisition_lookback</code></td>
+<td style="text-align: right;">false</td>
+<td><code>Required retained calculation evidence is unavailable outside the current acquisition window.</code></td>
+</tr>
+<tr>
+<td><code>calculation_pending_cutoff_window</code></td>
+<td style="text-align: right;">true</td>
+<td><code>One or more requested dates are still inside the configured acquisition cutoff window; wait for the dates to enter the acquisition window, run the pipeline, and retry.</code></td>
+</tr>
+<tr>
+<td><code>calculation_unavailable</code></td>
+<td style="text-align: right;">true</td>
+<td><code>No successful persisted calculation is available for the requested dates; run the pipeline and retry.</code></td>
+</tr>
+<tr>
+<td><code>calculation_coverage_incomplete</code></td>
+<td style="text-align: right;">true</td>
+<td><code>No successful persisted calculation covers every requested date; run the pipeline and retry.</code></td>
+</tr>
+</tbody>
+</table>
+<p>Eligibility and source diagnostics are:</p>
+<p>An ordinary nonblank line type that is not in the current mapping table does
+not produce a failure diagnostic by itself. It maps to <code>Usage</code> /
+<code>Usage-Based</code> when all other evidence is complete and valid. Recognized native
+products reuse their current service mapping; unknown native products use the
+FOCUS Other taxonomy with the exact native product as <code>ServiceName</code>. Existing
+Support, promotional-credit, refund, correction, contradiction, malformed
+record, provider-context, lineage, and reconciliation checks retain precedence.</p>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th style="text-align: right;">Retryable</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>preview_commercial_profile_unavailable</code></td>
+<td style="text-align: right;">false</td>
+<td>The optional tenant block is absent or its Direct-billed PAYG effective interval does not contain the request.</td>
+</tr>
+<tr>
+<td><code>preview_billing_currency_unsupported</code></td>
+<td style="text-align: right;">false</td>
+<td>The configured or selected currency is not USD. Preview performs no currency conversion.</td>
+</tr>
+<tr>
+<td><code>preview_billing_currency_unknown</code></td>
+<td style="text-align: right;">false</td>
+<td>Selected persisted aggregate currency evidence is blank.</td>
+</tr>
+<tr>
+<td><code>preview_source_record_malformed</code></td>
+<td style="text-align: right;">false</td>
+<td>Persisted provider source evidence is malformed.</td>
+</tr>
+<tr>
+<td><code>preview_source_scope_unsupported</code></td>
+<td style="text-align: right;">false</td>
+<td>Source evidence is not fully contained in the effective Daily or Monthly evidence interval.</td>
+</tr>
+<tr>
+<td><code>preview_charge_classification_ambiguous</code></td>
+<td style="text-align: right;">false</td>
+<td>Credit/refund/adjustment/correction-like semantics are not authoritative.</td>
+</tr>
+<tr>
+<td><code>preview_source_line_type_unknown</code></td>
+<td style="text-align: right;">false</td>
+<td>A source record has a missing or blank native line type.</td>
+</tr>
+<tr>
+<td><code>preview_source_mapping_unavailable</code></td>
+<td style="text-align: right;">false</td>
+<td>A known line type lacks required mapping evidence, such as a returned unit for <code>KAFKA_STREAMS</code>.</td>
+</tr>
+<tr>
+<td><code>preview_source_record_incomplete</code></td>
+<td style="text-align: right;">false</td>
+<td>Required Preview evidence is absent.</td>
+</tr>
+<tr>
+<td><code>preview_evidence_storage_unavailable</code></td>
+<td style="text-align: right;">false</td>
+<td>Enabled Preview evidence storage or its schema is unavailable. Generic chargeback storage remains usable.</td>
+</tr>
+<tr>
+<td><code>preview_source_evidence_unavailable</code></td>
+<td style="text-align: right;">true</td>
+<td>The newest persisted source-evidence attempt is unavailable or does not cover the requested interval. Run the pipeline and retry.</td>
+</tr>
+<tr>
+<td><code>preview_source_economics_unsupported</code></td>
+<td style="text-align: right;">false</td>
+<td>Monetary or quantity values are outside the supported tracer.</td>
+</tr>
+<tr>
+<td><code>preview_source_reconciliation_failed</code></td>
+<td style="text-align: right;">false</td>
+<td>Source, aggregate, or allocation evidence does not reconcile.</td>
+</tr>
+<tr>
+<td><code>preview_source_coverage_incomplete</code></td>
+<td style="text-align: right;">false</td>
+<td>Complete source and aggregate origin coverage does not match.</td>
+</tr>
+<tr>
+<td><code>preview_mapping_scope_unsupported</code></td>
+<td style="text-align: right;">false</td>
+<td>The complete source set exceeds the current Full-row mapping scope before profile projection, including multiple native/tier Cost rows associated with one billing origin.</td>
+</tr>
+<tr>
+<td><code>preview_allocation_lineage_incomplete</code></td>
+<td style="text-align: right;">false</td>
+<td>Persisted calculation lineage is missing, incomplete, corrupt, or structurally inconsistent for one or more billing origins.</td>
+</tr>
+<tr>
+<td><code>preview_allocation_lineage_unavailable</code></td>
+<td style="text-align: right;">true</td>
+<td>The ordinary calculation completed, but its Preview lineage capture or persistence did not. Run the pipeline and retry.</td>
+</tr>
+<tr>
+<td><code>preview_billing_account_unavailable</code></td>
+<td style="text-align: right;">false</td>
+<td>No authoritative persisted Confluent organization binding is available.</td>
+</tr>
+<tr>
+<td><code>preview_billing_account_conflicting</code></td>
+<td style="text-align: right;">false</td>
+<td>Persisted Confluent organization evidence conflicts for the tenant partition.</td>
+</tr>
+<tr>
+<td><code>preview_provider_context_incomplete</code></td>
+<td style="text-align: right;">false</td>
+<td>Authoritative resource context is absent or incompatible; all TABLEFLOW rows use this failure because current inventory cannot prove their provider context.</td>
+</tr>
+<tr>
+<td><code>preview_mapping_validation_failed</code></td>
+<td style="text-align: right;">false</td>
+<td>A generated Daily Full row or Monthly Full aggregate does not satisfy the current Full-row mapping profile before Full/Summary/Custom projection.</td>
+</tr>
+</tbody>
+</table>
+<p>Fallback-mapped line types still use persisted allocation results; Preview does
+not recalculate them. Missing lineage returns
+<code>preview_allocation_lineage_incomplete</code>, and reconciliation differences return
+<code>preview_source_reconciliation_failed</code>. These failures expose no package.</p>
+<p><code>lookback_days</code> defines acquisition eligibility, not retention or guaranteed
+reconstruction. Use historical repair only while the required provider and
+metrics history remains available.</p>
+<hr />
+<h2 id="topic-attributions">Topic Attributions<a class="headerlink" href="#topic-attributions" title="Permanent link">&para;</a></h2>
+<p>Topic attribution rows are produced by the optional <code>topic_overlay</code> pipeline
+stage (Confluent Cloud only). Each row represents the cost portion attributed to
+one topic for one billing line item. Requires <code>topic_attribution.enabled: true</code>
+in plugin settings.</p>
+<h3 id="get-apiv1tenantstenant_nametopic-attributions"><code>GET /api/v1/tenants/{tenant_name}/topic-attributions</code><a class="headerlink" href="#get-apiv1tenantstenant_nametopic-attributions" title="Permanent link">&para;</a></h3>
+<p>List topic attribution rows. Paginated.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter start</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries. Defaults to UTC.</td>
+</tr>
+<tr>
+<td><code>cluster_resource_id</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by cluster (e.g. <code>lkc-abc123</code>)</td>
+</tr>
+<tr>
+<td><code>topic_name</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by topic name</td>
+</tr>
+<tr>
+<td><code>product_type</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by product type</td>
+</tr>
+<tr>
+<td><code>attribution_method</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by method (<code>bytes_ratio</code>, <code>retained_bytes_ratio</code>, <code>even_split</code>)</td>
+</tr>
+<tr>
+<td><code>tag_key</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by tag key (exact match)</td>
+</tr>
+<tr>
+<td><code>tag_value</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by tag value (requires tag_key, exact match)</td>
+</tr>
+<tr>
+<td><code>page</code></td>
+<td>int</td>
+<td>no</td>
+<td>Page number (default 1)</td>
+</tr>
+<tr>
+<td><code>page_size</code></td>
+<td>int</td>
+<td>no</td>
+<td>Page size 1–1000 (default 100)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response fields per item:</strong> <code>dimension_id</code>, <code>ecosystem</code>, <code>tenant_id</code>, <code>timestamp</code>, <code>env_id</code>, <code>cluster_resource_id</code>, <code>topic_name</code>, <code>product_category</code>, <code>product_type</code>, <code>attribution_method</code>, <code>amount</code>.</p>
+<h3 id="get-apiv1tenantstenant_nametopic-attributionsaggregate"><code>GET /api/v1/tenants/{tenant_name}/topic-attributions/aggregate</code><a class="headerlink" href="#get-apiv1tenantstenant_nametopic-attributionsaggregate" title="Permanent link">&para;</a></h3>
+<p>Multi-dimensional aggregation of topic attribution rows.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>group_by</code></td>
+<td>list[string]</td>
+<td><code>["topic_name"]</code></td>
+<td>Columns or tag keys to group by (repeatable). Use <code>tag:{key}</code> for tag-based grouping.</td>
+</tr>
+<tr>
+<td><code>time_bucket</code></td>
+<td>string</td>
+<td><code>day</code></td>
+<td><code>hour</code>, <code>day</code>, <code>week</code>, or <code>month</code></td>
+</tr>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter start</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries. Defaults to UTC.</td>
+</tr>
+<tr>
+<td><code>cluster_resource_id</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by cluster</td>
+</tr>
+<tr>
+<td><code>topic_name</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by topic</td>
+</tr>
+<tr>
+<td><code>product_type</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter by product type</td>
+</tr>
+<tr>
+<td><code>tag:{key}</code></td>
+<td>string</td>
+<td>no</td>
+<td>Filter to rows where the tag <code>{key}</code> matches the given value. Repeatable for AND semantics. Comma-separated values in a single param are OR-matched.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Valid <code>group_by</code> columns:</strong> <code>topic_name</code>, <code>cluster_resource_id</code>, <code>env_id</code>, <code>product_type</code>, <code>product_category</code>, <code>attribution_method</code>. Invalid dimension names are silently dropped (no 400).</p>
+<p><strong>Tag-based grouping (<code>group_by=tag:{key}</code>):</strong></p>
+<p>Use <code>tag:</code> prefix to group by a resource tag key instead of a dimension column. Examples:</p>
+<ul>
+<li><code>group_by=tag:owner</code> — group by the <code>owner</code> tag; rows with no <code>owner</code> tag land in an <code>UNTAGGED</code> bucket.</li>
+<li><code>group_by=tag:owner&amp;group_by=tag:department</code> — group by two tag keys; each bucket has both keys in <code>dimensions</code>.</li>
+<li><code>group_by=tag:owner&amp;group_by=topic_name</code> — mix tag and dimension grouping in one query.</li>
+</ul>
+<p>Topic attribution is resource-only — tags are resolved from the resource entity (<code>cluster_resource_id:topic:topic_name</code>) only. There is no identity join and no resource/identity precedence rule.</p>
+<p><strong>Tag-based filtering (<code>tag:{key}={value}</code>):</strong></p>
+<p>Dynamic query parameters prefixed <code>tag:</code> are treated as tag filters and are independent of <code>group_by</code>.</p>
+<ul>
+<li><code>tag:department=eng</code> — only rows where the resource's <code>department</code> tag equals <code>eng</code>.</li>
+<li><code>tag:team=platform,commerce</code> — <code>team</code> IN (<code>platform</code>, <code>commerce</code>) — comma-separated values are OR-matched within one key.</li>
+<li><code>tag:owner=alice&amp;tag:department=eng</code> — multiple tag params are AND-matched across keys.</li>
+<li>Untagged rows (no matching tag key on the resource) are excluded from filtered results.</li>
+</ul>
+<p>Tag key format: must start with an alphanumeric character, then alphanumeric, <code>_</code>, or <code>-</code>, up to 63 characters total. Invalid keys return HTTP 400.</p>
+<p><strong>Response:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="p">{</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">&quot;buckets&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">      </span><span class="nt">&quot;dimensions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;tag:owner&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;alice&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;topic_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;payments-events&quot;</span><span class="p">},</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">      </span><span class="nt">&quot;time_bucket&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">      </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;10.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">      </span><span class="nt">&quot;row_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">    </span><span class="p">},</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">      </span><span class="nt">&quot;dimensions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;tag:owner&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;UNTAGGED&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;topic_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;untagged-events&quot;</span><span class="p">},</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">      </span><span class="nt">&quot;time_bucket&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-01-01&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">      </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;25.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">      </span><span class="nt">&quot;row_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="w">  </span><span class="nt">&quot;total_amount&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;35.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="w">  </span><span class="nt">&quot;total_rows&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span>
+<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a><span class="p">}</span>
+</code></pre></div>
+<p>Tag dimensions appear in <code>dimensions</code> with the <code>tag:</code> prefix (e.g. <code>"tag:owner": "alice"</code>). Rows with no matching tag appear under <code>"UNTAGGED"</code>.</p>
+<h3 id="get-apiv1tenantstenant_nametopic-attributionsdates"><code>GET /api/v1/tenants/{tenant_name}/topic-attributions/dates</code><a class="headerlink" href="#get-apiv1tenantstenant_nametopic-attributionsdates" title="Permanent link">&para;</a></h3>
+<p>List distinct dates for which topic attribution rows exist.</p>
+<p><strong>Response:</strong> <code>{"dates": ["2026-01-01", "2026-01-02", ...]}</code></p>
+<h3 id="post-apiv1tenantstenant_nametopic-attributionsexport"><code>POST /api/v1/tenants/{tenant_name}/topic-attributions/export</code><a class="headerlink" href="#post-apiv1tenantstenant_nametopic-attributionsexport" title="Permanent link">&para;</a></h3>
+<p>Stream topic attribution data as CSV. Returns <code>text/csv</code> with
+<code>Content-Disposition: attachment; filename=topic_attributions.csv</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter start</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>no</td>
+<td>Filter end</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries. Defaults to UTC.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>CSV columns:</strong> <code>ecosystem</code>, <code>tenant_id</code>, <code>timestamp</code>, <code>env_id</code>, <code>cluster_resource_id</code>, <code>topic_name</code>, <code>product_category</code>, <code>product_type</code>, <code>attribution_method</code>, <code>amount</code>.</p>
+<hr />
+<h2 id="graph">Graph<a class="headerlink" href="#graph" title="Permanent link">&para;</a></h2>
+<p>Returns cost topology as a graph (nodes + edges) for use by the cost explorer graph frontend. One endpoint covers three views depending on the <code>focus</code> parameter.</p>
+<h3 id="get-apiv1tenantstenant_namegraph"><code>GET /api/v1/tenants/{tenant_name}/graph</code><a class="headerlink" href="#get-apiv1tenantstenant_namegraph" title="Permanent link">&para;</a></h3>
+<p>Return a neighborhood of nodes and directed edges centred on a focus entity.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>focus</code></td>
+<td>string</td>
+<td>—</td>
+<td>Entity ID to focus on. Omit for root (tenant) view.</td>
+</tr>
+<tr>
+<td><code>depth</code></td>
+<td>int</td>
+<td>1</td>
+<td>Hierarchy hops from focus (1–3).</td>
+</tr>
+<tr>
+<td><code>at</code></td>
+<td>datetime</td>
+<td>now</td>
+<td>Point-in-time lifecycle filter (ISO 8601 with timezone, e.g. <code>2026-03-15T00:00:00Z</code>).</td>
+</tr>
+<tr>
+<td><code>start_date</code></td>
+<td>date</td>
+<td>—</td>
+<td>Cost period start date. Overrides <code>at</code>-derived month when provided.</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>date</td>
+<td>—</td>
+<td>Cost period end date. Overrides <code>at</code>-derived month when provided.</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>UTC</td>
+<td>IANA timezone for <code>start_date</code>/<code>end_date</code> boundaries.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Views:</strong></p>
+<ul>
+<li><strong>Root view</strong> (<code>focus</code> omitted): returns a synthetic tenant node plus one environment node per active environment. Edges are <code>parent</code> type, directed tenant → environment.</li>
+<li><strong>Environment focus</strong> (<code>focus=env-abc</code>): returns the environment node plus all direct child resources up to <code>depth</code> hops (clusters, connectors, flink pools, schema registries). Edges are <code>parent</code> type, directed parent → child.</li>
+<li><strong>Cluster focus</strong> (<code>focus=lkc-abc</code>): returns the cluster node, its child topic nodes, and any identity (service account / pool) nodes charged to the cluster via chargeback. Edges are <code>parent</code> (cluster → topic) and <code>charge</code> (cluster → identity).</li>
+</ul>
+<p><strong>Billing period:</strong> when <code>start_date</code>/<code>end_date</code> are omitted, the cost window defaults to the full calendar month containing <code>at</code> (e.g. <code>at=2026-03-15</code> → March 1–April 1).</p>
+<p><strong>Response:</strong> <code>GraphResponse</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">{</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">&quot;nodes&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">      </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">      </span><span class="nt">&quot;resource_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;environment&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">      </span><span class="nt">&quot;display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">      </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;1234.56&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">      </span><span class="nt">&quot;created_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2025-01-01T00:00:00Z&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">      </span><span class="nt">&quot;deleted_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="w">      </span><span class="nt">&quot;tags&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;team&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;platform&quot;</span><span class="p">},</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="w">      </span><span class="nt">&quot;parent_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="w">      </span><span class="nt">&quot;cloud&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;aws&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="w">      </span><span class="nt">&quot;region&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;us-east-1&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="w">      </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;active&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a><span class="w">      </span><span class="nt">&quot;cross_references&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
+<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a><span class="w">  </span><span class="p">],</span>
+<a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a><span class="w">  </span><span class="nt">&quot;edges&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a><span class="w">      </span><span class="nt">&quot;source&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;org-123&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a><span class="w">      </span><span class="nt">&quot;target&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a><span class="w">      </span><span class="nt">&quot;relationship_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;parent&quot;</span><span class="p">,</span>
+<a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a><span class="w">      </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span>
+<a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Node fields:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>string</td>
+<td>Entity ID (<code>resource_id</code> or <code>identity_id</code>)</td>
+</tr>
+<tr>
+<td><code>resource_type</code></td>
+<td>string</td>
+<td>Entity type: <code>tenant</code>, <code>environment</code>, <code>kafka_cluster</code>, <code>kafka_topic</code>, <code>service_account</code>, etc.</td>
+</tr>
+<tr>
+<td><code>display_name</code></td>
+<td>string|null</td>
+<td>Human-readable name</td>
+</tr>
+<tr>
+<td><code>cost</code></td>
+<td>decimal string</td>
+<td>Aggregated cost for the billing period</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>datetime|null</td>
+<td>Lifecycle start</td>
+</tr>
+<tr>
+<td><code>deleted_at</code></td>
+<td>datetime|null</td>
+<td>Lifecycle end (null = still active)</td>
+</tr>
+<tr>
+<td><code>tags</code></td>
+<td>object</td>
+<td>Tag key→value dict resolved from <code>entity_tags</code></td>
+</tr>
+<tr>
+<td><code>parent_id</code></td>
+<td>string|null</td>
+<td>Parent entity ID</td>
+</tr>
+<tr>
+<td><code>cloud</code></td>
+<td>string|null</td>
+<td>Cloud provider</td>
+</tr>
+<tr>
+<td><code>region</code></td>
+<td>string|null</td>
+<td>Cloud region</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>string</td>
+<td><code>active</code> or <code>deleted</code></td>
+</tr>
+<tr>
+<td><code>cross_references</code></td>
+<td>list[CrossReferenceGroup]</td>
+<td>For identity nodes: other resources this identity is charged in (excluding the focus cluster), grouped by resource type. Each group has <code>resource_type</code> (string), <code>total_count</code> (int, full DB count before cap), and <code>items</code> (list of up to 5 <code>CrossReferenceItem</code> objects sorted by cost descending). Each item has <code>id</code>, <code>resource_type</code>, <code>display_name</code> (string|null), and <code>cost</code> (decimal string).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Edge <code>relationship_type</code> values:</strong> <code>parent</code> (hierarchy), <code>charge</code> (identity charged to cluster).</p>
+<p><strong>Error codes:</strong> 400 (tz-naive <code>at</code> value), 404 (unknown tenant or unknown <code>focus</code> entity), 422 (unparseable parameters).</p>
+<h3 id="get-apiv1tenantstenant_namegraphsearch"><code>GET /api/v1/tenants/{tenant_name}/graph/search</code><a class="headerlink" href="#get-apiv1tenantstenant_namegraphsearch" title="Permanent link">&para;</a></h3>
+<p>Search resources and identities by partial name or ID match. Intended for the jump-to-entity feature in the cost explorer graph frontend.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>q</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Case-insensitive partial match against <code>resource_id</code>, <code>display_name</code>, and <code>identity_id</code>. Minimum length 1.</td>
+</tr>
+</tbody>
+</table>
+<p>Results are ordered by relevance: exact match first, then prefix match, then substring match. Returns at most 20 results. Returns an empty list when no entities match (never 404).</p>
+<p><strong>Response:</strong> <code>GraphSearchResponse</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">&quot;results&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">      </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;lkc-abc123&quot;</span><span class="p">,</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">      </span><span class="nt">&quot;resource_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;kafka_cluster&quot;</span><span class="p">,</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">      </span><span class="nt">&quot;display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production Cluster&quot;</span><span class="p">,</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">      </span><span class="nt">&quot;parent_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">      </span><span class="nt">&quot;parent_display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production Environment&quot;</span><span class="p">,</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="w">      </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;active&quot;</span>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Result fields:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>string</td>
+<td>Entity ID (<code>resource_id</code> for resources, <code>identity_id</code> for identities)</td>
+</tr>
+<tr>
+<td><code>resource_type</code></td>
+<td>string</td>
+<td><code>resource_type</code> for resources; <code>identity_type</code> for identities (e.g. <code>service_account</code>)</td>
+</tr>
+<tr>
+<td><code>display_name</code></td>
+<td>string|null</td>
+<td>Human-readable name</td>
+</tr>
+<tr>
+<td><code>parent_id</code></td>
+<td>string|null</td>
+<td>Parent entity ID. Always <code>null</code> for identity results (identities have no parent in the graph model)</td>
+</tr>
+<tr>
+<td><code>parent_display_name</code></td>
+<td>string|null</td>
+<td>Human-readable name of the parent entity. <code>null</code> when parent has no display name or result has no parent</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>string</td>
+<td><code>active</code> or <code>deleted</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Error codes:</strong> 404 (unknown tenant), 422 (missing or empty <code>q</code>).</p>
+<h3 id="get-apiv1tenantstenant_namegraphdiff"><code>GET /api/v1/tenants/{tenant_name}/graph/diff</code><a class="headerlink" href="#get-apiv1tenantstenant_namegraphdiff" title="Permanent link">&para;</a></h3>
+<p>Compare costs between two time periods for a neighborhood. Returns a flat list of nodes annotated with before/after costs and a diff status, enabling the "what changed?" view in the cost explorer.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>from_start</code></td>
+<td>date</td>
+<td>yes</td>
+<td>Start of the "before" period (inclusive).</td>
+</tr>
+<tr>
+<td><code>from_end</code></td>
+<td>date</td>
+<td>yes</td>
+<td>End of the "before" period (inclusive).</td>
+</tr>
+<tr>
+<td><code>to_start</code></td>
+<td>date</td>
+<td>yes</td>
+<td>Start of the "after" period (inclusive).</td>
+</tr>
+<tr>
+<td><code>to_end</code></td>
+<td>date</td>
+<td>yes</td>
+<td>End of the "after" period (inclusive).</td>
+</tr>
+<tr>
+<td><code>focus</code></td>
+<td>string</td>
+<td>no</td>
+<td>Entity ID to focus on. Omit for root (tenant/environment) view.</td>
+</tr>
+<tr>
+<td><code>depth</code></td>
+<td>int</td>
+<td>no (default 1)</td>
+<td>Hierarchy hops from focus (1–3).</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries. Defaults to UTC.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Response:</strong> <code>GraphDiffResponse</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">{</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">&quot;nodes&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">      </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;lkc-abc123&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">      </span><span class="nt">&quot;resource_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;kafka_cluster&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">      </span><span class="nt">&quot;display_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Production Cluster&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">      </span><span class="nt">&quot;parent_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;env-abc&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">      </span><span class="nt">&quot;cost_before&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;100.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">      </span><span class="nt">&quot;cost_after&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;150.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">      </span><span class="nt">&quot;cost_delta&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;50.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="w">      </span><span class="nt">&quot;pct_change&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;50.00&quot;</span><span class="p">,</span>
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="w">      </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;changed&quot;</span>
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Node fields:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>string</td>
+<td>Entity ID</td>
+</tr>
+<tr>
+<td><code>resource_type</code></td>
+<td>string</td>
+<td>Entity type</td>
+</tr>
+<tr>
+<td><code>display_name</code></td>
+<td>string|null</td>
+<td>Human-readable name</td>
+</tr>
+<tr>
+<td><code>parent_id</code></td>
+<td>string|null</td>
+<td>Parent entity ID</td>
+</tr>
+<tr>
+<td><code>cost_before</code></td>
+<td>decimal string</td>
+<td>Total cost in the "before" window. <code>"0"</code> for new entities.</td>
+</tr>
+<tr>
+<td><code>cost_after</code></td>
+<td>decimal string</td>
+<td>Total cost in the "after" window. <code>"0"</code> for deleted entities.</td>
+</tr>
+<tr>
+<td><code>cost_delta</code></td>
+<td>decimal string</td>
+<td><code>cost_after - cost_before</code>. Negative means cost decreased.</td>
+</tr>
+<tr>
+<td><code>pct_change</code></td>
+<td>decimal string|null</td>
+<td>Percentage change: <code>(cost_delta / cost_before) * 100</code>. <code>null</code> when <code>cost_before == 0</code>.</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>string</td>
+<td><code>new</code> (only in after), <code>deleted</code> (only in before), <code>changed</code> (in both, cost differs), <code>unchanged</code> (in both, cost equal)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Error codes:</strong> 404 (unknown tenant or unknown <code>focus</code> entity), 422 (missing date parameters).</p>
+<h3 id="get-apiv1tenantstenant_namegraphtimeline"><code>GET /api/v1/tenants/{tenant_name}/graph/timeline</code><a class="headerlink" href="#get-apiv1tenantstenant_namegraphtimeline" title="Permanent link">&para;</a></h3>
+<p>Return a daily cost time series for a single entity. Enables sparklines and cost-over-time drill-down in the cost explorer graph frontend without leaving the graph view.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_id</code></td>
+<td>string</td>
+<td>yes</td>
+<td><code>resource_id</code> or <code>identity_id</code> of the entity.</td>
+</tr>
+<tr>
+<td><code>start</code></td>
+<td>date</td>
+<td>yes</td>
+<td>Start date (inclusive).</td>
+</tr>
+<tr>
+<td><code>end</code></td>
+<td>date</td>
+<td>yes</td>
+<td>End date (inclusive).</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>string</td>
+<td>no</td>
+<td>IANA timezone for date boundaries. Defaults to UTC.</td>
+</tr>
+</tbody>
+</table>
+<p>Entity type routing: topics use <code>topic_attribution_facts</code>; environments use <code>chargeback_facts</code> grouped by <code>env_id</code>; all other resources use <code>chargeback_facts</code> grouped by <code>resource_id</code>; identities use <code>chargeback_facts</code> filtered by <code>identity_id</code>.</p>
+<p>Every calendar day in <code>[start, end]</code> is present in the response. Days with no billing data are returned with <code>cost: "0"</code> (gap filling).</p>
+<p><strong>Response:</strong> <code>GraphTimelineResponse</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="p">{</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">&quot;entity_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;lkc-abc123&quot;</span><span class="p">,</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">&quot;points&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-04-01&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;12.34&quot;</span><span class="p">},</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-04-02&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;0&quot;</span><span class="p">},</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-04-03&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;cost&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;15.00&quot;</span><span class="p">}</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong>Point fields:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>date</code></td>
+<td>date string</td>
+<td>Calendar date in <code>YYYY-MM-DD</code> format</td>
+</tr>
+<tr>
+<td><code>cost</code></td>
+<td>decimal string</td>
+<td>Total cost on that day. <code>"0"</code> for days with no billing data.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Error codes:</strong> 404 (unknown tenant or <code>entity_id</code> not found in resources or identities), 422 (missing required parameters).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "navigation.indexes", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../javascripts/external-links.js"></script>
+      
+    
+  </body>
+</html>

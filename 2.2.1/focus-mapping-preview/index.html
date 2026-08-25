@@ -1,0 +1,2059 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-ecosystem chargeback engine — allocate infrastructure costs to tenants and teams">
+      
+      
+      
+      
+        <link rel="prev" href="../configuration/advanced-scenarios/">
+      
+      
+        <link rel="next" href="../architecture/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+    
+    
+      
+        <title>FOCUS Mapping Preview - Chitragupta</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+  
+  
+  
+  
+  <style>:root{--md-annotation-icon:url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M17%2013h-4v4h-2v-4H7v-2h4V7h2v4h4m-5-9A10%2010%200%200%200%202%2012a10%2010%200%200%200%2010%2010%2010%2010%200%200%200%2010-10A10%2010%200%200%200%2012%202%22/%3E%3C/svg%3E');}</style>
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#focus-mapping-preview" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Chitragupta" class="md-header__button md-logo" aria-label="Chitragupta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Chitragupta
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              FOCUS Mapping Preview
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/waliaabhishek/chitragupta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    chitragupta
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Chitragupta" class="md-nav__button md-logo" aria-label="Chitragupta" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Chitragupta
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/waliaabhishek/chitragupta" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    chitragupta
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/prerequisites/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prerequisites
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../configuration/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/ccloud-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Confluent Cloud
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/self-managed-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Managed Kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/generic-metrics-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generic Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/advanced-scenarios/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced Scenarios
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FOCUS Mapping Preview
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FOCUS Mapping Preview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#supported-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configure-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configure Preview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prepare-source-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prepare source data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-a-requested-package" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create a requested package
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Create a requested package">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#web-ui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web UI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#remote-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remote CLI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#repair-retained-dates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repair retained dates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#published-monthly-revisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Published monthly revisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#package-contents-and-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Package contents and lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-customization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported customization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-output-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current output boundaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-this-can-become-focus-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When this can become FOCUS Export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../architecture/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/plugin-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugin System
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/data-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Flow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/cost-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How Costs Work
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/identity-resolution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Identity Resolution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../operations/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/data-retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../operations/upgrading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#supported-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configure-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configure Preview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prepare-source-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prepare source data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-a-requested-package" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create a requested package
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Create a requested package">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#web-ui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web UI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#remote-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Remote CLI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#repair-retained-dates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repair retained dates
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#published-monthly-revisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Published monthly revisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#package-contents-and-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Package contents and lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-customization" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported customization
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-output-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current output boundaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-this-can-become-focus-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When this can become FOCUS Export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="focus-mapping-preview">FOCUS Mapping Preview<a class="headerlink" href="#focus-mapping-preview" title="Permanent link">&para;</a></h1>
+<p>FOCUS Mapping Preview turns persisted Confluent Cloud billing and allocation
+data into an immutable Cost and Usage package using the FOCUS 1.4 vocabulary.
+Packages are marked <code>non_conforming</code> because some provider-authoritative fields
+are unavailable.</p>
+<p>Preview reads data already stored by Chitragupta. Package generation does not
+call Confluent Cloud, run the pipeline, or recalculate allocations. Run the
+ordinary pipeline first, then create a requested package or use a published
+monthly revision.</p>
+<p>For a runnable setup and representative output, see the
+<a href="https://github.com/waliaabhishek/chitragupta/tree/main/examples/focus-preview">FOCUS Preview example</a>.</p>
+<h2 id="supported-scope">Supported scope<a class="headerlink" href="#supported-scope" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Current support</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Provider</td>
+<td>Confluent Cloud</td>
+</tr>
+<tr>
+<td>Commercial profile</td>
+<td>Direct-billed PAYG</td>
+</tr>
+<tr>
+<td>Billing currency</td>
+<td>USD; no currency conversion</td>
+</tr>
+<tr>
+<td>Target vocabulary</td>
+<td>FOCUS 1.4</td>
+</tr>
+<tr>
+<td>Conformance</td>
+<td><code>non_conforming</code></td>
+</tr>
+<tr>
+<td>Reporting grain</td>
+<td>Daily or Monthly</td>
+</tr>
+<tr>
+<td>Column profiles</td>
+<td>Full, Summary, or Custom</td>
+</tr>
+<tr>
+<td>Delivery</td>
+<td>Requested packages and published monthly revisions</td>
+</tr>
+</tbody>
+</table>
+<p>Preview is opt-in per tenant. Omitting <code>focus_preview</code> leaves the tenant's
+ordinary billing, chargeback, export, and emitter workflows unchanged.</p>
+<h2 id="configure-preview">Configure Preview<a class="headerlink" href="#configure-preview" title="Permanent link">&para;</a></h2>
+<p>Configure a durable artifact root and declare the eligible commercial interval
+for each enabled tenant:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">preview</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">artifact_root</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/lib/chitragupta/focus-preview</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nt">tenants</span><span class="p">:</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">production</span><span class="p">:</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nt">ecosystem</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">confluent_cloud</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="nt">focus_preview</span><span class="p">:</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">commercial_profile</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">direct_payg</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">billing_currency</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">USD</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">      </span><span class="nt">effective_start_date</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2026-01-01</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">      </span><span class="c1"># Optional exclusive end:</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">      </span><span class="c1"># effective_end_date: 2027-01-01</span>
+</code></pre></div>
+<p><code>effective_start_date</code> is inclusive. <code>effective_end_date</code> is exclusive; when it
+is omitted, each request, publication cycle, or repair resolves its own end from
+the operation's UTC date. The commercial interval does not widen acquisition,
+cutoff, or retention windows.</p>
+<p>When API and worker processes are separate, both must use the same tenant
+database and artifact root. Serve downloads through the API rather than exposing
+the artifact directory directly.</p>
+<p>Configuration ownership is split by subject:</p>
+<ul>
+<li><a href="../configuration/#focus-mapping-preview">Process-wide Preview settings</a>
+  defines artifact storage, workers, queues, spool limits, and CSV part sizing.</li>
+<li><a href="../configuration/ccloud-reference/#focus-mapping-preview-eligibility">Confluent Cloud Preview eligibility</a>
+  defines tenant fields and validation.</li>
+<li><a href="../operations/deployment/#focus-mapping-preview-boundary">Deployment</a> covers
+  authentication, shared storage, process modes, and capacity sizing.</li>
+</ul>
+<h2 id="prepare-source-data">Prepare source data<a class="headerlink" href="#prepare-source-data" title="Permanent link">&para;</a></h2>
+<p>Run one pipeline cycle before requesting a package:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>src/main.py<span class="w"> </span>--config-file<span class="w"> </span>config.yaml<span class="w"> </span>--run-once
+</code></pre></div>
+<p>For a continuously running worker and API:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>src/main.py<span class="w"> </span>--config-file<span class="w"> </span>config.yaml<span class="w"> </span>--mode<span class="w"> </span>both
+</code></pre></div>
+<p>Preview requires successful persisted calculation metadata, raw Confluent Cost
+records, billing rows, allocation lineage, organization inventory, and the
+resource or identity evidence needed by the selected interval. Missing or
+inconsistent evidence fails the complete Preview operation; it does not produce
+a partial package.</p>
+<p>The periodic worker also publishes eligible monthly revisions. <code>--run-once</code> and
+ad-hoc requests do not publish revisions.</p>
+<h2 id="create-a-requested-package">Create a requested package<a class="headerlink" href="#create-a-requested-package" title="Permanent link">&para;</a></h2>
+<p>Requested packages are asynchronous and remain downloadable for seven days
+after they become ready.</p>
+<h3 id="web-ui">Web UI<a class="headerlink" href="#web-ui" title="Permanent link">&para;</a></h3>
+<p>Open <strong>FOCUS Mapping Preview</strong> at <code>/focus-preview</code>, select a tenant, reporting
+period, and column profile, then submit the request. The page shows request
+status, source freshness, diagnostics, expiry, and package downloads.</p>
+<p>The UI also lists recent requests and published monthly revisions. Existing
+ready packages remain downloadable while a repair or retention cleanup needs
+attention.</p>
+<h3 id="remote-cli">Remote CLI<a class="headerlink" href="#remote-cli" title="Permanent link">&para;</a></h3>
+<p><code>chitragupta-preview</code> is an HTTP client. Include <code>/api/v1</code> in <code>--api-url</code> and
+use repeatable <code>--header NAME=VALUE</code> options for credentials supplied by your
+reverse proxy or API gateway.</p>
+<p>Create and download a Monthly Summary package:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>chitragupta-preview<span class="w"> </span>request<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--api-url<span class="w"> </span>https://chitragupta.example/api/v1<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--tenant<span class="w"> </span>production<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--month<span class="w"> </span><span class="m">2026</span>-07<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--column-profile<span class="w"> </span>summary<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span>--output-dir<span class="w"> </span>./focus-preview<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span>--header<span class="w"> </span><span class="s1">&#39;Authorization=Bearer &lt;token&gt;&#39;</span>
+</code></pre></div>
+<p>Use <code>--no-wait</code> to print the request ID immediately. Later, use <code>status</code> to
+inspect it or <code>download</code> to retrieve an output directory, one declared file, or
+the complete ZIP. Run <code>chitragupta-preview --help</code> for the complete option set.</p>
+<h3 id="request-rules">Request rules<a class="headerlink" href="#request-rules" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Choice</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Daily</td>
+<td>Inclusive start, exclusive end, 1–31 UTC dates, within one UTC month</td>
+</tr>
+<tr>
+<td>Monthly</td>
+<td>One <code>YYYY-MM</code> value</td>
+</tr>
+<tr>
+<td>Full</td>
+<td>Complete supported column set</td>
+</tr>
+<tr>
+<td>Summary</td>
+<td>Fixed 20-column subset</td>
+</tr>
+<tr>
+<td>Custom</td>
+<td>Ordered supported columns returned by the profile API</td>
+</tr>
+</tbody>
+</table>
+<p>An ad-hoc Monthly package is <code>provisional</code> when the complete month is not yet
+settlement-ready. It keeps the requested calendar-month bounds but aggregates
+only the frozen effective evidence interval available to that request. The
+package remains immutable. Submit a later request after the 72-hour post-month
+threshold and acquisition cutoff have passed to obtain a <code>settled</code> package.</p>
+<p>The API has no built-in authentication. Protect the complete Preview route
+prefix at the deployment boundary. For exact endpoints, request and response
+fields, status codes, pagination, and diagnostics, use the
+<a href="../api-reference/#focus-mapping-preview">API reference</a>.</p>
+<h2 id="repair-retained-dates">Repair retained dates<a class="headerlink" href="#repair-retained-dates" title="Permanent link">&para;</a></h2>
+<p>Dates calculated before Preview evidence was available may fail with
+<code>calculation_metadata_unavailable</code>. If the provider and metrics history still
+exists, submit a historical repair for an eligible retained interval:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-i<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>https://chitragupta.example/api/v1/tenants/production/focus-preview/repairs<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Authorization: Bearer &lt;token&gt;&#39;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;start_date&quot;:&quot;2026-01-01&quot;,&quot;end_date&quot;:&quot;2026-02-01&quot;}&#39;</span>
+</code></pre></div>
+<p>Repair is available only in <code>both</code> mode. It reacquires provider billing data and
+runs the normal calculation for each selected date, so it can replace billing,
+including with an authoritative empty provider result, plus chargebacks,
+pipeline state, and related exports within that tenant/date range. It does not
+create a package or revision. Submit a normal request after the needed dates
+succeed.</p>
+<p>The range must fit inside the tenant's commercial, acquisition, cutoff, and
+retention intervals. Configuration cannot guarantee that Confluent Cloud or
+metrics history is still available. See the
+<a href="../api-reference/#post-apiv1tenantstenant_namefocus-previewrepairs">repair API</a>
+for the exact contract and
+<a href="../operations/troubleshooting/#focus-mapping-preview-is-upgrading-degraded-or-unavailable">troubleshooting</a>
+for recovery actions.</p>
+<h2 id="published-monthly-revisions">Published monthly revisions<a class="headerlink" href="#published-monthly-revisions" title="Permanent link">&para;</a></h2>
+<p>After a successful periodic cycle, the worker evaluates complete eligible
+months. Publication waits until at least 72 hours after month end and until the
+configured acquisition cutoff covers the month. A valid candidate becomes the
+current Settled Full revision; a failed candidate leaves the current revision
+unchanged.</p>
+<p>Each revision is a complete replacement for its month. Consumers must replace a
+superseded revision and must never aggregate current and superseded revisions.</p>
+<p>List and download revisions with the CLI:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>chitragupta-preview<span class="w"> </span>revisions<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--api-url<span class="w"> </span>https://chitragupta.example/api/v1<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--tenant<span class="w"> </span>production<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>--month<span class="w"> </span><span class="m">2026</span>-07
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>uv<span class="w"> </span>run<span class="w"> </span>chitragupta-preview<span class="w"> </span>revision<span class="w"> </span>&lt;revision_id&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">  </span>--api-url<span class="w"> </span>https://chitragupta.example/api/v1<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">  </span>--tenant<span class="w"> </span>production<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">  </span>--output-dir<span class="w"> </span>./focus-revision
+</code></pre></div>
+<p>Current revision download URLs contain a revision guard. If a replacement is
+published after metadata is fetched, the guarded URL returns
+<code>focus_preview_current_changed</code>; fetch current metadata and retry. Retained
+revision URLs remain immutable until retention removes them.</p>
+<h2 id="package-contents-and-lifecycle">Package contents and lifecycle<a class="headerlink" href="#package-contents-and-lifecycle" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Package type</th>
+<th>Scope</th>
+<th>Profile</th>
+<th>Lifecycle</th>
+<th>Consumer action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Requested package</td>
+<td>Daily or Monthly</td>
+<td>Full, Summary, or Custom</td>
+<td>Downloadable for seven days</td>
+<td>Treat as a one-off immutable snapshot</td>
+</tr>
+<tr>
+<td>Published revision</td>
+<td>Complete eligible month</td>
+<td>Full</td>
+<td>Retained by billing-data retention</td>
+<td>Replace the prior revision; never aggregate revisions</td>
+</tr>
+</tbody>
+</table>
+<p>Every package exposes:</p>
+<ul>
+<li><code>manifest.json</code>, using <code>chitragupta.preview-manifest.v1</code>;</li>
+<li>one <code>cost-and-usage.csv</code>, or ordered CSV parts when a byte limit is configured;</li>
+<li><code>focus-metadata.json</code>.</li>
+</ul>
+<p>The API can also stream a ZIP containing the manifest followed by its declared
+files.</p>
+<p>CSV files use UTF-8 and LF line endings. Each part repeats the selected header,
+rows are never split, and names, order, sizes, and SHA-256 checksums are recorded
+in the manifest. The ZIP is a transport wrapper, not a manifest data artifact.</p>
+<p>The manifest is authoritative for package identity, selected columns, source
+coverage, validation, reconciliation, lifecycle, file order, sizes, and
+checksums. <code>focus-metadata.json</code> supplies nonstandard
+<code>x_ChitraguptaPreview...</code> import metadata for the generated dataset and emitted
+schema. It targets the FOCUS 1.4 vocabulary but is not official conforming FOCUS
+metadata. Importers that require a conforming FOCUS Export must reject the
+package.</p>
+<p>Importers should process <code>dataset_artifacts</code> in order, apply the exact ordered
+columns in <code>x_ChitraguptaPreviewSchema</code>, and use the referenced dataset, schema,
+and recency IDs for correlation. The manifest remains the authority for file
+sizes, checksums, known gaps, and lifecycle.</p>
+<p>Requested packages declare <code>not_a_correction_series</code>. Published revisions use
+FOCUS Replacement handling with Overwrite delivery. API, CLI, UI, individual
+file downloads, and ZIP downloads return the same stored immutable bytes.</p>
+<p>Retention and recovery belong to the operations guide:</p>
+<ul>
+<li><a href="../operations/data-retention/#requested-focus-preview-packages">Requested package and revision retention</a></li>
+<li><a href="../operations/data-retention/#preview-artifact-recovery">Preview artifact recovery</a></li>
+<li><a href="../operations/monitoring/#readiness-check">Preview readiness monitoring</a></li>
+</ul>
+<h2 id="supported-customization">Supported customization<a class="headerlink" href="#supported-customization" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Need</th>
+<th>Supported control</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Reporting period</td>
+<td>Daily dates or Monthly month</td>
+</tr>
+<tr>
+<td>Columns</td>
+<td>Full, Summary, or Custom profile</td>
+</tr>
+<tr>
+<td>CSV part size</td>
+<td><code>preview.max_csv_file_bytes</code></td>
+</tr>
+<tr>
+<td>Storage and capacity</td>
+<td>Process-wide <code>preview</code> settings</td>
+</tr>
+<tr>
+<td>Commercial interval</td>
+<td>Tenant <code>focus_preview</code> settings</td>
+</tr>
+<tr>
+<td>Allocation inputs</td>
+<td>Existing Confluent allocator and identity settings, applied by the ordinary pipeline or repair</td>
+</tr>
+<tr>
+<td>Automatic monthly publication</td>
+<td><code>features.enable_periodic_refresh</code> and <code>features.refresh_interval</code></td>
+</tr>
+</tbody>
+</table>
+<p>The mapping profile is not configurable. YAML cannot override FOCUS field
+mappings, classification, derived SKU rules, row order, manifest schema,
+validation, reconciliation, the Summary profile, or package lifetime.</p>
+<h2 id="current-output-boundaries">Current output boundaries<a class="headerlink" href="#current-output-boundaries" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>BillingAccountId</code> comes from the persisted Confluent organization ID.</li>
+<li><code>BillingCurrency</code> comes from the eligible tenant scope. Only USD is supported,
+  Preview performs no conversion, and the value is not inferred from individual
+  provider records.</li>
+<li><code>ServiceProviderName</code> and <code>InvoiceIssuerName</code> are <code>Confluent Cloud</code>, supplied
+  by the mapping profile rather than individual provider records.</li>
+<li>Metered Usage and supported Usage refunds use the persisted allocated quantity
+  and normalized billing unit. Purchase, Support, Support refunds, and Credit
+  rows keep consumed quantity and unit null.</li>
+<li><code>ContractedCost</code> equals <code>ListCost</code>. For priced rows,
+  <code>ContractedUnitPrice</code> equals <code>ListUnitPrice</code>, and
+  <code>PricingCurrencyContractedUnitPrice</code> equals
+  <code>PricingCurrencyListUnitPrice</code>. Credit and promotional rows without
+  <code>SkuPriceId</code> keep these unit-price fields null.</li>
+<li>Provider discounts remain represented by final billed/effective costs and
+  <code>x_ConfluentDiscountAmount</code>; they are not presented as negotiated unit-price
+  savings.</li>
+<li>Supported promotional credits and refunds preserve their source
+  classification and signed financial values.</li>
+<li><code>HostProviderName</code> and <code>RegionId</code> preserve provider values. A separate provider
+  region display name is unavailable, so <code>RegionName</code> is null.</li>
+<li><code>InvoiceId</code> and <code>InvoiceDetailId</code> are unavailable. Preview does not fabricate
+  them or perform invoice reconciliation.</li>
+<li>SKU identities are deterministic Chitragupta-derived values, not
+  provider-issued identifiers.</li>
+<li>TABLEFLOW rows fail closed when provider context cannot be proven.</li>
+<li>The generic chargeback export is separate and unchanged.</li>
+</ul>
+<p>The package reports these authority gaps in <code>known_gaps</code>. Passing Preview
+validation, publishing a Settled revision, or using deterministic derived keys
+does not claim FOCUS conformance.</p>
+<h2 id="when-this-can-become-focus-export">When this can become FOCUS Export<a class="headerlink" href="#when-this-can-become-focus-export" title="Permanent link">&para;</a></h2>
+<p>Preview must not be presented as a conforming FOCUS Export until it has
+provider-authoritative SKU and invoice identities, complete applicable field
+coverage, official conforming FOCUS metadata, and conformance validation for the
+target version.</p>
+<h2 id="related-documentation">Related documentation<a class="headerlink" href="#related-documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../configuration/#focus-mapping-preview">Configuration reference</a></li>
+<li><a href="../configuration/ccloud-reference/#focus-mapping-preview-eligibility">Confluent Cloud eligibility</a></li>
+<li><a href="../operations/deployment/#focus-mapping-preview-boundary">Deployment</a></li>
+<li><a href="../operations/monitoring/#readiness-check">Monitoring</a></li>
+<li><a href="../operations/troubleshooting/#focus-mapping-preview-is-upgrading-degraded-or-unavailable">Troubleshooting</a></li>
+<li><a href="../operations/data-retention/#focus-preview-evidence">Data retention</a></li>
+<li><a href="../operations/upgrading/#focus-mapping-preview-upgrades">Upgrading</a></li>
+<li><a href="../api-reference/#focus-mapping-preview">API reference</a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.top", "navigation.indexes", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../javascripts/external-links.js"></script>
+      
+    
+  </body>
+</html>
