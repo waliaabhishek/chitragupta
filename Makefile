@@ -48,7 +48,7 @@ sync:
 # ─────────────────────────────────────────────────────────────────────────────
 
 test:
-	uv run pytest --cov=src --cov-report=term-missing
+	uv run pytest -n auto --maxprocesses=8 --dist=worksteal --cov=src --cov-report=term-missing
 
 lint:
 	uv run ruff check
