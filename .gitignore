@@ -22,6 +22,7 @@ site/
 
 # Disposable local Demo Stack state
 .demo/
+.docs/
 
 # Python
 __pycache__/

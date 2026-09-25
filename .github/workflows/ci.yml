@@ -83,8 +83,11 @@ jobs:
               "${targets[@]}"
           done
 
+      - name: Install documentation test dependencies
+        run: uv sync --frozen --group docs
+
       - name: Test with coverage
-        run: uv run pytest --cov=src --cov-fail-under=75 --cov-report=xml
+        run: UV_NO_SYNC=1 uv run pytest -n 4 --cov=src --cov-fail-under=75 --cov-report=xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
