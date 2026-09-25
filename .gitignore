@@ -6,6 +6,7 @@ backlog/
 .claude/
 .codex/
 .agents/
+.pi/
 memory/
 **/data/
 node_modules/
