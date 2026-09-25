@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-09-08
+
+### Changed
+- Merge pull request #28: synthetic demo and cost period comparisons ([241571e](https://github.com/waliaabhishek/chitragupta/commit/241571e7fefb4d0f0ab575a906c4d41bdb94d211))
+
+
+### Documentation
+- Docs: Show the demo and simplify user documentation ([9a53203](https://github.com/waliaabhishek/chitragupta/commit/9a53203a1c9689f3ea38a28a4b504dafc32820b0))
+
+
+### Fixed
+- Fix: make media frame conversion consistent across FFmpeg versions ([2d4d54e](https://github.com/waliaabhishek/chitragupta/commit/2d4d54eb4343175863ae6272c907481e67ba5231))
+- Fix: improve comparison summaries and resolve effective retention ([d4fb2fd](https://github.com/waliaabhishek/chitragupta/commit/d4fb2fd6cc94002c7b7fdb601c9387e0f08c1427))
+- Fix: prevent link crashes and restore self-managed cost explorer ([d0429bd](https://github.com/waliaabhishek/chitragupta/commit/d0429bd0590bbc82bc5f925883c1612f81e61f9a))
+- Fix: TASK-204 - FinOps — Compare cost periods and investigate the biggest changes ([eda38be](https://github.com/waliaabhishek/chitragupta/commit/eda38bec9fba9494ffa0cd82c097d1357fc1f440))
+- Fix: TASK-257.12 - Make the Demo UI walkthrough show a clear cost investigation ([ca13638](https://github.com/waliaabhishek/chitragupta/commit/ca1363820867b0367ff43b56b91f95b301b26670))
+- Fix: TASK-277 - Scale Confluent console deep-link resolution without full-catalog loading ([f51fa5f](https://github.com/waliaabhishek/chitragupta/commit/f51fa5fc4221386ef1ae532c19cdbe4dd3cc8dbb))
+- Fix: TASK-276 - Remove clock coupling from the Confluent chargeback metadata integration test ([5b561fe](https://github.com/waliaabhishek/chitragupta/commit/5b561feaa0c12930e9a8a9a10c48efeb9edc77fc))
+- Fix: TASK-257.11 - Restore Demo launcher integration coverage after Compose command drift ([74fc93a](https://github.com/waliaabhishek/chitragupta/commit/74fc93a63dc32b85e07ffaffef89025728f14d39))
+- Fix: TASK-257.10 - Reduce Demo media contract duplication without weakening validation ([f7ae076](https://github.com/waliaabhishek/chitragupta/commit/f7ae076d477bf73ee6406535fdf6ffbcfb6de8a4))
+- Fix: TASK-257.09 - Remove unnecessary host-port bindings from Demo media capture ([3ec7c99](https://github.com/waliaabhishek/chitragupta/commit/3ec7c99d1dc2388d57b441dcb1c1ff1214daafa0))
+- Fix: TASK-257.08 - Centralize pinned Grafana plugins across example stacks ([32c2999](https://github.com/waliaabhishek/chitragupta/commit/32c2999ca8524f1e3b997cb975dfa4d0e0faf723))
+- Fix: TASK-257.08 - Pin Demo Grafana plugins for reproducible startup ([7d75aed](https://github.com/waliaabhishek/chitragupta/commit/7d75aedaee7b25afca941d7e511691b9b70b754a))
+- Fix: TASK-257.07 - Reduce Demo generator integration test runtime without weakening coverage ([9b42308](https://github.com/waliaabhishek/chitragupta/commit/9b4230843d321b9ac5472a832038245454b42448))
+- Fix: TASK-257.06 - Support installed GitHub CLI release fields ([1d5b77f](https://github.com/waliaabhishek/chitragupta/commit/1d5b77f7c74bc758a230f153ebcd6c01cb3c2fe1))
+- Fix: TASK-257.06 - Preserve clean Demo media recapture ([059f065](https://github.com/waliaabhishek/chitragupta/commit/059f0659dd7f3e954b09a4a349401d69a85cd8a2))
+- Fix: TASK-257.06 - Generate, publish, and document public Demo Experience media ([6d00585](https://github.com/waliaabhishek/chitragupta/commit/6d005858c9af8670fda2dd9f72fbfd6cf96f4c35))
+- Fix: TASK-257.05 - Complete portable Demo Stack operations ([6bdd6e8](https://github.com/waliaabhishek/chitragupta/commit/6bdd6e88050fbbca457bf590bb6688af69e18833))
+- Fix: TASK-257.04 - Preserve and safely reset Demo Profile state ([9be1f8c](https://github.com/waliaabhishek/chitragupta/commit/9be1f8c1d76735628e755cdf0a507c18b729b4ad))
+- Fix: TASK-257.03 - Expose the Showcase Demo Profile ([7983a82](https://github.com/waliaabhishek/chitragupta/commit/7983a82bbe72db11ab33207ce61789fcd2c79935))
+- Fix: TASK-257.02 - Complete the Clean multi-ecosystem evaluator experience ([b868e24](https://github.com/waliaabhishek/chitragupta/commit/b868e248e2013124688697191c2c7627e45e98f0))
+- Fix: TASK-257.01 - Launch the Clean Confluent Cloud Demo Experience ([0f54caa](https://github.com/waliaabhishek/chitragupta/commit/0f54caa09a1bea405a88f1dd1da642a34ed91cb5))
+- Fix: Finally added a License ([6394d6d](https://github.com/waliaabhishek/chitragupta/commit/6394d6d5f5097a340dd173fe488405f63670a3de))
+
+
 ## [2.2.1] - 2026-08-25
 
 ### Added
