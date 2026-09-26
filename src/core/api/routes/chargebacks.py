@@ -5,9 +5,9 @@ import math
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
+from core.api.dependencies import get_backend_provider, get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import (
     AllocationIssueResponse,
     ChargebackDatesResponse,
@@ -16,6 +16,7 @@ from core.api.schemas import (
     PaginatedResponse,
 )
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
+from core.storage.backend_provider import TenantBackendProvider  # noqa: TC001
 from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
 
 logger = logging.getLogger(__name__)
@@ -24,9 +25,10 @@ router = APIRouter(tags=["chargebacks"])
 
 
 @router.get("/tenants/{tenant_name}/chargebacks", response_model=PaginatedResponse[ChargebackResponse])
-async def list_chargebacks(
+def list_chargebacks(
+    request: Request,
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
     timezone: Annotated[
@@ -50,53 +52,59 @@ async def list_chargebacks(
     start_dt, end_dt = resolve_date_range(start_date, end_date, timezone=timezone)
 
     offset = (page - 1) * page_size
-    items, total = uow.chargebacks.find_by_filters(
-        ecosystem=tenant_config.ecosystem,
-        tenant_id=tenant_config.tenant_id,
-        start=start_dt,
-        end=end_dt,
-        identity_id=identity_id,
-        product_type=product_type,
-        resource_id=resource_id,
-        cost_type=cost_type,
-        limit=page_size,
-        offset=offset,
-        tag_key=tag_key,
-        tag_value=tag_value,
-        tags_repo=uow.tags,
-    )
-    pages = math.ceil(total / page_size) if total > 0 else 0
+    tenant_name = str(request.path_params["tenant_name"])
+    with (
+        provider.acquire_backend(tenant_name, tenant_config) as backend,
+        backend.create_read_only_unit_of_work() as uow,
+    ):
+        items, total = uow.chargebacks.find_by_filters(
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+            start=start_dt,
+            end=end_dt,
+            identity_id=identity_id,
+            product_type=product_type,
+            resource_id=resource_id,
+            cost_type=cost_type,
+            limit=page_size,
+            offset=offset,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            tags_repo=uow.tags,
+        )
+        pages = math.ceil(total / page_size) if total > 0 else 0
+        response = PaginatedResponse[ChargebackResponse](
+            items=[
+                ChargebackResponse(
+                    dimension_id=c.dimension_id,
+                    ecosystem=c.ecosystem,
+                    tenant_id=c.tenant_id,
+                    timestamp=c.timestamp,
+                    resource_id=c.resource_id,
+                    product_category=c.product_category,
+                    product_type=c.product_type,
+                    identity_id=c.identity_id,
+                    cost_type=c.cost_type.value,
+                    amount=c.amount,
+                    allocation_method=c.allocation_method,
+                    allocation_detail=c.allocation_detail,
+                    tags=c.tags,
+                    metadata=c.metadata,
+                )
+                for c in items
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+            pages=pages,
+        )
     logger.info(
         "Listed chargebacks tenant=%s returned=%d total=%d",
         tenant_config.tenant_id,
         len(items),
         total,
     )
-    return PaginatedResponse[ChargebackResponse](
-        items=[
-            ChargebackResponse(
-                dimension_id=c.dimension_id,
-                ecosystem=c.ecosystem,
-                tenant_id=c.tenant_id,
-                timestamp=c.timestamp,
-                resource_id=c.resource_id,
-                product_category=c.product_category,
-                product_type=c.product_type,
-                identity_id=c.identity_id,
-                cost_type=c.cost_type.value,
-                amount=c.amount,
-                allocation_method=c.allocation_method,
-                allocation_detail=c.allocation_detail,
-                tags=c.tags,
-                metadata=c.metadata,
-            )
-            for c in items
-        ],
-        total=total,
-        page=page,
-        page_size=page_size,
-        pages=pages,
-    )
+    return response
 
 
 def _build_dimension_response(uow: ReadOnlyUnitOfWork, dimension_id: int) -> ChargebackDimensionResponse:

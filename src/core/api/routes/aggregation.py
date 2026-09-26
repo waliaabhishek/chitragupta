@@ -7,11 +7,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
+from core.api.dependencies import get_backend_provider, get_tenant_config, resolve_date_range
 from core.api.schemas import AggregationBucket, AggregationResponse
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
 from core.logging_context import safe_log_context
-from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
+from core.storage.backend_provider import TenantBackendProvider  # noqa: TC001
 from core.utils.tag_validation import is_valid_tag_key
 
 logger = logging.getLogger(__name__)
@@ -45,10 +45,10 @@ def _bounded_group_by_log_value(group_by: list[str]) -> str:
     "/tenants/{tenant_name}/chargebacks/aggregate",
     response_model=AggregationResponse,
 )
-async def aggregate_chargebacks(
+def aggregate_chargebacks(
     request: Request,
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
     group_by: Annotated[list[str] | None, Query(description="Dimension columns or tag:{key} to group by")] = None,
     time_bucket: Annotated[str, Query(description="Time bucket: hour, day, week, month")] = "day",
     start_date: Annotated[date | None, Query()] = None,
@@ -120,36 +120,49 @@ async def aggregate_chargebacks(
             ),
         )
 
-    rows = uow.chargebacks.aggregate(
-        ecosystem=tenant_config.ecosystem,
-        tenant_id=tenant_config.tenant_id,
-        group_by=dim_group_by,
-        time_bucket=time_bucket,
-        start=start_dt,
-        end=end_dt,
-        identity_id=identity_id,
-        product_type=product_type,
-        resource_id=resource_id,
-        cost_type=cost_type,
-        tag_group_by=tag_group_by or None,
-        tag_filters=tag_filters or None,
-    )
-    buckets = [
-        AggregationBucket(
-            dimensions=r.dimensions,
-            time_bucket=r.time_bucket,
-            total_amount=r.total_amount,
-            usage_amount=r.usage_amount,
-            shared_amount=r.shared_amount,
-            row_count=r.row_count,
+    tenant_name = str(request.path_params["tenant_name"])
+    with (
+        provider.acquire_backend(tenant_name, tenant_config) as backend,
+        backend.create_read_only_unit_of_work() as uow,
+    ):
+        rows = uow.chargebacks.aggregate(
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+            group_by=dim_group_by,
+            time_bucket=time_bucket,
+            start=start_dt,
+            end=end_dt,
+            identity_id=identity_id,
+            product_type=product_type,
+            resource_id=resource_id,
+            cost_type=cost_type,
+            tag_group_by=tag_group_by or None,
+            tag_filters=tag_filters or None,
         )
-        for r in rows
-    ]
+        buckets = [
+            AggregationBucket(
+                dimensions=r.dimensions,
+                time_bucket=r.time_bucket,
+                total_amount=r.total_amount,
+                usage_amount=r.usage_amount,
+                shared_amount=r.shared_amount,
+                row_count=r.row_count,
+            )
+            for r in rows
+        ]
 
-    total_amount = sum((b.total_amount for b in buckets), Decimal(0))
-    usage_amount = sum((b.usage_amount for b in buckets), Decimal(0))
-    shared_amount = sum((b.shared_amount for b in buckets), Decimal(0))
-    total_rows = sum(b.row_count for b in buckets)
+        total_amount = sum((b.total_amount for b in buckets), Decimal(0))
+        usage_amount = sum((b.usage_amount for b in buckets), Decimal(0))
+        shared_amount = sum((b.shared_amount for b in buckets), Decimal(0))
+        total_rows = sum(b.row_count for b in buckets)
+
+        response = AggregationResponse(
+            buckets=buckets,
+            total_amount=total_amount,
+            usage_amount=usage_amount,
+            shared_amount=shared_amount,
+            total_rows=total_rows,
+        )
 
     logger.info(
         "aggregation_completed buckets=%d rows=%d start_date=%s end_date=%s group_by=%s time_bucket=%s%s",
@@ -168,10 +181,4 @@ async def aggregate_chargebacks(
             outcome="completed",
         ),
     )
-    return AggregationResponse(
-        buckets=buckets,
-        total_amount=total_amount,
-        usage_amount=usage_amount,
-        shared_amount=shared_amount,
-        total_rows=total_rows,
-    )
+    return response

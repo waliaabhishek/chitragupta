@@ -10,9 +10,9 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse  # noqa: TC002  # FastAPI evaluates annotations at runtime
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
+from core.api.dependencies import get_backend_provider, get_tenant_config, get_unit_of_work, resolve_date_range
 from core.api.schemas import (
     PaginatedResponse,
     TopicAttributionAggregationResponse,
@@ -22,7 +22,9 @@ from core.api.schemas import (
 from core.api.schemas import (
     TopicAttributionAggregationBucket as TopicAttributionAggregationBucketSchema,
 )
+from core.api.streaming import streaming_csv_response
 from core.config.models import PluginSettingsBase, TenantConfig  # noqa: TC001
+from core.storage.backend_provider import TenantBackendProvider  # noqa: TC001
 from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
 from core.utils.tag_validation import is_valid_tag_key
 
@@ -61,10 +63,11 @@ def _get_topic_exclusion_matcher(
     "/tenants/{tenant_name}/topic-attributions",
     response_model=PaginatedResponse[TopicAttributionResponse],
 )
-async def list_topic_attributions(
+def list_topic_attributions(
+    request: Request,
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     is_excluded: Annotated[Callable[[str], bool], Depends(_get_topic_exclusion_matcher)],
-    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
     timezone: Annotated[str | None, Query()] = None,
@@ -79,60 +82,66 @@ async def list_topic_attributions(
 ) -> PaginatedResponse[TopicAttributionResponse]:
     start_dt, end_dt = resolve_date_range(start_date, end_date, timezone=timezone)
     offset = (page - 1) * page_size
-    items, total = uow.topic_attributions.find_by_filters(
-        ecosystem=tenant_config.ecosystem,
-        tenant_id=tenant_config.tenant_id,
-        start=start_dt,
-        end=end_dt,
-        cluster_resource_id=cluster_resource_id,
-        topic_name=topic_name,
-        product_type=product_type,
-        attribution_method=attribution_method,
-        limit=page_size,
-        offset=offset,
-        tag_key=tag_key,
-        tag_value=tag_value,
-        tags_repo=uow.tags,
-    )
-    pages = math.ceil(total / page_size) if total > 0 else 0
-    return PaginatedResponse[TopicAttributionResponse](
-        items=[
-            TopicAttributionResponse(
-                dimension_id=r.dimension_id,
-                ecosystem=r.ecosystem,
-                tenant_id=r.tenant_id,
-                timestamp=r.timestamp,
-                env_id=r.env_id,
-                cluster_resource_id=r.cluster_resource_id,
-                topic_name=r.topic_name,
-                product_category=r.product_category,
-                product_type=r.product_type,
-                attribution_method=r.attribution_method,
-                amount=r.amount,
-                is_excluded=(
-                    r.topic_name != "__UNATTRIBUTED__" and is_excluded(r.topic_name)
-                    if tenant_config.ecosystem == "self_managed_kafka"
-                    else None
-                ),
-            )
-            for r in items
-        ],
-        total=total,
-        page=page,
-        page_size=page_size,
-        pages=pages,
-    )
+    tenant_name = str(request.path_params["tenant_name"])
+    with (
+        provider.acquire_backend(tenant_name, tenant_config) as backend,
+        backend.create_read_only_unit_of_work() as uow,
+    ):
+        items, total = uow.topic_attributions.find_by_filters(
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+            start=start_dt,
+            end=end_dt,
+            cluster_resource_id=cluster_resource_id,
+            topic_name=topic_name,
+            product_type=product_type,
+            attribution_method=attribution_method,
+            limit=page_size,
+            offset=offset,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            tags_repo=uow.tags,
+        )
+        pages = math.ceil(total / page_size) if total > 0 else 0
+        response = PaginatedResponse[TopicAttributionResponse](
+            items=[
+                TopicAttributionResponse(
+                    dimension_id=r.dimension_id,
+                    ecosystem=r.ecosystem,
+                    tenant_id=r.tenant_id,
+                    timestamp=r.timestamp,
+                    env_id=r.env_id,
+                    cluster_resource_id=r.cluster_resource_id,
+                    topic_name=r.topic_name,
+                    product_category=r.product_category,
+                    product_type=r.product_type,
+                    attribution_method=r.attribution_method,
+                    amount=r.amount,
+                    is_excluded=(
+                        r.topic_name != "__UNATTRIBUTED__" and is_excluded(r.topic_name)
+                        if tenant_config.ecosystem == "self_managed_kafka"
+                        else None
+                    ),
+                )
+                for r in items
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+            pages=pages,
+        )
+    return response
 
 
 @router.get(
     "/tenants/{tenant_name}/topic-attributions/aggregate",
     response_model=TopicAttributionAggregationResponse,
 )
-async def aggregate_topic_attributions(
+def aggregate_topic_attributions(
     request: Request,
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     is_excluded: Annotated[Callable[[str], bool], Depends(_get_topic_exclusion_matcher)],
-    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
     group_by: Annotated[list[str] | None, Query(description="Dimension columns or tag:{key} to group by")] = None,
     time_bucket: Annotated[str, Query()] = "day",
     start_date: Annotated[date | None, Query()] = None,
@@ -171,54 +180,60 @@ async def aggregate_topic_attributions(
         else:
             dim_group_by.append(gb)  # invalid dim names silently filtered by repo (preserves existing behavior)
 
-    result = uow.topic_attributions.aggregate(
-        ecosystem=tenant_config.ecosystem,
-        tenant_id=tenant_config.tenant_id,
-        group_by=dim_group_by,
-        time_bucket=time_bucket,
-        start=start_dt,
-        end=end_dt,
-        cluster_resource_id=cluster_resource_id,
-        topic_name=topic_name,
-        product_type=product_type,
-        tag_group_by=tag_group_by or None,
-        tag_filters=tag_filters or None,
-    )
-    response_buckets = [
-        TopicAttributionAggregationBucketSchema(
-            dimensions=bucket.dimensions,
-            time_bucket=bucket.time_bucket,
-            total_amount=bucket.total_amount,
-            row_count=bucket.row_count,
+    tenant_name = str(request.path_params["tenant_name"])
+    with (
+        provider.acquire_backend(tenant_name, tenant_config) as backend,
+        backend.create_read_only_unit_of_work() as uow,
+    ):
+        result = uow.topic_attributions.aggregate(
+            ecosystem=tenant_config.ecosystem,
+            tenant_id=tenant_config.tenant_id,
+            group_by=dim_group_by,
+            time_bucket=time_bucket,
+            start=start_dt,
+            end=end_dt,
+            cluster_resource_id=cluster_resource_id,
+            topic_name=topic_name,
+            product_type=product_type,
+            tag_group_by=tag_group_by or None,
+            tag_filters=tag_filters or None,
         )
-        for bucket in result.buckets
-    ]
-    if tenant_config.ecosystem == "self_managed_kafka" and collapse_excluded and "topic_name" in dim_group_by:
-        collapsed: dict[tuple[str, tuple[tuple[str, str], ...]], TopicAttributionAggregationBucketSchema] = {}
-        for bucket in response_buckets:
-            dimensions = dict(bucket.dimensions)
-            topic_name = dimensions.get("topic_name")
-            if topic_name != "__UNATTRIBUTED__" and topic_name is not None and is_excluded(topic_name):
-                dimensions["topic_name"] = "Excluded topics"
-            collapse_key = bucket.time_bucket, tuple(sorted(dimensions.items()))
-            existing = collapsed.get(collapse_key)
-            if existing is None:
-                collapsed[collapse_key] = TopicAttributionAggregationBucketSchema(
-                    dimensions=dimensions,
-                    time_bucket=bucket.time_bucket,
-                    total_amount=bucket.total_amount,
-                    row_count=bucket.row_count,
-                )
-            else:
-                existing.total_amount += bucket.total_amount
-                existing.row_count += bucket.row_count
-        response_buckets = list(collapsed.values())
+        response_buckets = [
+            TopicAttributionAggregationBucketSchema(
+                dimensions=bucket.dimensions,
+                time_bucket=bucket.time_bucket,
+                total_amount=bucket.total_amount,
+                row_count=bucket.row_count,
+            )
+            for bucket in result.buckets
+        ]
+        if tenant_config.ecosystem == "self_managed_kafka" and collapse_excluded and "topic_name" in dim_group_by:
+            collapsed: dict[tuple[str, tuple[tuple[str, str], ...]], TopicAttributionAggregationBucketSchema] = {}
+            for bucket in response_buckets:
+                dimensions = dict(bucket.dimensions)
+                topic_name = dimensions.get("topic_name")
+                if topic_name != "__UNATTRIBUTED__" and topic_name is not None and is_excluded(topic_name):
+                    dimensions["topic_name"] = "Excluded topics"
+                collapse_key = bucket.time_bucket, tuple(sorted(dimensions.items()))
+                existing = collapsed.get(collapse_key)
+                if existing is None:
+                    collapsed[collapse_key] = TopicAttributionAggregationBucketSchema(
+                        dimensions=dimensions,
+                        time_bucket=bucket.time_bucket,
+                        total_amount=bucket.total_amount,
+                        row_count=bucket.row_count,
+                    )
+                else:
+                    existing.total_amount += bucket.total_amount
+                    existing.row_count += bucket.row_count
+            response_buckets = list(collapsed.values())
 
-    return TopicAttributionAggregationResponse(
-        buckets=response_buckets,
-        total_amount=result.total_amount,
-        total_rows=result.total_rows,
-    )
+        response = TopicAttributionAggregationResponse(
+            buckets=response_buckets,
+            total_amount=result.total_amount,
+            total_rows=result.total_rows,
+        )
+    return response
 
 
 @router.get(
@@ -238,83 +253,88 @@ async def list_topic_attribution_dates(
 
 @router.post("/tenants/{tenant_name}/topic-attributions/export")
 async def export_topic_attributions(
+    request: Request,
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
     is_excluded: Annotated[Callable[[str], bool], Depends(_get_topic_exclusion_matcher)],
-    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
     timezone: Annotated[str | None, Query()] = None,
 ) -> StreamingResponse:
     start_dt, end_dt = resolve_date_range(start_date, end_date, timezone=timezone)
-    rows = uow.topic_attributions.iter_by_filters(
-        ecosystem=tenant_config.ecosystem,
-        tenant_id=tenant_config.tenant_id,
-        start=start_dt,
-        end=end_dt,
-    )
+    tenant_name = str(request.path_params["tenant_name"])
 
     def generate() -> Iterator[str]:
-        buf = io.StringIO()
-        writer = csv.writer(buf, lineterminator="\n")
-        if tenant_config.ecosystem == "self_managed_kafka":
-            writer.writerow(
-                [
-                    "ecosystem",
-                    "tenant_id",
-                    "timestamp",
-                    "env_id",
-                    "cluster_resource_id",
-                    "topic_name",
-                    "is_excluded",
-                    "product_category",
-                    "product_type",
-                    "attribution_method",
-                    "amount",
-                ]
+        with (
+            provider.acquire_backend(tenant_name, tenant_config) as backend,
+            backend.create_read_only_unit_of_work() as uow,
+        ):
+            rows = uow.topic_attributions.iter_by_filters(
+                ecosystem=tenant_config.ecosystem,
+                tenant_id=tenant_config.tenant_id,
+                start=start_dt,
+                end=end_dt,
             )
-        else:
-            writer.writerow(
-                [
-                    "ecosystem",
-                    "tenant_id",
-                    "timestamp",
-                    "env_id",
-                    "cluster_resource_id",
-                    "topic_name",
-                    "product_category",
-                    "product_type",
-                    "attribution_method",
-                    "amount",
-                ]
-            )
-        yield buf.getvalue()
-        for row in rows:
-            buf.seek(0)
-            buf.truncate(0)
-            values: list[str] = [
-                row.ecosystem,
-                row.tenant_id,
-                row.timestamp.isoformat(),
-                row.env_id,
-                row.cluster_resource_id,
-                row.topic_name,
-            ]
+            buf = io.StringIO()
+            writer = csv.writer(buf, lineterminator="\n")
             if tenant_config.ecosystem == "self_managed_kafka":
-                excluded = row.topic_name != "__UNATTRIBUTED__" and is_excluded(row.topic_name)
-                values.append(str(excluded).lower())
-            values.extend(
-                [
-                    row.product_category,
-                    row.product_type,
-                    row.attribution_method,
-                    str(row.amount),
-                ]
-            )
-            writer.writerow(values)
+                writer.writerow(
+                    [
+                        "ecosystem",
+                        "tenant_id",
+                        "timestamp",
+                        "env_id",
+                        "cluster_resource_id",
+                        "topic_name",
+                        "is_excluded",
+                        "product_category",
+                        "product_type",
+                        "attribution_method",
+                        "amount",
+                    ]
+                )
+            else:
+                writer.writerow(
+                    [
+                        "ecosystem",
+                        "tenant_id",
+                        "timestamp",
+                        "env_id",
+                        "cluster_resource_id",
+                        "topic_name",
+                        "product_category",
+                        "product_type",
+                        "attribution_method",
+                        "amount",
+                    ]
+                )
             yield buf.getvalue()
+            for row in rows:
+                buf.seek(0)
+                buf.truncate(0)
+                values: list[str] = [
+                    row.ecosystem,
+                    row.tenant_id,
+                    row.timestamp.isoformat(),
+                    row.env_id,
+                    row.cluster_resource_id,
+                    row.topic_name,
+                ]
+                if tenant_config.ecosystem == "self_managed_kafka":
+                    excluded = row.topic_name != "__UNATTRIBUTED__" and is_excluded(row.topic_name)
+                    values.append(str(excluded).lower())
+                values.extend(
+                    [
+                        row.product_category,
+                        row.product_type,
+                        row.attribution_method,
+                        str(row.amount),
+                    ]
+                )
+                writer.writerow(values)
+                yield buf.getvalue()
 
-    return StreamingResponse(
-        generate(),
-        media_type="text/csv",
+    return streaming_csv_response(
+        generate,
         headers={"Content-Disposition": "attachment; filename=topic_attributions.csv"},
     )

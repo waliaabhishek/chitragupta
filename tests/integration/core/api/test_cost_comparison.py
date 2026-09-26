@@ -384,8 +384,22 @@ class TestComparisonApiContract:
         assert body["baseline"]["coverage"]["availability_cutoff_at"] is None
 
     def test_empty_chargeback_facts_with_successful_pipeline_state_confirms_zero(
-        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+        self,
+        app_with_backend: TestClient,
+        in_memory_backend: SQLModelBackend,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from core.api.routes import cost_comparison
+
+        evaluated_at = datetime(2026, 1, 12, tzinfo=UTC)
+
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz: object | None = None) -> datetime:
+                assert tz is UTC
+                return evaluated_at
+
+        monkeypatch.setattr(cost_comparison, "datetime", FixedDateTime)
         with in_memory_backend.create_unit_of_work() as uow:
             uow.pipeline_state.upsert(_state(_BASELINE_DAY))
             uow.pipeline_state.upsert(_state(_COMPARISON_DAY))
@@ -788,8 +802,22 @@ class TestComparisonPeriodAndCoverageContract:
         assert expected_slots.call_count == 2
 
     def test_non_utc_dst_period_returns_complete_bounds_duration_and_coverage_contract(
-        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+        self,
+        app_with_backend: TestClient,
+        in_memory_backend: SQLModelBackend,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from core.api.routes import cost_comparison
+
+        evaluated_at = datetime(2026, 3, 11, tzinfo=UTC)
+
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz: object | None = None) -> datetime:
+                assert tz is UTC
+                return evaluated_at
+
+        monkeypatch.setattr(cost_comparison, "datetime", FixedDateTime)
         baseline_day = date(2026, 3, 8)
         comparison_day = date(2026, 3, 9)
         with in_memory_backend.create_unit_of_work() as uow:
@@ -873,8 +901,22 @@ class TestComparisonPeriodAndCoverageContract:
         }
 
     def test_non_utc_fall_back_prior_day_reports_25_hour_bounds_and_coverage(
-        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+        self,
+        app_with_backend: TestClient,
+        in_memory_backend: SQLModelBackend,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from core.api.routes import cost_comparison
+
+        evaluated_at = datetime(2026, 11, 3, tzinfo=UTC)
+
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz: object | None = None) -> datetime:
+                assert tz is UTC
+                return evaluated_at
+
+        monkeypatch.setattr(cost_comparison, "datetime", FixedDateTime)
         baseline_day = date(2026, 11, 1)
         comparison_day = date(2026, 10, 31)
         with in_memory_backend.create_unit_of_work() as uow:
@@ -963,7 +1005,19 @@ class TestComparisonPeriodAndCoverageContract:
         app_with_backend: TestClient,
         in_memory_backend: SQLModelBackend,
         case: _DstWeekCase,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        from core.api.routes import cost_comparison
+
+        evaluated_at = datetime.combine(case.comparison_end + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
+
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz: object | None = None) -> datetime:
+                assert tz is UTC
+                return evaluated_at
+
+        monkeypatch.setattr(cost_comparison, "datetime", FixedDateTime)
         with in_memory_backend.create_unit_of_work() as uow:
             for tracking_date in case.baseline_expected_dates + case.comparison_expected_dates:
                 uow.pipeline_state.upsert(_state(date.fromisoformat(tracking_date)))
@@ -1750,9 +1804,21 @@ class TestComparisonProductionWiring:
                 else:
                     assert cutoff is not None
 
-    def test_real_provider_confirms_chargeback_zero_and_filtered_topic_zero(self, tmp_path: Path) -> None:
+    def test_real_provider_confirms_chargeback_zero_and_filtered_topic_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from core.api.routes import cost_comparison
         from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
+        evaluated_at = datetime(2026, 1, 12, tzinfo=UTC)
+
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz: object | None = None) -> datetime:
+                assert tz is UTC
+                return evaluated_at
+
+        monkeypatch.setattr(cost_comparison, "datetime", FixedDateTime)
         plugin_settings = PluginSettingsBase.model_validate(
             {
                 "cluster_id": "cluster-production",

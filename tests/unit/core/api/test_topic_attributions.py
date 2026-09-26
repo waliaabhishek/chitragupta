@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from core.api.app import create_app
-from core.api.dependencies import get_unit_of_work
+from core.api.dependencies import get_backend_provider, get_unit_of_work
 from core.config.models import ApiConfig, AppSettings, LoggingConfig, PluginSettingsBase, StorageConfig, TenantConfig
 from core.models.topic_attribution import (
     TopicAttributionAggregationBucket,
@@ -69,15 +69,26 @@ def _make_ccloud_settings() -> AppSettings:
     )
 
 
-@contextmanager
-def _app_with_mock_uow(mock_uow: MagicMock) -> Iterator[TestClient]:
-    settings = _make_settings()
-    app = create_app(settings)
+def _install_mock_storage(app, mock_uow: MagicMock) -> None:
+    backend = MagicMock()
+    backend.create_read_only_unit_of_work.return_value.__enter__.return_value = mock_uow
+    provider = MagicMock()
+    provider.acquire_backend.return_value.__enter__.return_value = backend
+
+    def _provider_override() -> MagicMock:
+        return provider
 
     def _uow_override() -> Iterator[MagicMock]:
         yield mock_uow
 
+    app.dependency_overrides[get_backend_provider] = _provider_override
     app.dependency_overrides[get_unit_of_work] = _uow_override
+
+
+@contextmanager
+def _app_with_mock_uow(mock_uow: MagicMock) -> Iterator[TestClient]:
+    app = create_app(_make_settings())
+    _install_mock_storage(app, mock_uow)
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()
@@ -89,11 +100,7 @@ def _self_managed_app_with_mock_uow(
     exclude_topic_patterns: list[str] | None,
 ) -> Iterator[TestClient]:
     app = create_app(_make_self_managed_settings(exclude_topic_patterns))
-
-    def _uow_override() -> Iterator[MagicMock]:
-        yield mock_uow
-
-    app.dependency_overrides[get_unit_of_work] = _uow_override
+    _install_mock_storage(app, mock_uow)
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()
@@ -102,11 +109,7 @@ def _self_managed_app_with_mock_uow(
 @contextmanager
 def _ccloud_app_with_mock_uow(mock_uow: MagicMock) -> Iterator[TestClient]:
     app = create_app(_make_ccloud_settings())
-
-    def _uow_override() -> Iterator[MagicMock]:
-        yield mock_uow
-
-    app.dependency_overrides[get_unit_of_work] = _uow_override
+    _install_mock_storage(app, mock_uow)
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()
@@ -208,9 +211,8 @@ class TestListTopicAttributionsEndpoint:
             matcher_calls.append(plugin_settings)
             return lambda _topic_name: False
 
-        def unavailable_uow() -> Iterator[MagicMock]:
+        def unavailable_provider() -> MagicMock:
             raise HTTPException(status_code=503, detail="Storage backend provider is unavailable")
-            yield MagicMock()
 
         monkeypatch.setattr(
             topic_attribution_routes,
@@ -219,7 +221,7 @@ class TestListTopicAttributionsEndpoint:
             raising=False,
         )
         app = create_app(_make_self_managed_settings([]))
-        app.dependency_overrides[get_unit_of_work] = unavailable_uow
+        app.dependency_overrides[get_backend_provider] = unavailable_provider
         with TestClient(app) as client:
             response = client.get("/api/v1/tenants/prod/topic-attributions")
         app.dependency_overrides.clear()

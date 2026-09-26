@@ -7,12 +7,14 @@ from collections.abc import Iterator
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse  # noqa: TC002  # FastAPI evaluates annotations at runtime
 
-from core.api.dependencies import get_tenant_config, get_unit_of_work, resolve_date_range
+from core.api.dependencies import get_backend_provider, get_tenant_config, resolve_date_range
 from core.api.schemas import ExportRequest  # noqa: TC001  # FastAPI evaluates annotations at runtime
+from core.api.streaming import streaming_csv_response
 from core.config.models import TenantConfig  # noqa: TC001  # FastAPI evaluates annotations at runtime
+from core.storage.backend_provider import TenantBackendProvider  # noqa: TC001
 from core.storage.interface import ReadOnlyUnitOfWork  # noqa: TC001
 
 logger = logging.getLogger(__name__)
@@ -106,8 +108,9 @@ def _stream_csv(
 
 @router.post("/tenants/{tenant_name}/export")
 async def export_chargebacks(
+    request: Request,
     tenant_config: Annotated[TenantConfig, Depends(get_tenant_config)],
-    uow: Annotated[ReadOnlyUnitOfWork, Depends(get_unit_of_work)],
+    provider: Annotated[TenantBackendProvider, Depends(get_backend_provider)],
     body: ExportRequest,
 ) -> StreamingResponse:
     start_dt, end_dt = resolve_date_range(body.start_date, body.end_date, timezone=body.timezone)
@@ -128,16 +131,24 @@ async def export_chargebacks(
         if invalid_filters:
             raise HTTPException(400, detail=f"Invalid filter keys: {sorted(invalid_filters)}")
 
-    return StreamingResponse(
-        _stream_csv(
-            uow=uow,
-            ecosystem=tenant_config.ecosystem,
-            tenant_id=tenant_config.tenant_id,
-            start_dt=start_dt,
-            end_dt=end_dt,
-            columns=columns,
-            filters=body.filters,
-        ),
-        media_type="text/csv",
+    tenant_name = str(request.path_params["tenant_name"])
+
+    def produce() -> Iterator[str]:
+        with (
+            provider.acquire_backend(tenant_name, tenant_config) as backend,
+            backend.create_read_only_unit_of_work() as uow,
+        ):
+            yield from _stream_csv(
+                uow=uow,
+                ecosystem=tenant_config.ecosystem,
+                tenant_id=tenant_config.tenant_id,
+                start_dt=start_dt,
+                end_dt=end_dt,
+                columns=columns,
+                filters=body.filters,
+            )
+
+    return streaming_csv_response(
+        produce,
         headers={"Content-Disposition": "attachment; filename=chargebacks.csv"},
     )

@@ -47,8 +47,11 @@ sync:
 # Development
 # ─────────────────────────────────────────────────────────────────────────────
 
+PYTEST_WORKERS ?= 8
+
 test:
-	uv run pytest --cov=src --cov-report=term-missing
+	uv sync --frozen --group docs
+	UV_NO_SYNC=1 uv run pytest -n $(PYTEST_WORKERS) --cov=src --cov-report=term-missing
 
 lint:
 	uv run ruff check
