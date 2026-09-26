@@ -26,6 +26,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlmodel import Session
+from starlette.requests import ClientDisconnect
 
 from core.api.app import create_app
 from core.config.models import ApiConfig, AppSettings, StorageConfig, TenantConfig
@@ -49,6 +50,8 @@ from tests.unit.core.preview.test_service import (
 from tests.unit.plugins.confluent_cloud.test_preview_bootstrap import _seed_legacy_source
 
 if TYPE_CHECKING:
+    from starlette.types import Message
+
     from core.storage.interface import StorageBackend
     from plugins.confluent_cloud.models.billing import CCloudCostSourceRecord
 
@@ -2834,7 +2837,7 @@ def test_ready_archive_creation_failure_returns_exact_redacted_500(tmp_path: Pat
     assert "sentinel" not in response.text
 
 
-@pytest.mark.parametrize("outcome", ["complete", "failure", "cancel", "never-started"])
+@pytest.mark.parametrize("outcome", ["complete", "failure", "cancel", "disconnect", "never-started"])
 def test_archive_endpoint_closes_owned_spool_on_completion_failure_and_cancellation(
     tmp_path: Path,
     outcome: str,
@@ -2875,6 +2878,7 @@ def test_archive_endpoint_closes_owned_spool_on_completion_failure_and_cancellat
         with (
             patch.object(route, "_runtime", return_value=runtime),
             patch.object(route, "_lookup", return_value=(runtime, preview)),
+            patch.object(route, "_OwnedStreamingResponse", wraps=route._OwnedStreamingResponse) as response_factory,
         ):
             response = route.get_archive(
                 request,
@@ -2887,10 +2891,25 @@ def test_archive_endpoint_closes_owned_spool_on_completion_failure_and_cancellat
             assert response.background is not None
             await response.background()
             return b""
+        if outcome == "disconnect":
+
+            async def send(message: Message) -> None:
+                if message["type"] == "http.response.body":
+                    raise OSError("client disconnected")
+
+            async def receive() -> Message:
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+            with pytest.raises(ClientDisconnect):
+                await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+            assert archive.close_calls >= 1
+            return b""
         iterator = response.body_iterator.__aiter__()
         if outcome == "cancel":
             first = await anext(iterator)
             await iterator.aclose()
+            assert response_factory.call_args is not None  # Keep the iterator alive until cleanup is checked.
+            assert archive.close_calls >= 1
             return first
         try:
             body = b"".join([chunk async for chunk in iterator])
@@ -2903,7 +2922,7 @@ def test_archive_endpoint_closes_owned_spool_on_completion_failure_and_cancellat
         with pytest.raises(RuntimeError, match="stream failed"):
             asyncio.run(consume())
     else:
-        expected = b"" if outcome == "never-started" else b"first" if outcome == "cancel" else b"firstsecond"
+        expected = {"cancel": b"first", "complete": b"firstsecond"}.get(outcome, b"")
         assert asyncio.run(consume()) == expected
     assert archive.close_calls >= 1
     backend.dispose()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Annotated, cast
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
+from starlette.concurrency import iterate_in_threadpool
 
 from core.api.dependencies import get_backend_provider, get_settings
 from core.api.schemas import (  # noqa: TC001  # FastAPI evaluates annotations
@@ -96,11 +97,24 @@ from core.storage.backend_provider import TenantBackendProvider  # noqa: TC001
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
+    from starlette.types import Receive, Scope, Send
+
     from core.storage.interface import StorageBackend
 
 router = APIRouter(prefix="/tenants/{tenant_name}/focus-preview", tags=["focus-preview"])
 _NO_REQUEST = cast("Request", None)
 logger = logging.getLogger(__name__)
+
+
+class _OwnedStreamingResponse(StreamingResponse):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        except BaseException:
+            # Starlette does not run background tasks after a streaming disconnect.
+            if self.background is not None:
+                await self.background()
+            raise
 
 
 @dataclass(frozen=True)
@@ -1189,9 +1203,10 @@ def get_current_revision_archive(
                 revision_id=revision.revision_id,
             ) from None
 
-    def chunks() -> Iterator[bytes]:
+    async def chunks() -> AsyncIterator[bytes]:
         try:
-            yield from archive.iter_chunks()
+            async for chunk in iterate_in_threadpool(archive.iter_chunks()):
+                yield chunk
         except BaseException as exc:
             _close_revision_archive_safely(archive, preserving=exc)
             raise
@@ -1199,7 +1214,7 @@ def get_current_revision_archive(
             _close_revision_archive_safely(archive, preserving=None)
 
     filename = f"focus-mapping-preview-{revision.month}-{revision.revision_id}.zip"
-    return StreamingResponse(
+    return _OwnedStreamingResponse(
         chunks(),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
@@ -1467,9 +1482,10 @@ def get_revision_archive(
                 revision_id=revision_id,
             ) from None
 
-    def chunks() -> Iterator[bytes]:
+    async def chunks() -> AsyncIterator[bytes]:
         try:
-            yield from archive.iter_chunks()
+            async for chunk in iterate_in_threadpool(archive.iter_chunks()):
+                yield chunk
         except BaseException as exc:
             _close_revision_archive_safely(archive, preserving=exc)
             raise
@@ -1477,7 +1493,7 @@ def get_revision_archive(
             _close_revision_archive_safely(archive, preserving=None)
 
     filename = f"focus-mapping-preview-{revision.month}-{revision.revision_id}.zip"
-    return StreamingResponse(
+    return _OwnedStreamingResponse(
         chunks(),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
@@ -1583,13 +1599,14 @@ def _artifact_streaming_response(
     *,
     media_type: str,
 ) -> StreamingResponse:
-    def chunks() -> Iterator[bytes]:
+    async def chunks() -> AsyncIterator[bytes]:
         try:
-            yield from stream.iter_chunks()
+            async for chunk in iterate_in_threadpool(stream.iter_chunks()):
+                yield chunk
         finally:
             stream.close()
 
-    return StreamingResponse(
+    return _OwnedStreamingResponse(
         chunks(),
         media_type=media_type,
         headers={"Content-Length": str(stream.size_bytes)},
@@ -1621,14 +1638,15 @@ def get_archive(
         except PreviewArtifactUnavailable, OSError:
             raise HTTPException(500, detail="Stored preview artifact is unavailable") from None
 
-    def chunks() -> Iterator[bytes]:
+    async def chunks() -> AsyncIterator[bytes]:
         try:
-            yield from archive.iter_chunks()
+            async for chunk in iterate_in_threadpool(archive.iter_chunks()):
+                yield chunk
         finally:
             archive.close()
 
     filename = f"focus-mapping-preview-{request_id}.zip"
-    return StreamingResponse(
+    return _OwnedStreamingResponse(
         chunks(),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},

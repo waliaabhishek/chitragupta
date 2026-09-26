@@ -1036,7 +1036,9 @@ esac
     try:
         for _ in range(100):
             workload_log = kafka_log.read_text(encoding="utf-8")
-            if "--topic matrix-topic" in workload_log and "--group matrix-group" in workload_log:
+            if all(
+                flag in workload_log for flag in ("--topic matrix-topic", "--throughput 96", "--group matrix-group")
+            ):
                 break
             time.sleep(0.02)
     finally:
