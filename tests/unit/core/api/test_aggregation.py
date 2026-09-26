@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 from core.api.app import create_app
-from core.api.dependencies import get_unit_of_work
+from core.api.dependencies import get_backend_provider
 from core.config.models import ApiConfig, AppSettings, LoggingConfig, StorageConfig, TenantConfig
 from core.models.chargeback import AggregationRow
 
@@ -33,10 +33,15 @@ def _make_settings() -> AppSettings:
 def _app_with_mock_uow(mock_uow: MagicMock) -> Iterator[TestClient]:
     app = create_app(_make_settings())
 
-    def _uow_override() -> Iterator[MagicMock]:
-        yield mock_uow
+    backend = MagicMock()
+    backend.create_read_only_unit_of_work.return_value.__enter__.return_value = mock_uow
+    provider = MagicMock()
+    provider.acquire_backend.return_value.__enter__.return_value = backend
 
-    app.dependency_overrides[get_unit_of_work] = _uow_override
+    def _provider_override() -> MagicMock:
+        return provider
+
+    app.dependency_overrides[get_backend_provider] = _provider_override
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()

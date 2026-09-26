@@ -1507,11 +1507,7 @@ def test_real_calculate_unknown_allocator_publishes_daily_and_monthly_known_plus
     async def to_thread_inline(function: Any, *args: object, **kwargs: object) -> object:
         return function(*args, **kwargs)
 
-    async def run_sync_inline(function: Any, *args: object, **_kwargs: object) -> object:
-        return function(*args)
-
     monkeypatch.setattr("core.api.app.asyncio.to_thread", to_thread_inline)
-    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
 
     class FallbackPreviewPipelinePlugin(PreviewPipelinePlugin):
         def get_fallback_allocator(self) -> Any:

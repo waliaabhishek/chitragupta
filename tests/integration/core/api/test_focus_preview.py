@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
-import anyio.to_thread
 import httpx
 import pytest
 from fastapi import HTTPException
@@ -61,11 +60,7 @@ def _inline_mocked_startup_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     async def run_inline(function: Callable[..., object], *args: object, **kwargs: object) -> object:
         return function(*args, **kwargs)
 
-    async def run_sync_inline(function: Callable[..., object], *args: object, **_kwargs: object) -> object:
-        return function(*args)
-
     monkeypatch.setattr("core.api.app.asyncio.to_thread", run_inline)
-    monkeypatch.setattr(anyio.to_thread, "run_sync", run_sync_inline)
 
 
 def _pin_preview_runtime_clock(
