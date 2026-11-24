@@ -369,6 +369,41 @@ on a private network. The test runner uses DuckDB to query the table. Add
 against the same catalog. The script tears down its containers, network,
 and volumes when it exits.
 
+### Upgrading an existing table to Iceberg v3
+
+Keep export tables on Iceberg v2. Chitragupta uses PyIceberg 0.12.0, which
+lacks the v3 file overwrite support needed to replace or clear a tenant-day.
+The worker rejects v3 tables before writing. Follow the
+[PyIceberg v3 write issue](https://github.com/apache/iceberg-python/issues/1551).
+
+An in-place upgrade can preserve the existing Parquet files and retained
+snapshots, so there is no need to backfill from SQL. The first new v3 snapshot
+must assign row IDs to the existing files through metadata. Check your
+catalog's upgrade procedure for any required maintenance, such as removing
+active position deletes. See the [Iceberg upgrade rules](https://iceberg.apache.org/spec/#row-lineage-for-upgraded-tables)
+and the [Snowflake upgrade guide](https://docs.snowflake.com/en/user-guide/tables-iceberg-upgrade-version).
+
+Before upgrading a production table, test an in-place upgrade on a copy with
+representative retained data and the same partition layout.
+
+1. Use a Chitragupta release that supports v3 file replacement and clearing.
+   Verify that its writer commits a valid first v3 snapshot, including row
+   lineage for existing and new files. Check that compaction leaves a layout
+   the emitter supports. The current emitter rejects row-level delete files.
+2. Record the test table's UUID and export status before upgrading it. Verify
+   that the UUID and retained snapshots survive the upgrade. Read old days
+   with the production query engine and compare their row counts and totals.
+3. Resume the worker with its existing checkpoints. Verify that it skips
+   days already confirmed for the current calculation and publishes pending
+   days. Replace and clear a day after compaction, verify neighboring days,
+   and test recovery from a lost commit response.
+
+For production, stop new publications and let active commits finish. Follow
+the catalog's in-place upgrade procedure, confirm the table UUID, and resume
+with the v3-capable worker. Export checkpoints use the table UUID. A new UUID
+is treated as a new destination. Plan recovery before changing the format.
+Rolling back a snapshot leaves the table format at v3.
+
 ## Prometheus collector script
 
 When using the [Prometheus emitter](../configuration/index.md#prometheus-emitter), chargeback data is held in memory and served at `/metrics`. To persist it into a Prometheus TSDB (for long-term retention and historical queries), use the bundled collector script:
