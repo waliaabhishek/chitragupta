@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import signal
 import sys
 import threading
-from datetime import UTC, datetime
+from contextlib import ExitStack, contextmanager
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
 from core.api import get_version
 from core.config.loader import load_config
+from core.config.models import MAX_SOURCE_RETENTION_DAYS
 from core.emitters.registry import register as register_emitter
 from core.emitters.runner import EmitterRunner
 from core.emitters.sources import ChargebackDateSource, ChargebackRowFetcher, RegistryEmitterBuilder
@@ -31,6 +34,9 @@ register_emitter("csv", make_csv_emitter)
 register_emitter("prometheus", make_prometheus_emitter)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from contextlib import AbstractContextManager
+
     from core.config.models import AppSettings, StorageConfig
     from core.plugin.protocols import StorageModule
     from core.storage.interface import StorageBackend
@@ -40,8 +46,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Chitragupta")
     parser.add_argument(
         "--version",
-        action="version",
-        version=f"%(prog)s {get_version()}",
+        action="store_true",
+        help="Show the version and exit",
     )
     parser.add_argument(
         "--config-file",
@@ -78,6 +84,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Re-emit all pending chargebacks from DB and exit (no pipeline run)",
     )
+    iceberg_actions = parser.add_mutually_exclusive_group()
+    iceberg_actions.add_argument(
+        "--iceberg-status",
+        nargs=3,
+        metavar=("TENANT", "START", "END"),
+        help="Show Iceberg export status for an inclusive UTC date range",
+    )
+    iceberg_actions.add_argument(
+        "--iceberg-replay",
+        nargs=3,
+        metavar=("TENANT", "START", "END"),
+        help="With --emit-once, replay Iceberg export for an inclusive UTC date range",
+    )
     parser.add_argument(
         "--check-self-managed-telemetry",
         action="store_true",
@@ -87,21 +106,56 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         choices=["worker", "api", "both"],
-        default="worker",
         help="Run mode: worker (pipeline), api (HTTP server), or both",
     )
-    raw_argv = list(sys.argv[1:] if argv is None else argv)
-    args = parser.parse_args(raw_argv)
+    args = parser.parse_args(argv)
+    if args.iceberg_status is not None or args.iceberg_replay is not None:
+        replay = args.iceberg_replay is not None
+        command = "--iceberg-replay" if replay else "--iceberg-status"
+        for option, present in (
+            ("--version", args.version),
+            ("--validate", args.validate),
+            ("--show-config", args.show_config),
+            ("--run-once", args.run_once),
+            ("--emit-once", args.emit_once and not replay),
+            ("--check-self-managed-telemetry", args.check_self_managed_telemetry),
+            ("--mode", args.mode is not None),
+        ):
+            if present:
+                parser.error(f"{command} cannot be combined with {option}")
+        if replay and not args.emit_once:
+            parser.error("--iceberg-replay requires --emit-once")
+        tenant_name, start_text, end_text = args.iceberg_replay if replay else args.iceberg_status
+        try:
+            start = date.fromisoformat(start_text)
+            end = date.fromisoformat(end_text)
+        except ValueError:
+            parser.error(f"{command} requires dates in YYYY-MM-DD format")
+        if start.isoformat() != start_text or end.isoformat() != end_text:
+            parser.error(f"{command} requires dates in YYYY-MM-DD format")
+        if start > end:
+            parser.error(f"{command} start date must be on or before the end date")
+        if (end - start).days > MAX_SOURCE_RETENTION_DAYS:
+            parser.error(f"{command} accepts at most {MAX_SOURCE_RETENTION_DAYS + 1} dates")
+        if replay:
+            args.iceberg_replay = (tenant_name, start, end)
+        else:
+            args.iceberg_status = (tenant_name, start, end)
+    if args.version:
+        print(f"{parser.prog} {get_version()}")
+        parser.exit()
     if args.check_self_managed_telemetry:
         for option, present in (
             ("--validate", args.validate),
             ("--show-config", args.show_config),
             ("--run-once", args.run_once),
             ("--emit-once", args.emit_once),
-            ("--mode", any(token == "--mode" or token.startswith("--mode=") for token in raw_argv)),
+            ("--mode", args.mode is not None),
         ):
             if present:
                 parser.error(f"--check-self-managed-telemetry cannot be combined with {option}")
+    if args.mode is None:
+        args.mode = "worker"
     return args
 
 
@@ -125,6 +179,90 @@ def _build_storage(
         storage_module=storage_module,
         focus_preview_enabled=focus_preview_enabled,
     )
+
+
+@contextmanager
+def _standalone_iceberg_backends(
+    settings: AppSettings,
+) -> Iterator[Callable[[str], AbstractContextManager[StorageBackend]]]:
+    from plugins.storage_modules import get_storage_module_for_ecosystem
+
+    backends: dict[str, StorageBackend] = {}
+    with ExitStack() as stack:
+
+        @contextmanager
+        def acquire(tenant_name: str) -> Iterator[StorageBackend]:
+            backend = backends.get(tenant_name)
+            if backend is None:
+                config = settings.tenants[tenant_name]
+                backend = _build_storage(
+                    config.storage,
+                    storage_module=get_storage_module_for_ecosystem(config.ecosystem),
+                    focus_preview_enabled=config.focus_preview_enabled,
+                )
+                backends[tenant_name] = backend
+                stack.callback(backend.dispose)
+            yield backend
+
+        yield acquire
+
+
+def _emit_iceberg_once(settings: AppSettings) -> bool:
+    if not any(config.plugin_settings.iceberg_emitter is not None for config in settings.tenants.values()):
+        return True
+    try:
+        from core.emitters.iceberg import publish_iceberg
+
+        with _standalone_iceberg_backends(settings) as acquire:
+            summary = publish_iceberg(settings.tenants, acquire_backend=acquire, now=datetime.now(UTC), limit=None)
+        logger.info(
+            "Iceberg export attempted=%d confirmed=%d failed=%d unconfirmed=%d errors=%d",
+            summary.attempted,
+            summary.confirmed,
+            summary.failed,
+            summary.unconfirmed,
+            summary.errors,
+        )
+        return summary.failed == 0 and summary.unconfirmed == 0 and summary.errors == 0
+    except Exception as exc:
+        logger.error("Iceberg export pass failed error_type=%s", type(exc).__name__)
+        return False
+
+
+def _run_iceberg_action(settings: AppSettings, scope: tuple[str, date, date], *, replay: bool) -> int:
+    tenant_name, start, end = scope
+    tenant = settings.tenants.get(tenant_name)
+    if tenant is None:
+        print(f"error: unknown tenant {tenant_name!r}", file=sys.stderr)
+        return 2
+    if tenant.plugin_settings.iceberg_emitter is None:
+        print(f"error: tenant {tenant_name!r} has no Iceberg emitter", file=sys.stderr)
+        return 2
+
+    from core.emitters.iceberg import IcebergExportError, iceberg_replay, iceberg_status
+
+    try:
+        with _standalone_iceberg_backends(settings) as acquire:
+            now = datetime.now(UTC)
+            if replay:
+                records, confirmed = iceberg_replay(
+                    settings.tenants, tenant_name=tenant_name, start=start, end=end, acquire_backend=acquire, now=now
+                )
+            else:
+                records = iceberg_status(
+                    settings.tenants, tenant_name=tenant_name, start=start, end=end, acquire_backend=acquire, now=now
+                )
+                confirmed = True
+    except IcebergExportError as exc:
+        print(f"Iceberg action failed for tenant {tenant_name!r}: {exc.code}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Iceberg action failed for tenant {tenant_name!r}: {type(exc).__name__}", file=sys.stderr)
+        return 1
+
+    for record in records:
+        print(json.dumps(record, default=str))
+    return 0 if confirmed else 1
 
 
 def _build_registry(settings: AppSettings) -> PluginRegistry:
@@ -189,7 +327,7 @@ def _validate_plugin_configs(settings: AppSettings) -> None:
         if validate_fn is None:
             continue
         try:
-            validate_fn(tenant_config.plugin_settings.model_dump())
+            validate_fn(tenant_config.plugin_settings.plugin_payload())
         except Exception as exc:
             detail = str(exc)
             if detail.startswith("invalid_self_managed_cost_rate"):
@@ -311,7 +449,6 @@ def run_worker(
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    # --version is handled by argparse (prints and exits before reaching here)
 
     if args.config_file is None:
         print("error: --config-file is required", file=sys.stderr)
@@ -350,7 +487,7 @@ def main(argv: list[str] | None = None) -> None:
         validated: list[tuple[str, SelfManagedKafkaConfig]] = []
         config_errors: list[str] = []
         for tenant_name, tenant_config in selected:
-            raw_settings = tenant_config.plugin_settings.model_dump()
+            raw_settings = tenant_config.plugin_settings.plugin_payload()
             try:
                 SelfManagedKafkaPlugin().validate_plugin_settings(raw_settings)
                 validated.append(
@@ -406,14 +543,25 @@ def main(argv: list[str] | None = None) -> None:
 
     setup_logging(settings)
 
+    if args.iceberg_status is not None:
+        sys.exit(_run_iceberg_action(settings, args.iceberg_status, replay=False))
+    if args.iceberg_replay is not None:
+        sys.exit(_run_iceberg_action(settings, args.iceberg_replay, replay=True))
+
     if args.emit_once:
-        registry = _build_registry(settings)
+        iceberg_succeeded = _emit_iceberg_once(settings)
+        registry = None
         for tenant_name, tenant_config in settings.tenants.items():
+            ordinary_specs = tenant_config.plugin_settings.ordinary_emitters
+            if tenant_config.plugin_settings.iceberg_emitter is not None and not ordinary_specs:
+                continue
+            if registry is None:
+                registry = _build_registry(settings)
             plugin = registry.create(tenant_config.ecosystem)
             storage = None
             original_error: BaseException | None = None
             try:
-                plugin.initialize(tenant_config.plugin_settings.model_dump())
+                plugin.initialize(tenant_config.plugin_settings.plugin_payload())
                 storage = _build_storage(
                     tenant_config.storage,
                     storage_module=plugin.get_storage_module(),
@@ -422,13 +570,13 @@ def main(argv: list[str] | None = None) -> None:
                 storage.create_tables()
                 billing_types = EcosystemBundle.build(plugin).billing_resource_types
                 chargeback_date_source = ChargebackDateSource(storage)
-                prometheus_specs = [s for s in tenant_config.plugin_settings.emitters if s.type == "prometheus"]
+                prometheus_specs = [s for s in ordinary_specs if s.type == "prometheus"]
 
                 runners = [
                     EmitterRunner(
                         ecosystem=tenant_config.ecosystem,
                         storage_backend=storage,
-                        emitter_specs=tenant_config.plugin_settings.emitters,
+                        emitter_specs=ordinary_specs,
                         date_source=chargeback_date_source,
                         row_fetcher=ChargebackRowFetcher(storage),
                         emitter_builder=RegistryEmitterBuilder(),
@@ -472,6 +620,8 @@ def main(argv: list[str] | None = None) -> None:
                     )
                 if cleanup_errors and original_error is None:
                     raise cleanup_errors[0]
+        if not iceberg_succeeded:
+            sys.exit(1)
         return
 
     mode = args.mode

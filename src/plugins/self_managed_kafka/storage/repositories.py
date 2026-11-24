@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import delete, tuple_
+from sqlalchemy import delete, func, tuple_
 from sqlmodel import col, select
 
 from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository
@@ -15,6 +15,9 @@ from core.storage.backends.sqlmodel.time_bounds import exact_utc_half_open_bound
 from core.storage.backends.sqlmodel.timestamps import canonical_utc_second, exclusive_utc_second_upper_bound
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.sql.elements import ColumnElement, SQLCoreOperations
     from sqlmodel import Session
 
     from core.models.chargeback import ChargebackRow
@@ -41,6 +44,24 @@ class SelfManagedKafkaChargebackRepository(SQLModelChargebackRepository):
     """Core chargeback persistence plus typed historical team snapshots."""
 
     _SNAPSHOT_CHUNK_SIZE = 400
+
+    def iceberg_source_extra_width(
+        self, byte_length: Callable[[SQLCoreOperations[Any]], ColumnElement[int]]
+    ) -> ColumnElement[int]:
+        fact, snapshot = ChargebackFactTable, SelfManagedKafkaPrincipalTeamSnapshotTable
+        # Hydration uses whole seconds even for older facts stored with fractional timestamps.
+        timestamp = (
+            func.substr(col(fact.timestamp), 1, 19)
+            if self._session.get_bind().dialect.name == "sqlite"
+            else func.date_trunc("second", col(fact.timestamp))
+        )
+        return func.coalesce(
+            select(byte_length(col(snapshot.team)))
+            .where(col(snapshot.dimension_id) == col(fact.dimension_id), col(snapshot.timestamp) == timestamp)
+            .correlate(fact)
+            .scalar_subquery(),
+            0,
+        )
 
     def _snapshot_keys_for_rows(self, rows: Sequence[ChargebackRow]) -> list[tuple[datetime, int]]:
         return [(canonical_utc_second(row.timestamp), row.dimension_id) for row in rows if row.dimension_id is not None]

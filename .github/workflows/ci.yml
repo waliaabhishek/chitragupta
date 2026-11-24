@@ -44,7 +44,7 @@ jobs:
         run: uv run ruff check
 
       - name: Type check
-        run: uv run mypy src/
+        run: make typecheck
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -155,11 +155,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
-      - name: Run PostgreSQL migration tests
+      - name: Run PostgreSQL storage tests
         env:
           TEST_POSTGRESQL_URL: postgresql+psycopg://chitragupta:chitragupta@localhost:5432/chitragupta_test  # pragma: allowlist secret
         run: >-
           uv run pytest
+          tests/integration/core/storage/test_iceberg_sql_deadline_postgresql.py
           tests/integration/core/storage/test_migration_029_postgresql.py
           tests/integration/core/storage/test_manual_alembic_command.py
           tests/integration/plugins/self_managed_kafka/storage/test_schema_postgresql.py

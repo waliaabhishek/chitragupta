@@ -30,6 +30,8 @@ flowchart TD
     subgraph emit["Phase 4: Emit (post-pipeline)"]
         ER["EmitterRunner"]
         E["Emitters<br/>(CSV, Prometheus, etc.)"]
+        ICE["Iceberg publisher"]
+        TABLE[("Iceberg table")]
     end
 
     BILLING --> G1
@@ -46,6 +48,8 @@ flowchart TD
     A --> |ChargebackRow| DB
     DB --> ER
     ER --> E
+    DB --> ICE
+    ICE --> TABLE
 ```
 
 ## Pipeline steps per date
@@ -109,9 +113,16 @@ The pipeline loop ends at step 8. Topic overlay (step 9) is a separate pass over
 
 10. **Emit (post-pipeline)** — `EmitterRunner` runs after each pipeline cycle completes.
    It queries storage for pending dates (not yet emitted, or previously failed, within
-   each emitter's `lookback_days` window) and dispatches to each configured emitter.
+   each emitter's `lookback_days` window) and dispatches to the CSV, Prometheus,
+   and extension emitters.
    Outcome records (`emitted`, `failed`, `skipped`) are persisted per tenant/emitter/date,
    so already-emitted dates are not re-sent on the next cycle.
+
+The worker runs the shared [Iceberg publisher](../configuration/index.md#iceberg-emitter)
+after calculation and before retention. It compares completed days in SQL with
+the last confirmed export revision. A changed revision replaces the tenant's
+day in Iceberg. A completed revision with zero rows clears the day. The worker
+records the confirmed snapshot in the tenant database.
 
 ### Self-managed bounded history and recovery
 

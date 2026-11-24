@@ -57,7 +57,7 @@ format:
 	uv run ruff format src tests
 
 typecheck:
-	uv run mypy src
+	uv run --frozen --extra iceberg mypy src
 
 check: lint typecheck test
 

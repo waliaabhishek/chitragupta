@@ -1,0 +1,16 @@
+services:
+  trino:
+    image: trinodb/trino:484
+    volumes:
+      - ./trino.properties:/etc/trino/catalog/chargeback.properties:ro
+    depends_on:
+      catalog:
+        condition: service_healthy
+      minio:
+        condition: service_started
+  checks:
+    environment:
+      ICEBERG_TRINO: "1"
+    depends_on:
+      trino:
+        condition: service_started

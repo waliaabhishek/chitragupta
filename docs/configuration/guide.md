@@ -553,6 +553,9 @@ After costs are allocated, emitters write the results to external destinations.
 Each tenant can have multiple emitters — for example, a CSV file for finance and
 a Prometheus endpoint for dashboards.
 
+Use the [Iceberg emitter](index.md#iceberg-emitter) to keep chargebacks in a
+warehouse and refresh days after recalculation.
+
 ### CSV emitter
 
 Writes one file per billing date. Good for finance teams, spreadsheet workflows,

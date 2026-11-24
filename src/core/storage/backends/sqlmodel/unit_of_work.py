@@ -8,6 +8,8 @@ from sqlmodel import Session
 
 from core.logging_context import safe_exception_context, safe_log_context
 from core.storage.backends.sqlmodel.engine import get_or_create_engine, get_or_create_read_only_engine
+from core.storage.backends.sqlmodel.export_deadline import create_export_sql_engine, export_sql_remaining
+from core.storage.backends.sqlmodel.iceberg import SQLModelIcebergExportRepository, iter_iceberg_chargebacks
 from core.storage.backends.sqlmodel.repositories import (
     SQLModelEmissionRepository,
     SQLModelEntityTagRepository,
@@ -20,9 +22,13 @@ from core.storage.backends.sqlmodel.repositories import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from datetime import datetime
+
     from sqlalchemy.engine import Connection, Transaction
 
     from core.emitters.repository import EmissionRepository
+    from core.models.chargeback import ChargebackRow
     from core.plugin.protocols import StorageModule
     from core.preview.persistence import (
         PreviewArtifactReferenceRepository,
@@ -33,6 +39,7 @@ if TYPE_CHECKING:
         PreviewRevisionRepository,
     )
     from core.preview.storage_availability import PreviewEvidenceAvailability, PreviewEvidenceIssue
+    from core.storage.iceberg import IcebergExportRepository
     from core.storage.interface import (
         BillingRepository,
         ChargebackRepository,
@@ -57,8 +64,16 @@ class SQLModelUnitOfWork:
         storage_module: StorageModule,
         *,
         preview_evidence_enabled: bool = False,
+        read_only: bool = False,
+        deadline: float | None = None,
     ) -> None:
-        self._engine = get_or_create_engine(connection_string)
+        self._deadline = deadline
+        if deadline is not None:
+            self._engine = create_export_sql_engine(connection_string, deadline, read_only=read_only)
+        elif read_only:
+            self._engine = get_or_create_read_only_engine(connection_string)
+        else:
+            self._engine = get_or_create_engine(connection_string)
         self._storage_module = storage_module
         self._session: Session | None = None
         self.preview_evidence_enabled = preview_evidence_enabled
@@ -80,10 +95,13 @@ class SQLModelUnitOfWork:
         self.pipeline_state: PipelineStateRepository = None  # type: ignore[assignment]
         self.pipeline_runs: PipelineRunRepository = None  # type: ignore[assignment]
         self.emissions: EmissionRepository = None  # type: ignore[assignment]
+        self.iceberg_exports: IcebergExportRepository = None  # type: ignore[assignment]
         self.graph: GraphRepository = None  # type: ignore[assignment]
         self._topic_attributions: TopicAttributionRepositoryImpl | None = None
 
     def __enter__(self) -> Self:
+        if self._deadline is not None:
+            export_sql_remaining(self._deadline)
         self._session = Session(self._engine)
         self._committed = False
         self._attach_repositories()
@@ -102,6 +120,7 @@ class SQLModelUnitOfWork:
         self.tags = SQLModelEntityTagRepository(self._session)
         self.graph = SQLModelGraphRepository(self._session, self.tags)
         self.emissions = SQLModelEmissionRepository(self._session)
+        self.iceberg_exports = SQLModelIcebergExportRepository(self._session)
         from core.plugin.protocols import UnitOfWorkRepositoryAttachment
 
         if isinstance(self._storage_module, UnitOfWorkRepositoryAttachment):
@@ -129,6 +148,8 @@ class SQLModelUnitOfWork:
     def commit(self) -> None:
         if self._session is None:
             raise RuntimeError("Cannot commit outside of a transaction")
+        if self._deadline is not None:
+            export_sql_remaining(self._deadline)
         self._session.commit()
         self._committed = True
 
@@ -162,13 +183,15 @@ class ReadOnlySQLModelUnitOfWork(SQLModelUnitOfWork):
         self,
         connection_string: str,
         storage_module: StorageModule,
+        *,
+        deadline: float | None = None,
     ) -> None:
         super().__init__(
             connection_string,
             storage_module,
-            preview_evidence_enabled=False,
+            read_only=True,
+            deadline=deadline,
         )
-        self._engine = get_or_create_read_only_engine(connection_string)
 
     def commit(self) -> None:
         raise RuntimeError("Cannot commit on a read-only UnitOfWork — use get_write_unit_of_work dependency")
@@ -177,8 +200,8 @@ class ReadOnlySQLModelUnitOfWork(SQLModelUnitOfWork):
 class ConsistentReadSQLModelUnitOfWork(ReadOnlySQLModelUnitOfWork):
     """Read-only UoW that keeps all repository reads in one database snapshot."""
 
-    def __init__(self, connection_string: str, storage_module: StorageModule) -> None:
-        super().__init__(connection_string, storage_module)
+    def __init__(self, connection_string: str, storage_module: StorageModule, *, deadline: float | None = None) -> None:
+        super().__init__(connection_string, storage_module, deadline=deadline)
         self._connection: Connection | None = None
         self._transaction: Transaction | None = None
 
@@ -229,6 +252,34 @@ class ConsistentReadSQLModelUnitOfWork(ReadOnlySQLModelUnitOfWork):
                 finally:
                     if connection is not None:
                         connection.close()
+
+
+class IcebergReadSQLModelUnitOfWork(ConsistentReadSQLModelUnitOfWork):
+    def iter_iceberg_chargebacks(
+        self,
+        ecosystem: str,
+        tenant_id: str,
+        start: datetime,
+        end: datetime,
+        *,
+        max_row_bytes: int,
+        max_batch_bytes: int,
+        batch_size: int = 256,
+    ) -> Iterator[ChargebackRow]:
+        if self._session is None:
+            raise RuntimeError("Cannot read chargebacks outside of a transaction")
+        return iter_iceberg_chargebacks(
+            self._session,
+            self.chargebacks,
+            self.tags,
+            ecosystem,
+            tenant_id,
+            start,
+            end,
+            max_row_bytes=max_row_bytes,
+            max_batch_bytes=max_batch_bytes,
+            batch_size=batch_size,
+        )
 
 
 class PreviewWriteSQLModelUnitOfWork:
@@ -348,6 +399,12 @@ class SQLModelBackend:
             self._connection_string,
             self._storage_module,
         )
+
+    def create_iceberg_read_unit_of_work(self, *, deadline: float) -> IcebergReadSQLModelUnitOfWork:
+        return IcebergReadSQLModelUnitOfWork(self._connection_string, self._storage_module, deadline=deadline)
+
+    def create_iceberg_write_unit_of_work(self, *, deadline: float) -> SQLModelUnitOfWork:
+        return SQLModelUnitOfWork(self._connection_string, self._storage_module, deadline=deadline)
 
     def create_preview_write_unit_of_work(self) -> PreviewWriteSQLModelUnitOfWork:
         return PreviewWriteSQLModelUnitOfWork(self._connection_string)

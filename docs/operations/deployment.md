@@ -224,7 +224,11 @@ storage:
 
 Use PostgreSQL for multi-instance deployments or high-volume/concurrent-access scenarios where SQLite's single-writer lock becomes a bottleneck.
 
-**Driver:** Requires `psycopg2`. Install via `uv add psycopg2-binary` (or `psycopg2` if you prefer building from source with `libpq-dev`).
+The connection URL selects the driver. A `postgresql+psycopg2` URL uses
+`psycopg2`, available as the `psycopg2-binary` package. A
+`postgresql+psycopg` URL uses psycopg 3. Use psycopg 3 when you enable the
+[Iceberg emitter](#iceberg-export). For a source environment installed without
+the development group, install it with `uv pip install 'psycopg[binary]>=3.2'`.
 
 **Connection string format:**
 
@@ -265,6 +269,105 @@ tenants:
 | Backups | Copy the `.db` file | `pg_dump` / replication |
 
 **Rule of thumb:** Start with SQLite. Switch to PostgreSQL when you need multiple application instances or observe lock contention under write-heavy workloads.
+
+## Iceberg export
+
+Install the Iceberg extra on the worker. From source, use
+`uv sync --python 3.14 --frozen --extra iceberg`. For an Iceberg-enabled image, pass
+`--build-arg ICEBERG=1` to the existing Docker build. Install the extra in the
+process that runs the worker or the Iceberg commands.
+
+Before enabling the [tenant emitter](../configuration/index.md#iceberg-emitter),
+create the namespace and an Iceberg v2 table in the destination catalog. Give
+the worker identity permission to load and commit the table and read and
+write its metadata and data files. Give readers access to the tables they
+need. Assign one publisher deployment to each table.
+
+Use one S3 credential set that covers both the table's metadata and data.
+The REST catalog can provide that set for the table, or you can supply
+credentials in the tenant's YAML.
+
+Use the following columns in the destination table.
+
+| Columns | Iceberg types |
+|---|---|
+| `ecosystem`, `tenant_id`, `identity_id`, `product_category`, `product_type`, `cost_type` | Required strings |
+| `chargeback_date` | Required date |
+| `timestamp` | Required timestamp with time zone |
+| `amount` | Required decimal with precision 38 and scale 5 |
+| `tags` | Map of string to string |
+| `resource_id`, `allocation_method`, `allocation_detail`, `env_id`, `team`, `calculation_id` | Optional strings |
+| `calculation_completed_at` | Optional timestamp with time zone |
+
+Use Parquet data files. Partition by the exact values of `ecosystem`,
+`tenant_id`, and `chargeback_date` using identity transforms. Set
+`commit.retry.num-retries=0`. Use uncompressed or deflate-compressed Avro
+manifests. The worker uses the partition values in the manifests to replace
+one tenant-day. Full column statistics are optional.
+
+Use the current partition spec for every live data manifest. Qualify your
+compaction and retention jobs on a test table before enabling them. After
+maintenance, replace and clear a day and check that neighboring data stays
+intact. Keep the snapshots needed for readers and recovery. Pause the
+publisher before changing the table format, storage locations, or main
+branch retention settings.
+
+Set the REST endpoint, token, and any storage options in the existing
+Chitragupta YAML. Run `--validate` to check the config. Start the worker,
+then use [Iceberg status](troubleshooting.md#iceberg-export) to find a
+confirmed day. Query that day with your warehouse's Iceberg reader. Each
+worker cycle can publish up to 10 dates across all enabled tenants, so a
+backfill can take several cycles.
+
+The worker uses temporary disk space to prepare one UTC day at a time. It
+rounds the amounts across the whole day, then writes Parquet in batches and
+commits the day's replacement together. Give the worker writable temporary
+storage. On Linux, set `SQLITE_TMPDIR` if the default temporary directory is
+too small. Plan for up to 256 MiB of scratch per active exporter. The worker
+accepts up to 100,000 rows and writes up to 128 Parquet files per tenant-day,
+subject to the byte and time limits.
+Each day has up to ten seconds for preparation, publication, and recording
+the result. The scratch database is removed automatically when the worker
+exits. Check peak temporary disk use with a representative large day before
+rollout.
+
+In your Iceberg reader, substitute your table, source tenant ID, and a
+confirmed date in this query.
+
+```sql
+SELECT timestamp, identity_id, amount
+FROM finance.chargebacks
+WHERE ecosystem = 'confluent_cloud'
+  AND tenant_id = 'prod-org'
+  AND chargeback_date = DATE '2026-11-01'
+ORDER BY timestamp, identity_id;
+```
+
+Before backfilling an existing SQL database, confirm which UTC days still
+have complete chargeback data. Start with an emitter lookback that stays
+within that range. For deployments that used timestamp-based retention,
+an old completed calculation can have only part of a day left. See
+[Data Retention](data-retention.md#tenant-pipeline-data).
+
+Test the catalog and object store from the worker image. Verify permissions,
+the certificate trust chain, and the worker's response time when either
+service stops responding. Measure the backfill and normal refresh together
+with representative data to check that publication meets the expected lag.
+
+Use a file-backed database for a SQLite source. For PostgreSQL, use a
+`postgresql+psycopg` source URL with a numeric address or Unix socket.
+If your current URL starts with `postgresql+psycopg2`, change it before you
+enable Iceberg. To use a hostname for TLS verification, keep the hostname
+in the URL and set the `hostaddr` option to its numeric address. This lets the
+worker apply its connection deadline without waiting for a DNS lookup. If
+you use a PostgreSQL service file, set `hostaddr` in the connection URL.
+
+For a local integration check, run `bash tests/integration/iceberg/run.sh`
+from the checkout. It uses Docker Compose to start a REST catalog and MinIO
+on a private network. The test runner uses DuckDB to query the table. Add
+`--trino` to test replacement after Trino compaction and commit conflicts
+against the same catalog. The script tears down its containers, network,
+and volumes when it exits.
 
 ## Prometheus collector script
 

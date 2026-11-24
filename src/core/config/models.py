@@ -2,15 +2,28 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    SecretStr,
+    Tag,
+    field_validator,
+    model_validator,
+)
 
 logger = logging.getLogger(__name__)
 
 _VALID_LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
+MAX_SOURCE_RETENTION_DAYS = 730
 
 
 class LoggingConfig(BaseModel):
@@ -133,13 +146,117 @@ class EmitterSpec(BaseModel):
         return self
 
 
+def _validate_iceberg_endpoint(value: str, schemes: tuple[str, ...]) -> str:
+    message = f"endpoint must be a {', '.join(schemes)} URL without credentials, query, or fragment"
+    if any(char.isspace() or ord(char) < 32 for char in value) or "?" in value or "#" in value:
+        raise ValueError(message)
+    try:
+        endpoint = urlsplit(value)
+        port = endpoint.port
+    except ValueError:
+        raise ValueError(message) from None
+    if endpoint.scheme not in schemes or not endpoint.hostname or endpoint.username is not None or port == 0:
+        raise ValueError(message)
+    return value
+
+
+def _nonempty_secret(value: SecretStr) -> SecretStr:
+    if not value.get_secret_value().strip():
+        raise ValueError("credential must not be empty")
+    return value
+
+
+_IcebergCredential = Annotated[SecretStr, AfterValidator(_nonempty_secret)]
+
+
+class IcebergS3Config(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    endpoint: str | None = None
+    region: str | None = Field(default=None, min_length=1)
+    access_key_id: _IcebergCredential | None = None
+    secret_access_key: _IcebergCredential | None = None
+    session_token: _IcebergCredential | None = None
+
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, value: str | None) -> str | None:
+        return _validate_iceberg_endpoint(value, ("https", "http")) if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_inline_credentials(self) -> IcebergS3Config:
+        if any((self.access_key_id, self.secret_access_key, self.session_token)) and not (
+            self.access_key_id and self.secret_access_key
+        ):
+            raise ValueError("inline S3 credentials require access_key_id and secret_access_key")
+        return self
+
+
+class IcebergCatalogConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    type: Literal["rest"]
+    uri: str
+    token: _IcebergCredential
+    warehouse: str | None = Field(default=None, min_length=1)
+    ca_file: str | None = Field(default=None, min_length=1)
+    s3: IcebergS3Config | None = None
+
+    @field_validator("uri")
+    @classmethod
+    def validate_uri(cls, value: str) -> str:
+        return _validate_iceberg_endpoint(value, ("https",))
+
+    @field_validator("token")
+    @classmethod
+    def validate_bearer_token(cls, value: SecretStr) -> SecretStr:
+        if any(char.isspace() or ord(char) < 32 for char in value.get_secret_value()):
+            raise ValueError("bearer token must not contain whitespace or control characters")
+        return value
+
+
+class IcebergEmitterParams(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    catalog: IcebergCatalogConfig
+    table: str = Field(pattern=r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)+$")
+
+
+class IcebergEmitterSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    type: Literal["iceberg"] = "iceberg"
+    name: str = "iceberg"
+    aggregation: None = None
+    params: IcebergEmitterParams
+    lookback_days: int | None = Field(default=None, gt=0)
+
+    @field_validator("lookback_days", mode="before")
+    @classmethod
+    def validate_lookback_days(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("lookback_days must be a positive number of days")
+        return value
+
+
+def _chargeback_emitter_type(value: object) -> str:
+    emitter_type = value.get("type") if isinstance(value, Mapping) else getattr(value, "type", None)
+    return "iceberg" if emitter_type == "iceberg" else "emitter"
+
+
+_ChargebackEmitterSpec = Annotated[
+    Annotated[IcebergEmitterSpec, Tag("iceberg")] | Annotated[EmitterSpec, Tag("emitter")],
+    Discriminator(_chargeback_emitter_type),
+]
+
+
 _MIN_GRANULARITY_HOURS = 1  # sub-hour cadences not supported
 
 
 class PluginSettingsBase(BaseModel):
     """Orchestrator-consumed plugin settings. All plugin configs must extend this."""
 
-    model_config = ConfigDict(extra="allow")  # plugin-specific fields pass through
+    model_config = ConfigDict(extra="allow", hide_input_in_errors=True)  # plugin-specific fields pass through
 
     allocator_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
     allocator_overrides: dict[str, str] = Field(default_factory=dict)
@@ -167,7 +284,7 @@ class PluginSettingsBase(BaseModel):
             " higher Prometheus load."
         ),
     )
-    emitters: list[EmitterSpec] = Field(default_factory=list)
+    emitters: list[_ChargebackEmitterSpec] = Field(default_factory=list)
     chargeback_granularity: Literal["hourly", "daily", "monthly"] = Field(
         default="daily",
         description=(
@@ -177,8 +294,39 @@ class PluginSettingsBase(BaseModel):
         ),
     )
 
+    @field_validator("emitters")
+    @classmethod
+    def validate_iceberg_count(cls, specs: list[_ChargebackEmitterSpec]) -> list[_ChargebackEmitterSpec]:
+        if sum(isinstance(spec, IcebergEmitterSpec) for spec in specs) > 1:
+            raise ValueError("only one Iceberg emitter is allowed per tenant")
+        return specs
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_topic_attribution_emitters(cls, data: object) -> object:
+        if isinstance(data, Mapping):
+            topic = data.get("topic_attribution")
+            emitters = topic.get("emitters") if isinstance(topic, Mapping) else getattr(topic, "emitters", None)
+            if isinstance(emitters, (list, tuple)) and any(_chargeback_emitter_type(e) == "iceberg" for e in emitters):
+                raise ValueError("topic_attribution.emitters does not support Iceberg")
+        return data
+
+    @property
+    def iceberg_emitter(self) -> IcebergEmitterSpec | None:
+        return next((spec for spec in self.emitters if isinstance(spec, IcebergEmitterSpec)), None)
+
+    @property
+    def ordinary_emitters(self) -> list[EmitterSpec]:
+        return [spec for spec in self.emitters if isinstance(spec, EmitterSpec)]
+
+    def plugin_payload(self) -> dict[str, Any]:
+        iceberg_indices = {index for index, spec in enumerate(self.emitters) if isinstance(spec, IcebergEmitterSpec)}
+        return self.model_dump(exclude={"emitters": iceberg_indices})
+
 
 class TenantConfig(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     ecosystem: str
     tenant_id: str = Field(
         description=(
@@ -190,7 +338,7 @@ class TenantConfig(BaseModel):
     )
     lookback_days: int = Field(default=200, gt=0, le=364)
     cutoff_days: int = Field(default=5, gt=0, le=30)
-    retention_days: int = Field(default=250, gt=0, le=730)
+    retention_days: int = Field(default=250, gt=0, le=MAX_SOURCE_RETENTION_DAYS)
     allocation_retry_limit: int = Field(default=3, gt=0, le=10)
     topic_attribution_retry_limit: int = Field(default=3, gt=0, le=10)
     zero_gather_deletion_threshold: int = Field(default=-1, ge=-1)
@@ -213,6 +361,8 @@ class TenantConfig(BaseModel):
 
 
 class AppSettings(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)

@@ -48,6 +48,7 @@ class CoreStorageModule:
             PreviewRevisionTable,
         )
         from core.storage.backends.sqlmodel.base_tables import BillingTable, IdentityTable, ResourceTable
+        from core.storage.backends.sqlmodel.iceberg import IcebergExportCheckpointTable
         from core.storage.backends.sqlmodel.tables import (
             ChargebackDimensionTable,
             ChargebackFactTable,
@@ -70,6 +71,7 @@ class CoreStorageModule:
             EntityTagTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             EmissionRecordTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             TopicAttributionDimensionTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
+            IcebergExportCheckpointTable.__table__,  # type: ignore[attr-defined]
             TopicAttributionFactTable.__table__,  # type: ignore[attr-defined]  # SQLModel tables have __table__ at runtime via SQLAlchemy metaclass
             PreviewRequestTable.__table__,  # type: ignore[attr-defined]
             PreviewRevisionTable.__table__,  # type: ignore[attr-defined]

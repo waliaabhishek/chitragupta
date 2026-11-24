@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 
 from core.storage.backends.sqlmodel.module import CoreStorageModule
@@ -62,7 +63,11 @@ def _patch_hook_runtime(monkeypatch: pytest.MonkeyPatch, module: object | None) 
             plugin_storage_hook.CFG_PLUGIN_STORAGE_SELECTION_EXPLICIT: module is not None,
         }
     )
-    context = SimpleNamespace(config=config, is_offline_mode=lambda: False)
+    context = SimpleNamespace(
+        config=config,
+        is_offline_mode=lambda: False,
+        script=ScriptDirectory.from_config(_config("sqlite:///unused.db")),
+    )
     operation = SimpleNamespace(get_bind=lambda: connection)
     monkeypatch.setattr(plugin_storage_hook, "context", context)
     monkeypatch.setattr(plugin_storage_hook, "op", operation)
@@ -145,7 +150,7 @@ def test_core_and_ccloud_reach_head_without_self_managed_schema(tmp_path: Path) 
         core_backend.dispose()
         ccloud_backend.dispose()
 
-    assert _version(core_url) == _version(ccloud_url) == "033"
+    assert _version(core_url) == _version(ccloud_url) == "034"
     assert _PLUGIN_TABLES.isdisjoint(_table_names(core_url))
     assert _PLUGIN_TABLES.isdisjoint(_table_names(ccloud_url))
     ccloud_engine = create_engine(ccloud_url)
@@ -166,20 +171,20 @@ def test_self_managed_runtime_selection_creates_both_plugin_tables(tmp_path: Pat
     finally:
         backend.dispose()
 
-    assert _version(url) == "033"
+    assert _version(url) == "034"
     assert _table_names(url) >= _PLUGIN_TABLES
 
 
 def test_manual_selected_upgrade_prepares_plugin_schema_at_existing_core_head(tmp_path: Path) -> None:
     url = f"sqlite:///{tmp_path / 'manual-already-head.db'}"
 
-    command.upgrade(_config(url), "033")
-    assert _version(url) == "033"
+    command.upgrade(_config(url), "head")
+    assert _version(url) == "034"
     assert _PLUGIN_TABLES.isdisjoint(_table_names(url))
 
     command.upgrade(_config(url, plugin_storage="self_managed_kafka"), "head")
 
-    assert _version(url) == "033"
+    assert _version(url) == "034"
     assert _table_names(url) >= _PLUGIN_TABLES
 
 
@@ -191,7 +196,7 @@ def test_repeated_selected_prepare_verifies_without_ddl(tmp_path: Path) -> None:
     before = _table_names(url)
     command.upgrade(config, "head")
 
-    assert _version(url) == "033"
+    assert _version(url) == "034"
     assert before == _table_names(url)
     assert before >= _PLUGIN_TABLES
 
@@ -231,7 +236,7 @@ def test_downgrade_with_disabled_selection_stamps_032_without_provider_ddl(tmp_p
 
     assert _version(url) == "032"
     assert _table_names(url) >= _PLUGIN_TABLES
-    assert _table_names(url) == before
+    assert _table_names(url) == before - {"iceberg_export_checkpoints"}
 
 
 def test_invalid_manual_plugin_storage_selection_fails_before_schema_changes(tmp_path: Path) -> None:

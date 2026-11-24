@@ -33,6 +33,11 @@ Set `retention_days` greater than `lookback_days` when you want recalculation to
 retain all data inside the acquisition window. `lookback_days` is not an
 archive or a guarantee that old provider inputs can be reconstructed.
 
+Iceberg export checkpoints use the same UTC cut-off as chargebacks. Iceberg
+keeps its own warehouse retention settings. Complete a backfill while the dates
+are still available in SQL and within the
+[Iceberg emitter's lookback](../configuration/index.md#iceberg-emitter).
+
 There is no CLI for selective manual retention cleanup. To remove all data for
 a tenant, stop the service and remove or recreate that tenant's database only
 after taking any required backup.
