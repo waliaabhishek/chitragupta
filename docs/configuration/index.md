@@ -194,6 +194,8 @@ The `&` gives the connection settings a name. The `*` reuses the settings
 by that name. Use separate tables when the tenants have different readers.
 Restart the worker after changing Iceberg YAML or environment values.
 
+The [Iceberg example](https://github.com/waliaabhishek/chitragupta/tree/main/examples/iceberg)
+includes a full YAML file for all three plug-ins and an environment template.
 See [Deployment](../operations/deployment.md#iceberg-export) for table setup and
 [Troubleshooting](../operations/troubleshooting.md#iceberg-export) to check or
 replay a date.

@@ -1,0 +1,91 @@
+# Each tenant uses the same REST catalog and writes to its own Iceberg v2 table.
+features:
+  enable_periodic_refresh: true
+  refresh_interval: 3600
+
+tenants:
+  ccloud-prod:
+    ecosystem: confluent_cloud
+    tenant_id: ccloud-prod
+    storage:
+      connection_string: "sqlite:///data/iceberg-ccloud.db"
+    plugin_settings:
+      ccloud_api:
+        key: "${CCLOUD_API_KEY}"
+        secret: "${CCLOUD_API_SECRET}"
+      emitters:
+        - type: iceberg
+          lookback_days: 30
+          params:
+            table: finance.ccloud_chargebacks
+            catalog: &finance_catalog
+              type: rest
+              uri: "${ICEBERG_CATALOG_URI}"
+              token: "${ICEBERG_CATALOG_TOKEN}"
+              # Enable these if required by your catalog or TLS setup.
+              # warehouse: "${ICEBERG_CATALOG_WAREHOUSE}"
+              # ca_file: "${ICEBERG_CATALOG_CA_FILE}"
+              # Use catalog-provided S3 credentials by default. Set these
+              # options when your storage needs an explicit endpoint or keys.
+              # s3:
+              #   endpoint: "${ICEBERG_S3_ENDPOINT}"
+              #   region: us-east-1
+              #   access_key_id: "${ICEBERG_S3_ACCESS_KEY_ID}"
+              #   secret_access_key: "${ICEBERG_S3_SECRET_ACCESS_KEY}"
+              #   session_token: "${ICEBERG_S3_SESSION_TOKEN}"
+
+  kafka-dc1:
+    ecosystem: self_managed_kafka
+    tenant_id: kafka-dc1
+    storage:
+      connection_string: "sqlite:///data/iceberg-kafka.db"
+    plugin_settings:
+      cluster_id: kafka-dc1
+      metrics_identifier: kafka-dc1
+      broker_count: 3
+      cost_model:
+        compute_hourly_rate: "0.50"
+        storage_per_gib_hourly: "0.000125"
+        network_ingress_per_gib: "0.01"
+        network_egress_per_gib: "0.09"
+      metrics:
+        type: prometheus
+        url: "${KAFKA_PROMETHEUS_URL}"
+        auth_type: none
+      emitters:
+        - type: iceberg
+          lookback_days: 30
+          params:
+            table: finance.kafka_chargebacks
+            catalog: *finance_catalog
+
+  postgres-prod:
+    ecosystem: generic_metrics_only
+    tenant_id: postgres-prod
+    storage:
+      connection_string: "sqlite:///data/iceberg-postgres.db"
+    plugin_settings:
+      cluster_id: postgres-prod
+      metrics:
+        type: prometheus
+        url: "${GENERIC_PROMETHEUS_URL}"
+        auth_type: none
+      identity_source:
+        source: static
+        static_identities:
+          - identity_id: team-data
+            identity_type: team
+      cost_types:
+        - name: PG_COMPUTE
+          product_category: postgres
+          rate: "0.50"
+          cost_quantity:
+            type: fixed
+            count: 3
+          allocation_strategy: even_split
+      emitters:
+        - type: iceberg
+          lookback_days: 30
+          params:
+            table: finance.postgres_chargebacks
+            catalog: *finance_catalog

@@ -1,0 +1,56 @@
+# Iceberg chargeback export
+
+[config.yaml](config.yaml) shows Confluent Cloud, self-managed Kafka, and
+Generic Metrics tenants using one HTTPS REST catalog. Each tenant writes to
+its own Iceberg v2 table. The `&finance_catalog` anchor names the connection
+settings. `*finance_catalog` reuses those settings within the same YAML file.
+
+## Add Iceberg to an existing tenant
+
+Copy the Iceberg entry into the tenant's existing `plugin_settings.emitters`
+list and set `params.table` to the destination. Keep your source settings,
+database, and any emitters you already use. For a single tenant, use the full
+`catalog` mapping. When sharing a catalog, define it in the first tenant that
+uses it and refer to it from the other tenants.
+
+Create the destination namespace and tables with the schema and identity
+partitions in the [deployment guide](../../docs/operations/deployment.md#iceberg-export).
+The worker needs catalog and S3 write access. This example uses credentials
+provided by the catalog. The commented `s3` block shows how to supply your
+own endpoint and credentials in the same YAML.
+
+## Run the example
+
+From the repository root, copy the environment template and fill in the
+catalog and source values for the tenants you keep. Update the Kafka cluster
+label, broker count, and the example rates to match your sources.
+
+```bash
+cp examples/iceberg/.env.example examples/iceberg/.env
+mkdir -p data
+```
+
+Validate the configuration, then start the worker once your v2 tables exist.
+
+```bash
+uv run --python 3.14 --extra iceberg python src/main.py \
+  --config-file examples/iceberg/config.yaml \
+  --env-file examples/iceberg/.env --validate
+
+uv run --python 3.14 --extra iceberg python src/main.py \
+  --config-file examples/iceberg/config.yaml \
+  --env-file examples/iceberg/.env --mode worker
+```
+
+The example exports up to 30 days of completed chargebacks retained in SQL.
+For stored chargebacks, see the [manual export steps](../../docs/getting-started/first-run.md#--emit-once-flag).
+Use [Iceberg status](../../docs/operations/troubleshooting.md#iceberg-export)
+to check which days the worker has published.
+
+To try export without a hosted catalog or source credentials, run the existing
+Docker integration test from the repository root. It uses generated chargebacks,
+a local REST catalog, and MinIO. It removes its containers and volumes on exit.
+
+```bash
+bash tests/integration/iceberg/run.sh --trino
+```
