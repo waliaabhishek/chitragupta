@@ -22,6 +22,7 @@ services:
     volumes:
       - warehouse:/data
   checks:
+    command: ["python", "-u", "/checks/check.py"]
     build:
       context: ../../..
       dockerfile: tests/integration/iceberg/Dockerfile

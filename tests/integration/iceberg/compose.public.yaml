@@ -1,0 +1,3 @@
+services:
+  checks:
+    command: ["python", "-u", "/checks/public_api.py", "${ICEBERG_PUBLIC_MODE:---public-api}"]

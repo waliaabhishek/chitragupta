@@ -63,11 +63,39 @@ to check which days the worker has published.
 
 ## Test the example in Docker
 
-Run this test from the repository root. It publishes a 60,000-row day for each
-tenant, then replaces each day with 100,000 rows. The test uses a local REST
+Run this test from the repository root. It publishes a 100,001-row day for each
+tenant, then replaces each day with 150,000 rows. The test uses a local REST
 catalog, MinIO, and generated chargebacks. It removes its containers and
 volumes on exit.
 
 ```bash
 bash tests/integration/iceberg/run.sh --example
 ```
+
+To test public PyIceberg microbatch publication and recovery, run:
+
+```bash
+bash tests/integration/iceberg/run.sh --microbatch
+```
+
+All three SQLite plug-ins publish 100,001 rows, then replace the day with
+150,000 rows. DuckDB and Trino read the previous complete version while the
+writer holds two staged batches. Both readers check the complete day after
+one catalog commit.
+
+The test also interrupts the writer and simulates lost commit responses for
+a 150,000-row day. It verifies that a fresh export replays the complete day.
+An early end to the batch iterator must fail before commit and leave the
+previous version unchanged. One commit can publish several Iceberg snapshots.
+This command tests a candidate writer separately from the worker.
+
+To run the wider public API diagnostics, use:
+
+```bash
+bash tests/integration/iceberg/run.sh --public-api
+```
+
+This test uses the example's SQLite plug-ins with 100,001 and 150,000 rows per
+tenant-day. It prints successful data operations and failed or unproved
+qualification checks separately. A failed or unproved check gives a nonzero
+exit code. This test does not change the worker's current export limits.

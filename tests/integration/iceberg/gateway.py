@@ -6,6 +6,7 @@ import socket
 import ssl
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from http.client import HTTPConnection
@@ -80,10 +81,14 @@ class CatalogGateway(ThreadingHTTPServer):
         self.requests: list[tuple[str, str, str | None]] = []
         self.commit_payloads: list[tuple[str, dict[str, object]]] = []
         self.commit_responses: list[tuple[str, int]] = []
+        self.commit_seconds: list[float] = []
         self.next_commit_fault: str | None = None
         self.before_next_commit: Callable[[str, dict[str, object]], None] | None = None
         self.lost_commit_metadata: str | None = None
         self.stall_lookup = False
+        self.load_response_size = 0
+        self.last_table_response_size = 0
+        self.storage_grant = "table"
         self.lookup_received = threading.Event()
         self.release_lookup = threading.Event()
 
@@ -91,10 +96,12 @@ class CatalogGateway(ThreadingHTTPServer):
 class CatalogHandler(BaseHTTPRequestHandler):
     server: CatalogGateway
 
-    def _reply(self, code: int, payload: bytes) -> None:
+    def _reply(self, code: int, payload: bytes, *, retry_after: str | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        if retry_after is not None:
+            self.send_header("Retry-After", retry_after)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(payload)
@@ -142,6 +149,7 @@ class CatalogHandler(BaseHTTPRequestHandler):
 
         headers = {key: self.headers[key] for key in ("Accept", "Content-Type") if key in self.headers}
         upstream = HTTPConnection("catalog", 8181, timeout=8)
+        started = time.monotonic()
         try:
             upstream.request(self.command, self.path, body=body, headers=headers)
             response = upstream.getresponse()
@@ -149,9 +157,19 @@ class CatalogHandler(BaseHTTPRequestHandler):
         finally:
             upstream.close()
 
-        if response.status == 200 and fault == "lose-response":
-            self.server.commit_responses.append((table, response.status))
+        if commit:
+            self.server.commit_seconds.append(time.monotonic() - started)
+        if response.status == 200 and fault in {"lose-response", "lose-response-with-retry"}:
             self.server.lost_commit_metadata = json.loads(payload)["metadata-location"]
+            if fault == "lose-response-with-retry":
+                self.server.commit_responses.append((table, 503))
+                self._reply(
+                    503,
+                    b'{"error":{"message":"Outcome unavailable","type":"ServiceUnavailableException","code":503}}',
+                    retry_after="1",
+                )
+            else:
+                self.server.commit_responses.append((table, response.status))
             self.close_connection = True
             return
         if commit:
@@ -159,10 +177,16 @@ class CatalogHandler(BaseHTTPRequestHandler):
         if response.status == 200 and table and self.command == "GET":
             loaded = json.loads(payload)
             loaded.setdefault("config", {})["token"] = table_token(table)
-            if "vended-credentials" in self.headers.get("X-Iceberg-Access-Delegation", ""):
+            if (
+                "vended-credentials" in self.headers.get("X-Iceberg-Access-Delegation", "")
+                and self.server.storage_grant != "missing"
+            ):
+                prefix = table_prefix(table)
+                if self.server.storage_grant == "metadata-only":
+                    prefix += "metadata/"
                 loaded["storage-credentials"] = [
                     {
-                        "prefix": f"s3://{table_prefix(table)}",
+                        "prefix": f"s3://{prefix}",
                         "config": {
                             "s3.access-key-id": table_key(table),
                             "s3.secret-access-key": table_secret(table),
@@ -170,6 +194,10 @@ class CatalogHandler(BaseHTTPRequestHandler):
                     }
                 ]
             payload = json.dumps(loaded).encode()
+            if self.server.load_response_size:
+                assert len(payload) <= self.server.load_response_size
+                payload += b" " * (self.server.load_response_size - len(payload))
+            self.server.last_table_response_size = len(payload)
         self._reply(response.status, payload)
 
     do_GET = do_POST = do_HEAD = _forward  # noqa: N815 — BaseHTTPRequestHandler dispatch
@@ -199,6 +227,7 @@ class StorageHandler(StreamRequestHandler):
         line = self.rfile.readline(4096)
         if not line:
             return
+        self.server.request_lines.append(line)
         if not self.server.release.is_set() and f"/{table_prefix('alpha')}".encode() in line:
             self.server.stalled.set()
             self.server.release.wait(timeout=15)
@@ -223,6 +252,7 @@ class StorageGateway(ThreadingTCPServer):
         self.endpoint = f"http://127.0.0.1:{self.server_address[1]}"
         self.stalled = threading.Event()
         self.release = threading.Event()
+        self.request_lines: list[bytes] = []
 
 
 @contextmanager

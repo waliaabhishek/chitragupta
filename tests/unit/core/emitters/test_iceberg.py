@@ -51,15 +51,15 @@ def test_catalog_import_time_counts_toward_pass_deadline_and_utc_date(monkeypatc
         level: int = 0,
     ) -> object:
         nonlocal clock
-        if name == "core.emitters" and fromlist == ("iceberg_transport",):
+        if name == "core.emitters" and fromlist == ("iceberg_process",):
             clock += 2
         return original_import(name, global_namespace, local_namespace, fromlist, level)
 
     monkeypatch.setattr(iceberg, "monotonic", lambda: clock)
-    monkeypatch.setattr(emitters, "iceberg_transport", SimpleNamespace(), raising=False)
-    with monkeypatch.context() as import_patch, ExitStack() as stack:
+    monkeypatch.setattr(emitters, "iceberg_process", SimpleNamespace(), raising=False)
+    with monkeypatch.context() as import_patch:
         import_patch.setattr(builtins, "__import__", delayed_import)
-        catalogs = iceberg._Catalogs(stack, NOW - timedelta(seconds=1), lambda: False, 2)
+        catalogs = iceberg._Catalogs(NOW - timedelta(seconds=1), lambda: False, 2)
 
     assert catalogs.stopped()
     assert catalogs.utc_now() == NOW + timedelta(seconds=1)
@@ -185,18 +185,15 @@ def test_blocked_tenant_defers_remaining_dates_without_spending_the_shared_slot(
             written.append(tenant_id)
             return 1
 
-        def load_table(identifier: str, *, deadline: float) -> SimpleNamespace:
-            loads[identifier] += 1
-            return SimpleNamespace(uuid=identifier, overwrite_batches=overwrite_batches)
-
         @contextmanager
-        def open_catalog(*_: object, **__: object) -> Iterator[SimpleNamespace]:
-            yield SimpleNamespace(load_table=load_table)
+        def open_table(_settings: object, identifier: str, **_: object) -> Iterator[SimpleNamespace]:
+            loads[identifier] += 1
+            yield SimpleNamespace(uuid=identifier, overwrite_batches=overwrite_batches)
 
         monkeypatch.setattr(
             emitters,
-            "iceberg_transport",
-            SimpleNamespace(open_iceberg_catalog=open_catalog, IcebergDestinationError=IcebergExportError),
+            "iceberg_process",
+            SimpleNamespace(open_iceberg_table=open_table, IcebergDestinationError=IcebergExportError),
             raising=False,
         )
         started = monotonic()
@@ -249,9 +246,9 @@ class _Pass:
         monkeypatch.setattr(iceberg, "monotonic", lambda: self.clock)
         monkeypatch.setattr(
             emitters,
-            "iceberg_transport",
+            "iceberg_process",
             SimpleNamespace(
-                open_iceberg_catalog=self.open_catalog,
+                open_iceberg_table=self.open_table,
                 IcebergDestinationError=IcebergExportError,
                 IcebergConflict=_ConflictError,
                 IcebergUnconfirmed=_UnknownCommitError,
@@ -266,22 +263,21 @@ class _Pass:
             raise IcebergStorageDeadlineError
 
     @contextmanager
-    def open_catalog(self, *_: object, **__: object) -> Iterator[SimpleNamespace]:
-        def load_table(identifier: str, *, deadline: float) -> SimpleNamespace:
-            name = identifier.rsplit(".", 1)[1]
-            self.events.append(("catalog", name))
-            self.wait(self.catalog_delays.get(name, 0), deadline)
-            if name in self.failed_catalogs:
-                raise IcebergExportError("table_unavailable")
+    def open_table(
+        self, _settings: object, identifier: str, *, deadline: float, **_: object
+    ) -> Iterator[SimpleNamespace]:
+        name = identifier.rsplit(".", 1)[1]
+        self.events.append(("catalog", name))
+        self.wait(self.catalog_delays.get(name, 0), deadline)
+        if name in self.failed_catalogs:
+            raise IcebergExportError("table_unavailable")
 
-            def overwrite_batches(rows: Iterator[list[dict[str, object]]], **_: object) -> int:
-                assert list(rows) == []
-                self.events.append(("publish", name))
-                return 7
+        def overwrite_batches(rows: Iterator[list[dict[str, object]]], **_: object) -> int:
+            assert list(rows) == []
+            self.events.append(("publish", name))
+            return 7
 
-            return SimpleNamespace(uuid=self.uuids.get(name, identifier), overwrite_batches=overwrite_batches)
-
-        yield SimpleNamespace(load_table=load_table)
+        yield SimpleNamespace(uuid=self.uuids.get(name, identifier), overwrite_batches=overwrite_batches)
 
     @contextmanager
     def acquire(self, name: str) -> Iterator[StorageBackend]:
@@ -443,8 +439,8 @@ def test_publication_requires_full_attempt_and_continues_past_blocked_dates(
 ) -> None:
     names = ("a", "b", "healthy")
     cycle = _Pass(monkeypatch, {name: _tenant(name) for name in names})
-    cycle.source_delays.update(a=DISCOVERY_SECONDS / 3, b=DISCOVERY_SECONDS / 3, healthy=discovery_time)
-    cycle.checkpoint_delays.update(a=10, b=10)
+    cycle.source_delays.update(a=2.5, b=2.5, healthy=discovery_time)
+    cycle.checkpoint_delays.update(a=iceberg._ATTEMPT_SECONDS + 1, b=iceberg._ATTEMPT_SECONDS + 1)
     for blocked, next_name in zip(names[:-1], names[1:], strict=True):
         result = cycle.run(limit=1)
         assert (result.attempted, result.errors) == (0, 1)
@@ -478,8 +474,8 @@ def test_publication_rotates_past_stalled_fallbacks_while_primary_is_deferred(
     primary = (datetime.combine(DAY, datetime.min.time(), tzinfo=UTC), DAY, "a_deferred")
     cycle.schedule.publication = primary
     cycle.failed_catalogs.add("a_deferred")
-    cycle.source_delays.update(b_stalled=DISCOVERY_SECONDS / 3, c_stalled=DISCOVERY_SECONDS / 3)
-    cycle.checkpoint_delays.update(b_stalled=10, c_stalled=10)
+    cycle.source_delays.update(b_stalled=2.5, c_stalled=2.5)
+    cycle.checkpoint_delays.update(b_stalled=iceberg._ATTEMPT_SECONDS + 1, c_stalled=iceberg._ATTEMPT_SECONDS + 1)
 
     for expected in ("b_stalled", "c_stalled"):
         result = cycle.run(limit=1)
@@ -539,5 +535,34 @@ def test_durable_attempt_keeps_time_for_outcome(monkeypatch: pytest.MonkeyPatch,
     if interrupt:
         assert result.attempted == 1
     else:
+        assert result.attempted == 1 and result.confirmed == 0
+        assert cycle.schedule.publication is not None
+        assert cycle.schedule.publication[1] == NOW.date()
+        assert cycle.run().confirmed == 1
         assert cycle.outcomes["a", NOW.date()] == "confirmed"
-        assert (result.attempted, result.confirmed) == (2, 1)
+
+
+@pytest.mark.parametrize("failed_lookup", [1, 2], ids=["discovery", "attempt"])
+def test_unreaped_destination_stops_the_pass(monkeypatch: pytest.MonkeyPatch, failed_lookup: int) -> None:
+    from core.emitters.iceberg_process import IcebergDestinationError
+
+    cycle = _Pass(monkeypatch, {name: _tenant(name) for name in ("a", "healthy")})
+    lookups = 0
+
+    @contextmanager
+    def open_table(
+        settings: object, identifier: str, *, deadline: float, **kwargs: object
+    ) -> Iterator[SimpleNamespace]:
+        nonlocal lookups
+        if identifier.endswith(".a"):
+            lookups += 1
+            if lookups == failed_lookup:
+                raise IcebergDestinationError("destination_reap")
+        with cycle.open_table(settings, identifier, deadline=deadline, **kwargs) as table:
+            yield table
+
+    monkeypatch.setattr(emitters.iceberg_process, "open_iceberg_table", open_table)
+    monkeypatch.setattr(emitters.iceberg_process, "IcebergDestinationError", IcebergDestinationError)
+    with pytest.raises(IcebergDestinationError, match="^destination_reap$"):
+        cycle.run()
+    assert ("publish", "healthy") not in cycle.events

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from bisect import bisect_left
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from time import monotonic
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from core.config.models import IcebergCatalogConfig, IcebergEmitterSpec, TenantConfig
-    from core.emitters.iceberg_transport import IcebergCatalog, IcebergTable
+    from core.emitters.iceberg_process import IcebergDestination
     from core.models import ChargebackRow, PipelineState
     from core.storage.iceberg import IcebergExportCheckpoint
     from core.storage.interface import StorageBackend
@@ -35,15 +35,13 @@ logger = logging.getLogger(__name__)
 
 _DAY = timedelta(days=1)
 _TERMINAL_AMOUNT_ERRORS = frozenset({"non_finite_amount", "unrepresentable_amount"})
-_ROW_LIMIT = 100_000
 _SOURCE_BATCH_BYTES = 8 * 1024 * 1024
-_SCRATCH_BYTES = 256 * 1024 * 1024
+_SPOOL_BYTES = 224 * 1024 * 1024
 _ARROW_BATCH_BYTES = 16 * 1024 * 1024
 _ARROW_BATCH_ROWS = 16_384
-_FILE_LIMIT = 128
-_ATTEMPT_SECONDS = 10
+_ATTEMPT_SECONDS = 60
 _LOOKUP_SECONDS = 5
-_SCHEDULED_PASS_SECONDS = 20
+_SCHEDULED_PASS_SECONDS = 90
 _HANDOFF_SECONDS = 1
 _CLEANUP_SECONDS = 1
 _CONFLICT_RETRIES = 1
@@ -202,22 +200,19 @@ def _log_failure(
 
 
 class _Catalogs:
-    """Own catalog clients and discovery results for one pass or command."""
+    """Own destination discovery results for one pass or command."""
 
-    def __init__(self, stack: ExitStack, now: datetime, shutdown_check: Callable[[], bool], seconds: float) -> None:
+    def __init__(self, now: datetime, shutdown_check: Callable[[], bool], seconds: float) -> None:
         self.started_at = monotonic()
         self.now = now.astimezone(UTC)
         self.deadline = self.started_at + seconds
         try:
-            from core.emitters import iceberg_transport
+            from core.emitters import iceberg_process
         except ImportError as exc:
             raise IcebergExportError("iceberg_dependency_unavailable") from exc
 
-        self.transport = iceberg_transport
-        self.stack = stack
+        self.transport = iceberg_process
         self.shutdown_check = shutdown_check
-        self._close_deadline: float | None = None
-        self.clients: dict[IcebergCatalogConfig, IcebergCatalog | IcebergExportError] = {}
         self.destinations: dict[_Location, str | IcebergExportError] = {}
 
     def stopped(self, cutoff: float | None = None) -> bool:
@@ -235,40 +230,27 @@ class _Catalogs:
         if monotonic() >= deadline:
             raise IcebergExportError("export_deadline")
 
-    def close_deadline(self) -> float:
-        if self._close_deadline is None:
-            self._close_deadline = min(self.deadline, monotonic() + _CLEANUP_SECONDS)
-        return self._close_deadline
-
-    def _load(self, location: _Location, deadline: float) -> IcebergTable:
+    def _load(self, location: _Location, deadline: float) -> AbstractContextManager[IcebergDestination]:
         settings, identifier = location
         self.require_time(deadline)
-        try:
-            if settings not in self.clients:
-                self.clients[settings] = self.stack.enter_context(
-                    self.transport.open_iceberg_catalog(settings, deadline=deadline, close_deadline=self.close_deadline)
-                )
-        except Exception as exc:
-            error = IcebergExportError(self.error_code(exc, "catalog_unavailable"))
-            self.clients[settings] = error
-            raise error from exc
-
-        catalog = self.clients[settings]
-        if isinstance(catalog, IcebergExportError):
-            raise catalog
-        self.require_time(deadline)
-        return catalog.load_table(identifier, deadline=deadline)
+        return self.transport.open_iceberg_table(
+            settings, identifier, deadline=deadline, shutdown_check=self.shutdown_check
+        )
 
     def resolve(self, binding: _Binding, cutoff: float | None = None) -> str:
         location = binding.location
         if location not in self.destinations:
             try:
                 deadline = self.operation_deadline(cutoff)
-                table_uuid = self._load(location, deadline).uuid
+                with self._load(location, deadline) as table:
+                    table_uuid = table.uuid
                 self.require_time(deadline)
                 self.destinations[location] = table_uuid
             except Exception as exc:
-                error = IcebergExportError(self.error_code(exc, "destination_unavailable"))
+                code = self.error_code(exc, "destination_unavailable")
+                if code == "destination_reap":
+                    raise
+                error = IcebergExportError(code)
                 self.destinations[location] = error
                 raise error from exc
         result = self.destinations[location]
@@ -276,11 +258,12 @@ class _Catalogs:
             raise result
         return result
 
-    def load_base(self, candidate: _Candidate, deadline: float) -> IcebergTable:
-        base = self._load(candidate.binding.location, deadline)
-        if base.uuid != candidate.key.table_uuid:
-            raise IcebergExportError("destination_changed")
-        return base
+    @contextmanager
+    def load_base(self, candidate: _Candidate, deadline: float) -> Iterator[IcebergDestination]:
+        with self._load(candidate.binding.location, deadline) as base:
+            if base.uuid != candidate.key.table_uuid:
+                raise IcebergExportError("destination_changed")
+            yield base
 
     def error_code(self, exc: Exception, fallback: str) -> str:
         if isinstance(exc, (IcebergExportError, IcebergScratchError, self.transport.IcebergDestinationError)):
@@ -389,8 +372,6 @@ def _capture(
             max_batch_bytes=_SOURCE_BATCH_BYTES,
         ):
             catalogs.require_time(deadline)
-            if spool.row_count >= _ROW_LIMIT:
-                raise IcebergExportError("source_row_limit")
             if fact.dimension_id is None:
                 raise IcebergExportError("invalid_source_fact")
             spool.add(_project(fact, key, state), dimension_id=fact.dimension_id)
@@ -529,17 +510,10 @@ def _record_failure(
     return _Attempt("failed", code, retry=isinstance(exc, catalogs.transport.IcebergConflict))
 
 
-def _arrow_batches(catalogs: _Catalogs, spool: IcebergDaySpool) -> Iterator[list[dict[str, object]]]:
-    try:
-        yield from spool.batches(_ARROW_BATCH_BYTES, max_rows=_ARROW_BATCH_ROWS)
-    except (IcebergExportError, IcebergScratchError) as exc:
-        raise catalogs.transport.IcebergDestinationError(exc.code) from exc
-
-
 def _publish_attempt(
     catalogs: _Catalogs,
     backend: StorageBackend,
-    base: IcebergTable,
+    base: IcebergDestination,
     candidate: _Candidate,
     state: PipelineState,
     work_deadline: float,
@@ -552,7 +526,7 @@ def _publish_attempt(
     fallback = "source_projection_failed"
     try:
         with IcebergDaySpool(
-            work_deadline, limit_bytes=_SCRATCH_BYTES, batch_bytes=_ARROW_BATCH_BYTES, check_time=catalogs.require_time
+            work_deadline, limit_bytes=_SPOOL_BYTES, batch_bytes=_ARROW_BATCH_BYTES, check_time=catalogs.require_time
         ) as spool:
             _capture(catalogs, backend, key, state, spool, work_deadline)
             spool.finish()
@@ -560,14 +534,12 @@ def _publish_attempt(
             catalogs.require_time(work_deadline)
             fallback = "destination_write_failed"
             snapshot_id = base.overwrite_batches(
-                _arrow_batches(catalogs, spool),
+                spool.batches(_ARROW_BATCH_BYTES, max_rows=_ARROW_BATCH_ROWS),
                 ecosystem=key.ecosystem,
                 tenant_id=key.tenant_id,
                 chargeback_date=key.date,
+                row_count=row_count,
                 max_bytes=_ARROW_BATCH_BYTES,
-                max_files=_FILE_LIMIT,
-                deadline=work_deadline,
-                check_shutdown=catalogs.shutdown_check,
             )
     except catalogs.transport.IcebergUnconfirmed as exc:
         code = "destination_commit_unconfirmed"
@@ -607,58 +579,61 @@ def _attempt(
         return _Attempt(code="outside_window")
     # Leave a final SQL transaction even if a read, write, or commit uses its full budget.
     work_deadline = deadline - _ATTEMPT_SECONDS / 10
-    try:
-        base = catalogs.load_base(candidate, work_deadline)
-    except Exception as exc:
-        code = catalogs.error_code(exc, "destination_unavailable")
-        _log_failure(binding, code, exc, day=key.date, attempt_number=number)
-        return _Attempt(code=code, skip_destination=True)
-
-    try:
-        catalogs.require_time(work_deadline)
-        with acquire_backend(binding.name) as backend:
-            if backend is None:
-                return _Attempt(code="source_busy_or_unavailable", skip_tenant=True)
-            today = catalogs.utc_now().date()
-            if key.date < binding.window_start(today) or key.date > today:
-                return _Attempt(code="outside_window")
-            state: PipelineState | None = None
-            committing = durable = False
-            try:
-                catalogs.require_time(work_deadline)
-                with _iceberg_backend(backend).create_iceberg_write_unit_of_work(deadline=work_deadline) as uow:
-                    state = uow.pipeline_state.get(key.ecosystem, key.tenant_id, key.date)
-                    if state is None or not _eligible(state, uow.iceberg_exports.get(key)):
-                        return _Attempt()
-                    catalogs.require_time(work_deadline)
-                    uow.iceberg_exports.record_attempt(key, state.calculation_id, catalogs.utc_now())
-                    catalogs.require_time(work_deadline)
-                    committing = True
-                    uow.commit()
-                    durable = True
-            except Exception as exc:
-                code = (
-                    "checkpoint_attempt_unconfirmed"
-                    if committing
-                    else catalogs.error_code(exc, "checkpoint_attempt_failed")
-                )
-                if code != "export_interrupted":
-                    _log_failure(
-                        binding,
-                        code,
-                        exc,
-                        day=key.date,
-                        revision=state.calculation_id if state else None,
-                        outcome="unconfirmed" if committing else "failed",
-                        attempt_number=number,
-                    )
-                return _Attempt("unconfirmed" if durable else None, code, skip_tenant=True)
-            return _publish_attempt(catalogs, backend, base, candidate, state, work_deadline, deadline, number)
-    except Exception as exc:
-        code = catalogs.error_code(exc, "source_read_failed")
-        if code != "export_interrupted":
+    with ExitStack() as destination:
+        try:
+            base = destination.enter_context(catalogs.load_base(candidate, work_deadline))
+        except Exception as exc:
+            code = catalogs.error_code(exc, "destination_unavailable")
+            if code == "destination_reap":
+                raise
             _log_failure(binding, code, exc, day=key.date, attempt_number=number)
-        return _Attempt(code=code, skip_tenant=True)
+            return _Attempt(code=code, skip_destination=True)
+
+        try:
+            catalogs.require_time(work_deadline)
+            with acquire_backend(binding.name) as backend:
+                if backend is None:
+                    return _Attempt(code="source_busy_or_unavailable", skip_tenant=True)
+                today = catalogs.utc_now().date()
+                if key.date < binding.window_start(today) or key.date > today:
+                    return _Attempt(code="outside_window")
+                state: PipelineState | None = None
+                committing = durable = False
+                try:
+                    catalogs.require_time(work_deadline)
+                    with _iceberg_backend(backend).create_iceberg_write_unit_of_work(deadline=work_deadline) as uow:
+                        state = uow.pipeline_state.get(key.ecosystem, key.tenant_id, key.date)
+                        if state is None or not _eligible(state, uow.iceberg_exports.get(key)):
+                            return _Attempt()
+                        catalogs.require_time(work_deadline)
+                        uow.iceberg_exports.record_attempt(key, state.calculation_id, catalogs.utc_now())
+                        catalogs.require_time(work_deadline)
+                        committing = True
+                        uow.commit()
+                        durable = True
+                except Exception as exc:
+                    code = (
+                        "checkpoint_attempt_unconfirmed"
+                        if committing
+                        else catalogs.error_code(exc, "checkpoint_attempt_failed")
+                    )
+                    if code != "export_interrupted":
+                        _log_failure(
+                            binding,
+                            code,
+                            exc,
+                            day=key.date,
+                            revision=state.calculation_id if state else None,
+                            outcome="unconfirmed" if committing else "failed",
+                            attempt_number=number,
+                        )
+                    return _Attempt("unconfirmed" if durable else None, code, skip_tenant=True)
+                return _publish_attempt(catalogs, backend, base, candidate, state, work_deadline, deadline, number)
+        except Exception as exc:
+            code = catalogs.error_code(exc, "source_read_failed")
+            if code != "export_interrupted":
+                _log_failure(binding, code, exc, day=key.date, attempt_number=number)
+            return _Attempt(code=code, skip_tenant=True)
 
 
 def _run(
@@ -729,12 +704,11 @@ def _run(
         elif result.outcome == "unconfirmed":
             summary.unconfirmed += 1
     if schedule is not None:
-        continuation = waiting if summary.attempted == 0 else None
         if keep_position:
             # Hold the deferred date while letting the other ready dates take turns.
-            schedule.publication_fallback = continuation
+            schedule.publication_fallback = waiting
         else:
-            schedule.publication = continuation
+            schedule.publication = waiting
             schedule.publication_fallback = None
     return summary, scoped_attempts
 
@@ -752,36 +726,35 @@ def publish_iceberg(
     bindings = _bindings(tenants)
     if not bindings or limit == 0 or shutdown_check():
         return IcebergPassSummary()
-    with ExitStack() as stack:
-        try:
-            seconds = float("inf") if limit is None else _SCHEDULED_PASS_SECONDS
-            catalogs = _Catalogs(stack, now, shutdown_check, seconds)
-        except IcebergExportError as exc:
-            for binding in bindings:
-                _log_failure(binding, exc.code, exc)
-            return IcebergPassSummary(errors=len(bindings))
-        if limit is None:
-            schedule = None
-        elif schedule is None:
-            schedule = IcebergSchedule()
-        publication_cutoff = catalogs.deadline - _CLEANUP_SECONDS
-        discovery_cutoff = publication_cutoff - _ATTEMPT_SECONDS - _HANDOFF_SECONDS
-        candidates, checked, errors = _discover_groups(catalogs, bindings, acquire_backend, schedule, discovery_cutoff)
-        keep_position = False
-        if schedule is not None and schedule.publication is not None:
-            name = schedule.publication[2]
-            keep_position = name not in checked and any(binding.name == name for binding in bindings)
-        summary, _ = _run(
-            catalogs,
-            candidates,
-            acquire_backend,
-            limit=limit,
-            cutoff=publication_cutoff,
-            schedule=schedule,
-            keep_position=keep_position,
-        )
-        summary.errors += errors
-        return summary
+    try:
+        seconds = float("inf") if limit is None else _SCHEDULED_PASS_SECONDS
+        catalogs = _Catalogs(now, shutdown_check, seconds)
+    except IcebergExportError as exc:
+        for binding in bindings:
+            _log_failure(binding, exc.code, exc)
+        return IcebergPassSummary(errors=len(bindings))
+    if limit is None:
+        schedule = None
+    elif schedule is None:
+        schedule = IcebergSchedule()
+    publication_cutoff = catalogs.deadline - _CLEANUP_SECONDS
+    discovery_cutoff = publication_cutoff - _ATTEMPT_SECONDS - _HANDOFF_SECONDS
+    candidates, checked, errors = _discover_groups(catalogs, bindings, acquire_backend, schedule, discovery_cutoff)
+    keep_position = False
+    if schedule is not None and schedule.publication is not None:
+        name = schedule.publication[2]
+        keep_position = name not in checked and any(binding.name == name for binding in bindings)
+    summary, _ = _run(
+        catalogs,
+        candidates,
+        acquire_backend,
+        limit=limit,
+        cutoff=publication_cutoff,
+        schedule=schedule,
+        keep_position=keep_position,
+    )
+    summary.errors += errors
+    return summary
 
 
 def _selected_binding(tenants: Mapping[str, TenantConfig], tenant_name: str, start: date, end: date) -> _Binding:
@@ -875,16 +848,15 @@ def iceberg_status(
 ) -> list[dict[str, object]]:
     """Read source and confirmation state for an inclusive range and the current destination."""
     binding = _selected_binding(tenants, tenant_name, start, end)
-    with ExitStack() as stack:
-        catalogs = _Catalogs(stack, now, lambda: False, _LOOKUP_SECONDS)
-        table_uuid = catalogs.resolve(binding)
-        catalogs.require_time(catalogs.deadline)
-        with acquire_backend(tenant_name) as backend:
-            if backend is None:
-                raise IcebergExportError("source_unavailable")
-            return _status_rows(
-                catalogs, binding, table_uuid, backend, start, end, catalogs.utc_now().date(), catalogs.deadline
-            )
+    catalogs = _Catalogs(now, lambda: False, _LOOKUP_SECONDS)
+    table_uuid = catalogs.resolve(binding)
+    catalogs.require_time(catalogs.deadline)
+    with acquire_backend(tenant_name) as backend:
+        if backend is None:
+            raise IcebergExportError("source_unavailable")
+        return _status_rows(
+            catalogs, binding, table_uuid, backend, start, end, catalogs.utc_now().date(), catalogs.deadline
+        )
 
 
 def iceberg_replay(
@@ -898,46 +870,45 @@ def iceberg_replay(
 ) -> tuple[list[dict[str, object]], bool]:
     """Register scoped replay durably, then use normal publication for the requested dates."""
     binding = _selected_binding(tenants, tenant_name, start, end)
-    with ExitStack() as stack:
-        catalogs = _Catalogs(stack, now, lambda: False, float("inf"))
-        peers = [peer for peer in _bindings(tenants) if peer.source == binding.source]
-        resolved, errors, _ = _resolve_peers(catalogs, peers)
-        if tenant_name not in resolved:
-            raise IcebergExportError(errors[tenant_name])
-        table_uuid = resolved[tenant_name]
-        today = catalogs.utc_now().date()
-        window_start = max(start, binding.window_start(today))
-        window_end = min(end, today) + _DAY
-        if window_start < window_end:
-            deadline = catalogs.operation_deadline()
-            with acquire_backend(tenant_name) as backend:
-                if backend is None:
-                    raise IcebergExportError("source_unavailable")
-                committing = False
-                try:
-                    catalogs.require_time(deadline)
-                    with _iceberg_backend(backend).create_iceberg_write_unit_of_work(deadline=deadline) as uow:
-                        states = uow.pipeline_state.find_by_range(*binding.source, window_start, window_end)
-                        if states:
-                            catalogs.require_time(deadline)
-                            uow.iceberg_exports.request_replay(
-                                table_uuid, *binding.source, [state.tracking_date for state in states]
-                            )
-                            catalogs.require_time(deadline)
-                            committing = True
-                            uow.commit()
-                except Exception as exc:
-                    code = "replay_registration_unconfirmed" if committing else "replay_registration_failed"
-                    raise IcebergExportError(code) from exc
-        candidates, _, _, _ = _discover(
-            catalogs, [binding], resolved, acquire_backend, (window_start, window_end), standalone=True
-        )
-        _, attempts = _run(catalogs, candidates, acquire_backend, limit=None, cutoff=catalogs.deadline, scoped=True)
+    catalogs = _Catalogs(now, lambda: False, float("inf"))
+    peers = [peer for peer in _bindings(tenants) if peer.source == binding.source]
+    resolved, errors, _ = _resolve_peers(catalogs, peers)
+    if tenant_name not in resolved:
+        raise IcebergExportError(errors[tenant_name])
+    table_uuid = resolved[tenant_name]
+    today = catalogs.utc_now().date()
+    window_start = max(start, binding.window_start(today))
+    window_end = min(end, today) + _DAY
+    if window_start < window_end:
         deadline = catalogs.operation_deadline()
         with acquire_backend(tenant_name) as backend:
             if backend is None:
                 raise IcebergExportError("source_unavailable")
-            rows = _status_rows(catalogs, binding, table_uuid, backend, start, end, catalogs.utc_now().date(), deadline)
+            committing = False
+            try:
+                catalogs.require_time(deadline)
+                with _iceberg_backend(backend).create_iceberg_write_unit_of_work(deadline=deadline) as uow:
+                    states = uow.pipeline_state.find_by_range(*binding.source, window_start, window_end)
+                    if states:
+                        catalogs.require_time(deadline)
+                        uow.iceberg_exports.request_replay(
+                            table_uuid, *binding.source, [state.tracking_date for state in states]
+                        )
+                        catalogs.require_time(deadline)
+                        committing = True
+                        uow.commit()
+            except Exception as exc:
+                code = "replay_registration_unconfirmed" if committing else "replay_registration_failed"
+                raise IcebergExportError(code) from exc
+    candidates, _, _, _ = _discover(
+        catalogs, [binding], resolved, acquire_backend, (window_start, window_end), standalone=True
+    )
+    _, attempts = _run(catalogs, candidates, acquire_backend, limit=None, cutoff=catalogs.deadline, scoped=True)
+    deadline = catalogs.operation_deadline()
+    with acquire_backend(tenant_name) as backend:
+        if backend is None:
+            raise IcebergExportError("source_unavailable")
+        rows = _status_rows(catalogs, binding, table_uuid, backend, start, end, catalogs.utc_now().date(), deadline)
 
     for row in rows:
         attempt = attempts.get(cast("date", row["date"]))

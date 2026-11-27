@@ -322,17 +322,33 @@ confirmed day. Query that day with your warehouse's Iceberg reader. Each
 worker cycle can publish up to 10 dates across all enabled tenants, so a
 backfill can take several cycles.
 
-The worker uses temporary disk space to prepare one UTC day at a time. It
-rounds the amounts across the whole day, then writes Parquet in batches and
-commits the day's replacement together. Give the worker writable temporary
-storage. On Linux, set `SQLITE_TMPDIR` if the default temporary directory is
-too small. Plan for up to 256 MiB of scratch per active exporter. The worker
-accepts up to 100,000 rows and writes up to 128 Parquet files per tenant-day,
-subject to the byte and time limits.
-Each day has up to ten seconds for preparation, publication, and recording
-the result. The scratch database is removed automatically when the worker
-exits. Check peak temporary disk use with a representative large day before
+The worker rounds the amounts across one UTC day and passes bounded batches
+to a Linux destination process. One catalog commit replaces or clears the
+tenant-day. Main readers can keep reading the previous day while files are
+written. The commit can add several snapshots, which time-travel readers can
+query individually.
+
+Give the worker writable temporary storage. Set `SQLITE_TMPDIR` to choose the
+location. Allow up to 256 MiB per active exporter, including the temporary
+database and one batch handoff file. The worker can write up to 128 Parquet
+files per day. Each attempt has up to 60 seconds for preparation, publication,
+and recording the result. A scheduled pass has a 90-second budget. The worker
+continues from the deferred day on a later pass.
+
+PyIceberg manages catalog and storage credentials, including table credentials
+returned by the catalog and its standard S3 credential chain. The destination
+process has a 2 GiB virtual address-space limit, including REST responses and
+decoded metadata. For Avro metadata, the exporter
+allows up to 4 MiB per file, 64 MiB of encoded data in total, and 512 reads.
+Use a representative large day and table history to check these limits before
 rollout.
+
+An interrupted write can leave unreferenced Parquet and manifest objects.
+Remove them through your catalog's normal Iceberg orphan-file maintenance.
+
+DuckDB 2.0.1 can report an Avro block error when an empty export creates a
+snapshot in a wholly empty table. Use an Iceberg reader that supports that
+empty snapshot, such as Trino 484, to read the result.
 
 In your Iceberg reader, substitute your table, source tenant ID, and a
 confirmed date in this query.
