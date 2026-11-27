@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ $# -gt 1 || ( $# -eq 1 && $1 != --trino ) ]]; then
-    echo "Usage: $0 [--trino]" >&2
+if [[ $# -gt 1 || ( $# -eq 1 && $1 != --trino && $1 != --example ) ]]; then
+    echo "Usage: $0 [--trino | --example]" >&2
     exit 2
 fi
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/chitragupta-iceberg.XXXXXXXX")
@@ -10,6 +10,8 @@ export BUILDX_CONFIG="$scratch/buildx"
 compose=(docker compose -p "$project" -f "$(dirname "$0")/compose.yaml")
 if [[ ${1:-} == --trino ]]; then
     compose+=(-f "$(dirname "$0")/compose.trino.yaml")
+elif [[ ${1:-} == --example ]]; then
+    export ICEBERG_EXAMPLE=1
 fi
 
 cleanup() {

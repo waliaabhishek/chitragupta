@@ -32,10 +32,12 @@ services:
       minio:
         condition: service_started
     environment:
+      ICEBERG_EXAMPLE: "${ICEBERG_EXAMPLE:-}"
       ICEBERG_FOCUSED_LARGE: "${ICEBERG_FOCUSED_LARGE:-}"
       SQLITE_TMPDIR: /state
     volumes:
       - .:/checks:ro
+      - ../../../examples/iceberg:/example:ro
       - source:/state
       - ../../unit/core/emitters:/app/tests/unit/core/emitters:ro
       - ../../unit/core/storage:/app/tests/unit/core/storage:ro

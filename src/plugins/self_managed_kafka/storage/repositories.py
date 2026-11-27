@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import delete, func, tuple_
 from sqlmodel import col, select
 
+from core.storage.backends.sqlmodel.mappers import chargeback_to_domain
 from core.storage.backends.sqlmodel.repositories import SQLModelChargebackRepository
 from core.storage.backends.sqlmodel.tables import ChargebackDimensionTable, ChargebackFactTable
 from core.storage.backends.sqlmodel.time_bounds import exact_utc_half_open_bounds
@@ -17,8 +18,10 @@ from core.storage.backends.sqlmodel.timestamps import canonical_utc_second, excl
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from sqlalchemy import ScalarSelect
     from sqlalchemy.sql.elements import ColumnElement, SQLCoreOperations
     from sqlmodel import Session
+    from sqlmodel.sql.expression import Select
 
     from core.models.chargeback import ChargebackRow
     from core.storage.interface import EntityTagRepository
@@ -45,9 +48,7 @@ class SelfManagedKafkaChargebackRepository(SQLModelChargebackRepository):
 
     _SNAPSHOT_CHUNK_SIZE = 400
 
-    def iceberg_source_extra_width(
-        self, byte_length: Callable[[SQLCoreOperations[Any]], ColumnElement[int]]
-    ) -> ColumnElement[int]:
+    def _team_at_fact_second(self) -> ScalarSelect[str]:
         fact, snapshot = ChargebackFactTable, SelfManagedKafkaPrincipalTeamSnapshotTable
         # Hydration uses whole seconds even for older facts stored with fractional timestamps.
         timestamp = (
@@ -55,13 +56,17 @@ class SelfManagedKafkaChargebackRepository(SQLModelChargebackRepository):
             if self._session.get_bind().dialect.name == "sqlite"
             else func.date_trunc("second", col(fact.timestamp))
         )
-        return func.coalesce(
-            select(byte_length(col(snapshot.team)))
+        return (
+            select(col(snapshot.team))
             .where(col(snapshot.dimension_id) == col(fact.dimension_id), col(snapshot.timestamp) == timestamp)
             .correlate(fact)
-            .scalar_subquery(),
-            0,
+            .scalar_subquery()
         )
+
+    def iceberg_source_extra_width(
+        self, byte_length: Callable[[SQLCoreOperations[Any]], ColumnElement[int]]
+    ) -> ColumnElement[int]:
+        return byte_length(self._team_at_fact_second())
 
     def _snapshot_keys_for_rows(self, rows: Sequence[ChargebackRow]) -> list[tuple[datetime, int]]:
         return [(canonical_utc_second(row.timestamp), row.dimension_id) for row in rows if row.dimension_id is not None]
@@ -245,42 +250,18 @@ class SelfManagedKafkaChargebackRepository(SQLModelChargebackRepository):
         )
         return self._hydrate(rows), total
 
-    def iter_by_filters(
-        self,
-        ecosystem: str,
-        tenant_id: str,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        identity_id: str | None = None,
-        product_type: str | None = None,
-        resource_id: str | None = None,
-        cost_type: str | None = None,
-        batch_size: int = 5000,
-        tag_key: str | None = None,
-        tag_value: str | None = None,
-        tags_repo: EntityTagRepository | None = None,
-    ) -> Iterator[ChargebackRow]:
-        batch: list[ChargebackRow] = []
-        for row in super().iter_by_filters(
-            ecosystem,
-            tenant_id,
-            start,
-            end,
-            identity_id,
-            product_type,
-            resource_id,
-            cost_type,
-            batch_size,
-            tag_key,
-            tag_value,
-            tags_repo,
-        ):
-            batch.append(row)
-            if len(batch) >= batch_size:
-                yield from self._hydrate(batch)
-                batch = []
-        if batch:
-            yield from self._hydrate(batch)
+    def _iter_chargeback_batches(
+        self, statement: Select[tuple[ChargebackDimensionTable, ChargebackFactTable]], batch_size: int
+    ) -> Iterator[list[ChargebackRow]]:
+        statement_with_team = statement.add_columns(self._team_at_fact_second())
+        for partition in self._session.execute(statement_with_team).partitions(batch_size):
+            batch: list[ChargebackRow] = []
+            for dimension, fact, team in partition:
+                row = chargeback_to_domain(dimension, fact)
+                if team is not None:
+                    row.metadata["team"] = team
+                batch.append(row)
+            yield batch
 
     def delete_by_date(self, ecosystem: str, tenant_id: str, target_date: date) -> int:
         start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=UTC)

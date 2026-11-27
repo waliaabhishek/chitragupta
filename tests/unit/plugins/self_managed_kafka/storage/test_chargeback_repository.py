@@ -85,6 +85,7 @@ def test_measured_team_snapshot_round_trips_through_plugin_repository(backend: S
     with backend.create_unit_of_work() as uow:
         stored = uow.chargebacks.upsert(measured)
         uow.chargebacks.upsert(unrelated)
+        uow.chargebacks.upsert(_row(tenant_id="other", metadata={"team": "other-team"}))
         uow.commit()
 
     found = {row.identity_id: row for row in _rows_for_date(backend, _TIMESTAMP.date())}
@@ -101,6 +102,10 @@ def test_measured_team_snapshot_round_trips_through_plugin_repository(backend: S
             _TENANT_ID,
             identity_id="User:alice",
         )
+        streamed = {
+            row.identity_id: row.metadata
+            for row in uow.chargebacks.iter_by_filters(_ECOSYSTEM, _TENANT_ID, batch_size=1)
+        }
     assert stored.metadata == {"team": "team-data"}
     assert found["User:alice"].metadata == {"team": "team-data"}
     assert found["User:bob"].metadata == {}
@@ -108,6 +113,7 @@ def test_measured_team_snapshot_round_trips_through_plugin_repository(backend: S
     assert [row.metadata for row in by_identity] == [{"team": "team-data"}]
     assert total == 1
     assert [row.metadata for row in filtered] == [{"team": "team-data"}]
+    assert streamed == {"User:alice": {"team": "team-data"}, "User:bob": {}}
 
 
 def test_batch_without_team_clears_stale_snapshot(backend: SQLModelBackend) -> None:

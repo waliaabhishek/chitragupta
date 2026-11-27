@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from contextlib import ExitStack, contextmanager, redirect_stderr
+from contextlib import ExitStack, chdir, contextmanager, redirect_stderr
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -57,6 +57,7 @@ from pyiceberg.table.locations import load_location_provider
 from pyiceberg.transforms import IdentityTransform
 from pyiceberg.types import StringType
 
+from core.config.loader import load_config
 from core.config.models import IcebergCatalogConfig, StorageConfig
 from core.emitters.iceberg_file_io import IcebergFileIO, storage_file_io
 from core.emitters.iceberg_transport import (
@@ -402,10 +403,15 @@ _POSITIVE_AMOUNT = Decimal("1.234565")
 _NEGATIVE_AMOUNT = Decimal("-0.234565")
 
 
-def large_day_row(tenant_id: str, day: date, index: int) -> ChargebackRow:
+def large_day_row(tenant_id: str, day: date, index: int, *, ecosystem: str = ECOSYSTEM) -> ChargebackRow:
     dimension = index % _LARGE_DAY_DIMENSIONS
+    metadata = {}
+    if ecosystem == "confluent_cloud":
+        metadata["env_id"] = f"env-{dimension % 8:02d}"
+    elif ecosystem == "self_managed_kafka":
+        metadata["team"] = f"team-{dimension % 8:02d}"
     return ChargebackRow(
-        ecosystem=ECOSYSTEM,
+        ecosystem=ecosystem,
         tenant_id=tenant_id,
         timestamp=datetime(day.year, day.month, day.day, 12, tzinfo=UTC)
         + timedelta(seconds=index // _LARGE_DAY_DIMENSIONS),
@@ -415,7 +421,7 @@ def large_day_row(tenant_id: str, day: date, index: int) -> ChargebackRow:
         cost_type=CostType.USAGE,
         amount=_POSITIVE_AMOUNT if index % 2 == 0 else _NEGATIVE_AMOUNT,
         resource_id=f"resource-{dimension:03d}",
-        metadata={"env_id": f"env-{dimension % 8:02d}"},
+        metadata=metadata,
     )
 
 
@@ -423,16 +429,27 @@ def large_day_total(row_count: int) -> Decimal:
     return ((row_count + 1) // 2) * _POSITIVE_AMOUNT + (row_count // 2) * _NEGATIVE_AMOUNT
 
 
-def seed_large_day(backend: StorageBackend, tenant_id: str, revision: str, row_count: int, day: date = DAY) -> Decimal:
+def seed_large_day(
+    backend: StorageBackend,
+    tenant_id: str,
+    revision: str,
+    row_count: int,
+    day: date = DAY,
+    *,
+    ecosystem: str = ECOSYSTEM,
+    previous_count: int = 0,
+) -> Decimal:
     """Seed generated source facts in bounded SQL transactions with wide resource tags."""
-    with backend.create_unit_of_work() as uow:
-        uow.chargebacks.delete_by_date(ECOSYSTEM, tenant_id, day)
-        uow.commit()
+    if previous_count == 0:
+        with backend.create_unit_of_work() as uow:
+            uow.chargebacks.delete_by_date(ecosystem, tenant_id, day)
+            uow.commit()
 
-    for start in range(0, row_count, _LARGE_DAY_BATCH):
+    for start in range(previous_count, row_count, _LARGE_DAY_BATCH):
         stop = min(start + _LARGE_DAY_BATCH, row_count)
         with backend.create_unit_of_work() as uow:
-            uow.chargebacks.upsert_batch([large_day_row(tenant_id, day, index) for index in range(start, stop)])
+            rows = [large_day_row(tenant_id, day, index, ecosystem=ecosystem) for index in range(start, stop)]
+            assert uow.chargebacks.upsert_batch(rows) == len(rows)
             uow.commit()
 
     tags = [
@@ -449,7 +466,7 @@ def seed_large_day(backend: StorageBackend, tenant_id: str, revision: str, row_c
         uow.tags.bulk_add_tags(tenant_id, tags, override_existing=True, created_by="iceberg-docker-fixture")
         uow.pipeline_state.upsert(
             PipelineState(
-                ECOSYSTEM,
+                ecosystem,
                 tenant_id,
                 day,
                 billing_gathered=True,
@@ -829,7 +846,7 @@ def verify_plugin_cli(root: Path, gateway: CatalogGateway) -> None:
         print("PASS documented JSONL status and scoped replay refreshed only the selected tenant and date")
 
 
-def active_day_file_count(table: str, tenant_id: str, target_day: date) -> int:
+def active_day_file_count(table: str, tenant_id: str, target_day: date, *, ecosystem: str = ECOSYSTEM) -> int:
     with admin_catalog() as catalog:
         files = catalog.load_table(qualified(table)).inspect.files().to_pylist()
     selected = 0
@@ -840,13 +857,15 @@ def active_day_file_count(table: str, tenant_id: str, target_day: date) -> int:
             if isinstance(partition, dict)
             else getattr(partition, "chargeback_date", None)
         )
-        ecosystem = partition.get("ecosystem") if isinstance(partition, dict) else getattr(partition, "ecosystem", None)
+        partition_ecosystem = (
+            partition.get("ecosystem") if isinstance(partition, dict) else getattr(partition, "ecosystem", None)
+        )
         partition_tenant = (
             partition.get("tenant_id") if isinstance(partition, dict) else getattr(partition, "tenant_id", None)
         )
         if (
             (value == target_day or str(value) == target_day.isoformat())
-            and ecosystem == ECOSYSTEM
+            and partition_ecosystem == ecosystem
             and partition_tenant == tenant_id
         ):
             selected += 1
@@ -1621,7 +1640,178 @@ def verify_cleanup_diagnostics(gateway: CatalogGateway) -> None:
     assert snapshot_metadata("alpha")[1] == snapshot
 
 
+def verify_example_config(root: Path) -> None:
+    tables = {
+        "confluent_cloud": "ccloud_chargebacks",
+        "self_managed_kafka": "kafka_chargebacks",
+        ECOSYSTEM: "postgres_chargebacks",
+    }
+    table_names = tuple(tables.values())
+    example = Path("/example")
+    source_config = example / "config.yaml"
+    config = root / "example.yaml"
+    env_file = root / "example.env"
+    cli_env = ("--env-file", str(env_file))
+    (root / "data").mkdir()
+    text = source_config.read_text()
+    for setting in ('# ca_file: "${ICEBERG_CATALOG_CA_FILE}"', "# s3:", '#   endpoint: "${ICEBERG_S3_ENDPOINT}"'):
+        assert text.count(setting) == 1, setting
+        text = text.replace(setting, setting[2:], 1)
+    config.write_text(text)
+
+    with (
+        ExitStack() as stack,
+        chdir(root),
+        patch(f"{__name__}.TABLES", table_names),
+        patch("gateway.TABLES", table_names),
+    ):
+        provision_storage(root)
+        provision_tables()
+        gateway = stack.enter_context(catalog_gateway(root / "example-ca.pem"))
+        overrides = {
+            "ICEBERG_CATALOG_URI": gateway.uri,
+            "ICEBERG_CATALOG_TOKEN": CATALOG_TOKEN,
+            "CCLOUD_API_KEY": "fixture-cloud-key",
+            "CCLOUD_API_SECRET": "fixture-cloud-secret",
+        }
+        env_lines = (example / ".env.example").read_text().splitlines()
+        for key, value in overrides.items():
+            assert sum(line.startswith(f"{key}=") for line in env_lines) == 1, key
+            env_lines = [f"{key}={value}" if line.startswith(f"{key}=") else line for line in env_lines]
+        env_lines.extend((f"ICEBERG_CATALOG_CA_FILE={gateway.ca}", f"ICEBERG_S3_ENDPOINT={S3_URL}"))
+        env_file.write_text("\n".join(env_lines) + "\n")
+        with patch.dict(os.environ):
+            original = load_config(source_config, env_file)
+            local = load_config(config, env_file)
+        assert local.features == original.features
+        assert local.tenants.keys() == original.tenants.keys()
+        assert {tenant.ecosystem for tenant in local.tenants.values()} == set(tables)
+
+        backends = {}
+        for name, tenant in local.tenants.items():
+            base = original.tenants[name]
+            emitter = tenant.plugin_settings.iceberg_emitter
+            original_emitter = base.plugin_settings.iceberg_emitter
+            assert emitter is not None and original_emitter is not None
+            assert emitter.params.table == original_emitter.params.table == qualified(tables[tenant.ecosystem])
+            catalog = emitter.params.catalog
+            assert catalog.ca_file == str(gateway.ca)
+            assert catalog.s3 is not None
+            assert catalog.s3.endpoint == S3_URL
+            assert catalog.s3.access_key_id is None
+            assert catalog.model_copy(update={"ca_file": None, "s3": original_emitter.params.catalog.s3}) == (
+                original_emitter.params.catalog
+            )
+            assert tenant.storage == base.storage
+            assert tenant.plugin_settings.plugin_payload() == base.plugin_settings.plugin_payload()
+            backend = create_storage_backend(
+                tenant.storage, storage_module=get_storage_module_for_ecosystem(tenant.ecosystem)
+            )
+            stack.callback(backend.dispose)
+            backend.create_tables()
+            backends[name] = backend
+        assert "Config is valid." in finish_worker(worker_process(config, gateway, *cli_env, "--validate"), 25)
+
+        previous_snapshots: dict[str, tuple[str, int, str]] = {}
+        for previous_count, row_count in ((0, 60_000), (60_000, 100_000)):
+            for name, tenant in local.tenants.items():
+                seed_large_day(
+                    backends[name],
+                    tenant.tenant_id,
+                    f"{tenant.tenant_id}-{row_count}",
+                    row_count,
+                    ecosystem=tenant.ecosystem,
+                    previous_count=previous_count,
+                )
+            gateway.requests.clear()
+            gateway.commit_responses.clear()
+            started = time.monotonic()
+            finish_worker(worker_process(config, gateway, *cli_env, "--emit-once"), 65)
+            elapsed = time.monotonic() - started
+            assert sorted(gateway.commit_responses) == sorted((table, 200) for table in table_names)
+            assert sorted(target for method, target, _ in gateway.requests if method == "POST") == sorted(table_names)
+
+            for name, tenant in local.tenants.items():
+                table = tables[tenant.ecosystem]
+                revision = f"{tenant.tenant_id}-{row_count}"
+                with duckdb_connection(gateway, table) as db:
+                    metrics = db.execute(
+                        f"""
+                        SELECT ecosystem, tenant_id, chargeback_date, count(*),
+                               count(DISTINCT (timestamp, resource_id, identity_id)),
+                               count(*) FILTER (WHERE calculation_id = ?),
+                               CAST(sum(amount) AS DECIMAL(38,5)), any_value(typeof(amount)),
+                               min(amount), max(amount), count(DISTINCT tags['owner']), min(cardinality(tags)),
+                               count(env_id), count(team),
+                               count(*) FILTER (WHERE env_id =
+                                   'env-' || lpad(CAST(CAST(right(identity_id, 3) AS INT) % 8 AS VARCHAR), 2, '0')),
+                               count(*) FILTER (WHERE team =
+                                   'team-' || lpad(CAST(CAST(right(identity_id, 3) AS INT) % 8 AS VARCHAR), 2, '0'))
+                        FROM warehouse.{qualified(table)}
+                        GROUP BY 1, 2, 3
+                    """,
+                        [revision],
+                    ).fetchall()
+                env_rows = row_count if tenant.ecosystem == "confluent_cloud" else 0
+                team_rows = row_count if tenant.ecosystem == "self_managed_kafka" else 0
+                amount = large_day_total(row_count).quantize(Decimal("0.00001"))
+                assert metrics == [
+                    (
+                        tenant.ecosystem,
+                        tenant.tenant_id,
+                        DAY,
+                        row_count,
+                        row_count,
+                        row_count,
+                        amount,
+                        "DECIMAL(38,5)",
+                        Decimal("-0.23457"),
+                        Decimal("1.23457"),
+                        _LARGE_DAY_DIMENSIONS,
+                        _LARGE_DAY_TAGS,
+                        env_rows,
+                        team_rows,
+                        env_rows,
+                        team_rows,
+                    )
+                ], (table, metrics)
+
+                current = snapshot_metadata(table)
+                table_uuid, snapshot_id, _ = current
+                with admin_catalog() as admin:
+                    snapshot_ids = {snapshot.snapshot_id for snapshot in admin.load_table(qualified(table)).snapshots()}
+                if previous_count:
+                    old_uuid, old_snapshot_id, _ = previous_snapshots[table]
+                    assert table_uuid == old_uuid and snapshot_id != old_snapshot_id
+                    assert snapshot_ids == {old_snapshot_id, snapshot_id}
+                else:
+                    assert snapshot_ids == {snapshot_id}
+                previous_snapshots[table] = current
+                files = active_day_file_count(table, tenant.tenant_id, DAY, ecosystem=tenant.ecosystem)
+                assert files > 1, (table, row_count, files)
+                target_date = DAY.isoformat()
+                (status,) = cli_report(config, gateway, *cli_env, "--iceberg-status", name, target_date, target_date)
+                assert status["current"] and status["outcome"] == "succeeded", status
+                assert status["confirmed_revision"] == status["source_revision"] == revision, status
+                assert status["snapshot_id"] == snapshot_id and status["row_count"] == row_count, status
+                print(f"PASS example {qualified(table)} rows={row_count:,} total={amount} files={files} commits=1")
+            assert len({metadata[0] for metadata in previous_snapshots.values()}) == len(tables)
+            print(f"PASS example worker published all three {row_count:,}-row days in {elapsed:.2f}s")
+
+        gateway.requests.clear()
+        gateway.commit_responses.clear()
+        finish_worker(worker_process(config, gateway, *cli_env, "--emit-once"), 65)
+        assert not gateway.commit_responses
+        assert all(method != "POST" for method, _, _ in gateway.requests)
+        assert {table: snapshot_metadata(table) for table in table_names} == previous_snapshots
+        print("PASS repeat example invocation left all three tables current without a commit")
+
+
 def main() -> None:
+    if os.environ.get("ICEBERG_EXAMPLE") == "1":
+        with TemporaryDirectory(dir="/state") as directory:
+            verify_example_config(Path(directory))
+        return
     focused_rows = os.environ.get("ICEBERG_FOCUSED_LARGE")
     if focused_rows:
         with TemporaryDirectory(dir="/state") as directory:

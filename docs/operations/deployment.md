@@ -272,10 +272,13 @@ tenants:
 
 ## Iceberg export
 
-Install the Iceberg extra on the worker. From source, use
-`uv sync --python 3.14 --frozen --extra iceberg`. For an Iceberg-enabled image, pass
-`--build-arg ICEBERG=1` to the existing Docker build. Install the extra in the
-process that runs the worker or the Iceberg commands.
+Use `ghcr.io/waliaabhishek/chitragupta:latest-iceberg` for the Iceberg-enabled
+worker image. To pin a release, append `-iceberg` to the backend release tag.
+Use the regular release tag for the UI image.
+
+For a local image build, pass `--build-arg ICEBERG=1` to the Docker build.
+When running the worker or Iceberg commands from source, install the extra
+with `uv sync --python 3.14 --frozen --extra iceberg`.
 
 Before enabling the [tenant emitter](../configuration/index.md#iceberg-emitter),
 create the namespace and an Iceberg v2 table in the destination catalog. Give

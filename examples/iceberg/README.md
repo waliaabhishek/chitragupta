@@ -30,6 +30,20 @@ cp examples/iceberg/.env.example examples/iceberg/.env
 mkdir -p data
 ```
 
+To run the released worker in Docker, give it Prometheus URLs reachable
+from the container. Mount the configuration and a volume for the SQLite
+databases after you create the destination tables.
+
+```bash
+docker run --rm --env-file examples/iceberg/.env \
+  -v "${PWD}/examples/iceberg/config.yaml:/app/config.yaml:ro" \
+  -v chitragupta-iceberg-data:/app/data \
+  ghcr.io/waliaabhishek/chitragupta:latest-iceberg \
+  --config-file /app/config.yaml --mode worker
+```
+
+### Run from source
+
 Validate the configuration, then start the worker once your v2 tables exist.
 
 ```bash
@@ -47,10 +61,13 @@ For stored chargebacks, see the [manual export steps](../../docs/getting-started
 Use [Iceberg status](../../docs/operations/troubleshooting.md#iceberg-export)
 to check which days the worker has published.
 
-To try export without a hosted catalog or source credentials, run the existing
-Docker integration test from the repository root. It uses generated chargebacks,
-a local REST catalog, and MinIO. It removes its containers and volumes on exit.
+## Test the example in Docker
+
+Run this test from the repository root. It publishes a 60,000-row day for each
+tenant, then replaces each day with 100,000 rows. The test uses a local REST
+catalog, MinIO, and generated chargebacks. It removes its containers and
+volumes on exit.
 
 ```bash
-bash tests/integration/iceberg/run.sh --trino
+bash tests/integration/iceberg/run.sh --example
 ```

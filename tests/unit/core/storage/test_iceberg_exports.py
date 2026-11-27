@@ -129,9 +129,10 @@ def test_source_width_rejects_fact_and_combined_tag_payloads_before_hydration(
         _read_chargebacks(backend, budget=450)
 
 
-def test_source_width_counts_historic_team_for_legacy_timestamp(tmp_path: Path) -> None:
+@pytest.mark.parametrize("use_migrations", [False, True])
+def test_source_width_counts_historic_team_for_legacy_timestamp(tmp_path: Path, use_migrations: bool) -> None:
     path = tmp_path / "source.db"
-    backend = SQLModelBackend(f"sqlite:///{path}", SelfManagedKafkaStorageModule(), use_migrations=False)
+    backend = SQLModelBackend(f"sqlite:///{path}", SelfManagedKafkaStorageModule(), use_migrations=use_migrations)
     backend.create_tables()
     ecosystem = "self_managed_kafka"
     team = "team" * 125
