@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import yaml
 from dotenv import load_dotenv
+from pydantic import ValidationError
 
 from core.config.models import AppSettings
 
@@ -65,19 +66,25 @@ def load_config(
     raw_text = config_path.read_text()
     try:
         raw_data = yaml.safe_load(raw_text)
-    except yaml.YAMLError as exc:
-        logger.exception("Failed to load config from %s", config_path)
-        raise ValueError(f"Malformed YAML in '{config_path}': {exc}") from exc
+    except Exception as exc:
+        mark = exc.problem_mark if isinstance(exc, yaml.MarkedYAMLError) else None
+        location = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
+        raise ValueError(f"Malformed YAML in '{config_path}'{location}") from None
 
     if raw_data is None:
         raw_data = {}
 
-    # Substitute env vars and validate
+    resolved = substitute_env_vars(raw_data)
     try:
-        resolved = substitute_env_vars(raw_data)
         settings = AppSettings.model_validate(resolved)
-    except Exception:
-        logger.exception("Failed to load config from %s", config_path)
-        raise
+    except ValidationError as exc:
+        # Pydantic's default rendering includes the input, which may precede SecretStr validation.
+        errors = []
+        for error in exc.errors(include_input=False, include_context=False, include_url=False):
+            field = ".".join(str(part) for part in error["loc"]) or "config"
+            errors.append(f"{field}: {error['msg']}")
+        raise ValueError("\n".join(errors)) from None
+    except Exception as exc:
+        raise ValueError(f"Invalid configuration in '{config_path}' ({type(exc).__name__})") from None
     logger.info("Config loaded tenants=%d", len(settings.tenants))
     return settings

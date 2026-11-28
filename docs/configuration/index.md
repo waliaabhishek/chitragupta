@@ -129,6 +129,77 @@ All samples carry the billing date as a Unix timestamp (midnight UTC), not the w
 
 See [`examples/shared/scripts/collector.sh`](https://github.com/waliaabhishek/chitragupta/blob/main/examples/shared/scripts/collector.sh) and [Deployment](../operations/deployment.md#prometheus-collector-script) for TSDB backfill instructions.
 
+### Iceberg emitter
+
+Use Iceberg to query stored chargebacks in a warehouse. The worker publishes each
+completed UTC day to an existing Iceberg table. It replaces the day when the
+engine recalculates it. If the new calculation has zero rows, the worker clears
+the old rows for that day.
+
+Add this entry under the tenant's `plugin_settings`. Set the catalog URI and
+token in the worker environment before you start it.
+
+```yaml
+emitters:
+  - type: iceberg
+    lookback_days: 30
+    params:
+      table: finance.chargebacks
+      catalog:
+        type: rest
+        uri: "${ICEBERG_CATALOG_URI}"
+        token: "${ICEBERG_CATALOG_TOKEN}"
+```
+
+| Field | What to set |
+|---|---|
+| `params.table` | The namespace and table name in the destination catalog, for example `finance.chargebacks`. |
+| `params.catalog.uri` | The HTTPS URL of the Iceberg REST catalog. |
+| `params.catalog.token` | A bearer token. Use an environment variable for the value. |
+| `params.catalog.warehouse` | The warehouse identifier if the catalog requires one. |
+| `params.catalog.ca_file` | The path to a CA certificate bundle if the worker needs to trust a private CA. |
+| `params.catalog.s3` | Optional S3 settings. Use `endpoint` and `region` for the storage service. If you supply credentials, set both `access_key_id` and `secret_access_key` and include `session_token` for temporary credentials. |
+| `lookback_days` | A positive number to limit the UTC dates eligible for export. Omit it to include completed dates still retained in SQL. |
+
+Configure one Iceberg emitter per tenant. Iceberg publishes the stored rows at
+their original granularity, so leave `aggregation` unset. Amounts use five
+decimal places. The exported tenant-day total equals its SQL total rounded to
+five places.
+
+Two tenants can share a REST connection and choose separate tables. Add the
+Iceberg entries to the matching tenant blocks in your existing YAML.
+
+```yaml
+tenants:
+  ccloud-prod:
+    plugin_settings:
+      emitters:
+        - type: iceberg
+          params:
+            table: finance.chargebacks
+            catalog: &warehouse_catalog
+              type: rest
+              uri: "${ICEBERG_CATALOG_URI}"
+              token: "${ICEBERG_CATALOG_TOKEN}"
+  kafka-dc1:
+    plugin_settings:
+      emitters:
+        - type: iceberg
+          params:
+            table: finance.kafka_chargebacks
+            catalog: *warehouse_catalog
+```
+
+The `&` gives the connection settings a name. The `*` reuses the settings
+by that name. Use separate tables when the tenants have different readers.
+Restart the worker after changing Iceberg YAML or environment values.
+
+The [Iceberg example](https://github.com/waliaabhishek/chitragupta/tree/main/examples/iceberg)
+includes a full YAML file for all three plug-ins and an environment template.
+See [Deployment](../operations/deployment.md#iceberg-export) for table setup and
+[Troubleshooting](../operations/troubleshooting.md#iceberg-export) to check or
+replay a date.
+
 ## Advanced configuration
 
 See [Advanced Scenarios](advanced-scenarios.md) for multi-tenant setups, custom granularity, and allocator overrides.

@@ -15,6 +15,7 @@ COPY --from=uv /uv /usr/local/bin/uv
 
 # Version injected from git tag at build time (hatch-vcs fallback for no .git)
 ARG APP_VERSION=""
+ARG ICEBERG=0
 
 # Copy dependency definitions and source
 COPY pyproject.toml uv.lock ./
@@ -24,7 +25,7 @@ COPY src/ ./src/
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION:-0.0.0.dev0}
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv /app/.venv && \
-    uv sync --frozen
+    if [ "$ICEBERG" = 1 ]; then uv sync --frozen --extra iceberg; else uv sync --frozen; fi
 
 # =============================================================================
 # Stage 2: Runtime — minimal python, no uv needed

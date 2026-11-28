@@ -47,7 +47,7 @@ def resolve_topic_attribution_status(
         from plugins.confluent_cloud.config import CCloudPluginConfig
 
         try:
-            CCloudPluginConfig.model_validate(plugin_settings.model_dump())
+            CCloudPluginConfig.model_validate(plugin_settings.plugin_payload())
             return TopicAttributionStatus(status="enabled")
         except ValidationError as exc:
             messages = "; ".join(e["msg"] for e in exc.errors())
@@ -73,11 +73,13 @@ def resolve_topic_attribution_retention_days(
         if ecosystem == "confluent_cloud":
             from plugins.confluent_cloud.config import CCloudPluginConfig
 
-            return CCloudPluginConfig.model_validate(plugin_settings.model_dump()).topic_attribution.retention_days
+            return CCloudPluginConfig.model_validate(plugin_settings.plugin_payload()).topic_attribution.retention_days
         if ecosystem == "self_managed_kafka":
             from plugins.self_managed_kafka.config import SelfManagedKafkaConfig
 
-            return SelfManagedKafkaConfig.model_validate(plugin_settings.model_dump()).topic_attribution.retention_days
+            return SelfManagedKafkaConfig.model_validate(
+                plugin_settings.plugin_payload()
+            ).topic_attribution.retention_days
     except ValidationError:
         return None
 

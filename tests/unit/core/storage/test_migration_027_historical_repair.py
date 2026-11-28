@@ -57,7 +57,7 @@ def test_revision_027_calls_guarded_preview_hook() -> None:
         / "027_add_focus_preview_historical_repair.py"
     )
 
-    assert script.get_current_head() == "033"
+    assert "027" in {revision.revision for revision in script.walk_revisions()}
     source = migration_path.read_text(encoding="utf-8")
     assert 'run_preview_evidence_step("027")' in source
     assert 'run_preview_evidence_downgrade_step("027")' in source

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -107,6 +107,16 @@ _DST_WEEK_CASES = (
         ),
     ),
 )
+
+
+def _pin_comparison_clock(monkeypatch: pytest.MonkeyPatch, evaluated_at: datetime) -> None:
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz: object | None = None) -> datetime:
+            assert tz is UTC
+            return evaluated_at
+
+    monkeypatch.setattr("core.api.routes.cost_comparison.datetime", FixedDateTime)
 
 
 def _comparison_params(**overrides: str | int) -> dict[str, str | int]:
@@ -384,8 +394,9 @@ class TestComparisonApiContract:
         assert body["baseline"]["coverage"]["availability_cutoff_at"] is None
 
     def test_empty_chargeback_facts_with_successful_pipeline_state_confirms_zero(
-        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        _pin_comparison_clock(monkeypatch, datetime(2026, 1, 15, tzinfo=UTC))
         with in_memory_backend.create_unit_of_work() as uow:
             uow.pipeline_state.upsert(_state(_BASELINE_DAY))
             uow.pipeline_state.upsert(_state(_COMPARISON_DAY))
@@ -788,8 +799,9 @@ class TestComparisonPeriodAndCoverageContract:
         assert expected_slots.call_count == 2
 
     def test_non_utc_dst_period_returns_complete_bounds_duration_and_coverage_contract(
-        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        _pin_comparison_clock(monkeypatch, datetime(2026, 3, 12, tzinfo=UTC))
         baseline_day = date(2026, 3, 8)
         comparison_day = date(2026, 3, 9)
         with in_memory_backend.create_unit_of_work() as uow:
@@ -873,8 +885,9 @@ class TestComparisonPeriodAndCoverageContract:
         }
 
     def test_non_utc_fall_back_prior_day_reports_25_hour_bounds_and_coverage(
-        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend
+        self, app_with_backend: TestClient, in_memory_backend: SQLModelBackend, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        _pin_comparison_clock(monkeypatch, datetime(2026, 11, 4, tzinfo=UTC))
         baseline_day = date(2026, 11, 1)
         comparison_day = date(2026, 10, 31)
         with in_memory_backend.create_unit_of_work() as uow:
@@ -963,7 +976,10 @@ class TestComparisonPeriodAndCoverageContract:
         app_with_backend: TestClient,
         in_memory_backend: SQLModelBackend,
         case: _DstWeekCase,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        evaluated_day = max(case.baseline_end, case.comparison_end) + timedelta(days=2)
+        _pin_comparison_clock(monkeypatch, datetime.combine(evaluated_day, time.min, UTC))
         with in_memory_backend.create_unit_of_work() as uow:
             for tracking_date in case.baseline_expected_dates + case.comparison_expected_dates:
                 uow.pipeline_state.upsert(_state(date.fromisoformat(tracking_date)))
@@ -1327,17 +1343,8 @@ class TestComparisonRetentionAndRuntimeFailures:
         in_memory_backend: SQLModelBackend,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from core.api.routes import cost_comparison
-
         evaluated_at = datetime(2026, 4, 15, tzinfo=UTC)
-
-        class FixedDateTime(datetime):
-            @classmethod
-            def now(cls, tz: object | None = None) -> datetime:
-                assert tz is UTC
-                return evaluated_at
-
-        monkeypatch.setattr(cost_comparison, "datetime", FixedDateTime)
+        _pin_comparison_clock(monkeypatch, evaluated_at)
         _set_plugin_settings(
             app_with_backend,
             chargeback_granularity="hourly",
@@ -1412,17 +1419,8 @@ class TestComparisonRetentionAndRuntimeFailures:
         in_memory_backend: SQLModelBackend,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from core.api.routes import cost_comparison
-
         evaluated_at = datetime(2026, 9, 1, tzinfo=UTC)
-
-        class FixedDateTime(datetime):
-            @classmethod
-            def now(cls, tz: object | None = None) -> datetime:
-                assert tz is UTC
-                return evaluated_at
-
-        monkeypatch.setattr(cost_comparison, "datetime", FixedDateTime)
+        _pin_comparison_clock(monkeypatch, evaluated_at)
         older_day = (evaluated_at - timedelta(days=200)).date()
         comparison_day = older_day + timedelta(days=1)
         with in_memory_backend.create_unit_of_work() as uow:
@@ -1556,17 +1554,8 @@ class TestComparisonProductionWiring:
         baseline_status: str,
         comparison_status: str,
     ) -> None:
-        from core.api.routes import cost_comparison
-
         evaluated_at = datetime(2026, 9, 7, 12, tzinfo=UTC)
-
-        class FixedDateTime(datetime):
-            @classmethod
-            def now(cls, tz: object | None = None) -> datetime:
-                assert tz is UTC
-                return evaluated_at
-
-        monkeypatch.setattr(cost_comparison, "datetime", FixedDateTime)
+        _pin_comparison_clock(monkeypatch, evaluated_at)
         topic_settings: dict[str, object] = {"enabled": True}
         if retention is not None:
             topic_settings["retention_days"] = retention
@@ -1750,7 +1739,10 @@ class TestComparisonProductionWiring:
                 else:
                     assert cutoff is not None
 
-    def test_real_provider_confirms_chargeback_zero_and_filtered_topic_zero(self, tmp_path: Path) -> None:
+    def test_real_provider_confirms_chargeback_zero_and_filtered_topic_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _pin_comparison_clock(monkeypatch, datetime(2026, 1, 15, tzinfo=UTC))
         from core.storage.backends.sqlmodel.unit_of_work import SQLModelBackend
 
         plugin_settings = PluginSettingsBase.model_validate(

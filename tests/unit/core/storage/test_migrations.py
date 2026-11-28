@@ -71,6 +71,7 @@ EXPECTED_TABLES = {
     "chargeback_dimensions",
     "chargeback_facts",
     "pipeline_state",
+    "iceberg_export_checkpoints",
     "tags",
 }
 

@@ -15,8 +15,15 @@ jobs:
   docker-backend:
     needs: test
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - suffix: ''
+            iceberg: '0'
+          - suffix: '-iceberg'
+            iceberg: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -39,15 +46,16 @@ jobs:
           push: true
           build-args: |
             APP_VERSION=${{ github.ref_name }}
+            ICEBERG=${{ matrix.iceberg }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/chitragupta:${{ github.ref_name }}
-            ${{ !contains(github.ref_name, '-') && format('ghcr.io/{0}/chitragupta:latest', github.repository_owner) || '' }}
+            ghcr.io/${{ github.repository_owner }}/chitragupta:${{ github.ref_name }}${{ matrix.suffix }}
+            ${{ !contains(github.ref_name, '-') && format('ghcr.io/{0}/chitragupta:latest{1}', github.repository_owner, matrix.suffix) || '' }}
 
   docker-frontend:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -76,7 +84,7 @@ jobs:
     needs: [docker-backend, docker-frontend]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0  # git-cliff needs full history
 
@@ -87,12 +95,12 @@ jobs:
           git push origin "release/${{ github.ref_name }}"
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.14'
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
 
@@ -136,7 +144,7 @@ jobs:
               --output release-notes.md \
               "${previous_stable}..${release_tag}"
           fi
-          printf '\n## Docker Images\n\n```bash\ndocker pull ghcr.io/${{ github.repository_owner }}/chitragupta:${{ github.ref_name }}\ndocker pull ghcr.io/${{ github.repository_owner }}/chitragupta-ui:${{ github.ref_name }}\n```\n\nPin in your `.env`:\n```\nCHITRAGUPTA_VERSION=${{ github.ref_name }}\n```\n\n## Compatibility\n\n- **Grafana**: 12.4.0\n- **Required plugin**: `frser-sqlite-datasource`\n' >> release-notes.md
+          printf '\n## Docker Images\n\n```bash\ndocker pull ghcr.io/${{ github.repository_owner }}/chitragupta:${{ github.ref_name }}\ndocker pull ghcr.io/${{ github.repository_owner }}/chitragupta:${{ github.ref_name }}-iceberg\ndocker pull ghcr.io/${{ github.repository_owner }}/chitragupta-ui:${{ github.ref_name }}\n```\n\nPin in your `.env`:\n```\nCHITRAGUPTA_VERSION=${{ github.ref_name }}\n```\n\n## Compatibility\n\n- **Grafana**: 12.4.0\n- **Required plugin**: `frser-sqlite-datasource`\n' >> release-notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

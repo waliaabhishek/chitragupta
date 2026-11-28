@@ -67,7 +67,7 @@ class ApiTenantBackendProvider:
         plugin = self._plugin_registry.create(tenant_config.ecosystem)
         backend: StorageBackend | None = None
         try:
-            plugin.initialize(tenant_config.plugin_settings.model_dump())
+            plugin.initialize(tenant_config.plugin_settings.plugin_payload())
             storage_module = plugin.get_storage_module()
             backend = create_storage_backend(
                 tenant_config.storage,

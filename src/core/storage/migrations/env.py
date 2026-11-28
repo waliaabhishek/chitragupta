@@ -10,6 +10,7 @@ from sqlmodel import SQLModel
 
 # Import all table modules so they register with SQLModel.metadata
 import core.storage.backends.sqlmodel.base_tables  # noqa: F401
+import core.storage.backends.sqlmodel.iceberg  # noqa: F401
 import core.storage.backends.sqlmodel.tables  # noqa: F401
 import plugins.confluent_cloud.storage.tables  # noqa: F401
 import plugins.generic_metrics_only.storage.tables  # noqa: F401

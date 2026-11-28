@@ -61,14 +61,14 @@ def run_plugin_storage_downgrade_step(target_revision: str) -> None:
 
 
 def run_plugin_storage_post_upgrade(connection: Connection, *, target_revision: str) -> None:
-    """Prepare selected plugin storage when the core migration is already at its head."""
+    """Prepare selected plugin storage once its core migration has run."""
     module = _selected_module()
     if module is None:
         return
     heads = MigrationContext.configure(connection=connection).get_current_heads()
     if len(heads) != 1:
         raise RuntimeError("plugin storage preparation requires a single Alembic head")
-    if heads[0] != target_revision:
+    if not any(revision.revision == target_revision for revision in context.script.iterate_revisions(heads[0], "base")):
         return
     module.prepare_plugin_storage_migration(connection, target_revision=target_revision)
 

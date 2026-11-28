@@ -189,6 +189,68 @@ to `0`. To disable repair waiting independently, set
 **Cause**: `output_dir` not writable by engine process.
 **Fix**: Create directory and grant write access, or change `output_dir`.
 
+## Iceberg export
+
+### Check a missing or stale day
+
+Run the status command with the tenant name from the YAML file and the
+first and last UTC dates. Both dates are included.
+
+```bash
+uv run --extra iceberg python src/main.py --config-file config.yaml \
+  --iceberg-status ccloud-prod 2026-11-01 2026-11-07
+```
+
+Check the current calculation revision, last confirmed snapshot, and published
+row count. The command prints one JSON object per date. For a confirmed
+empty day, the output contains `"current": true`, `"row_count": 0`, and
+`"outcome": "succeeded"`. If a new revision is pending or failed, readers can
+still see the previous result. An unconfirmed attempt can mean the worker
+lost the catalog response. The worker checks the durable record on its next
+pass.
+
+Catalog and storage failures can retry on a later pass. An invalid or
+unrepresentable amount blocks that revision. The engine tries again after a
+new calculation or an explicit replay. If an API calculation reports that the
+tenant is busy during export, retry when the tenant is available.
+
+If a large day exceeds a size or time limit, check its error in the status
+output. Check temporary disk capacity and the response times of the source
+database, REST catalog, and object store. If preparation fails, readers keep
+seeing the previously published day. Later dates can still publish. If the same day
+keeps hitting a size limit with enough disk available, report the tenant
+name, UTC date, and error code to the Chitragupta operator.
+For `destination_file_limit`, check whether the destination table sets a very
+small `write.target-file-size-bytes`.
+
+For `table_layout` after maintenance, check that the current snapshot uses
+the configured identity partitions, Parquet data files, and data manifests
+for the current partition spec. The partition fields in each manifest must
+follow the field order in that spec. Use a compatible destination layout
+before retrying the affected day.
+
+If an older worker reported `table_metrics` after compaction, retry or
+replay the affected dates on the updated worker while their source data
+is still retained.
+
+### Replay a date range
+
+Use replay after a tag edit, warehouse rollback, or SQL restore. Stop the
+scheduled publisher and pause calculation, repair, and retention for the
+affected tenant until the command exits.
+
+```bash
+uv run --extra iceberg python src/main.py --config-file config.yaml --emit-once \
+  --iceberg-replay ccloud-prod 2026-11-01 2026-11-07
+```
+
+The command saves the replay request in SQL and publishes the selected dates.
+Exit code zero means every requested date was confirmed. Check the reported
+dates if the command exits with an error. A date outside the retained source
+range or emitter lookback is excluded. If SQL could not confirm that the
+request was saved, issue it again while the publisher is paused. Resume the
+worker after the command exits.
+
 ## Database issues
 
 ### `sqlite3.OperationalError: database is locked`

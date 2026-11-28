@@ -224,7 +224,11 @@ storage:
 
 Use PostgreSQL for multi-instance deployments or high-volume/concurrent-access scenarios where SQLite's single-writer lock becomes a bottleneck.
 
-**Driver:** Requires `psycopg2`. Install via `uv add psycopg2-binary` (or `psycopg2` if you prefer building from source with `libpq-dev`).
+The connection URL selects the driver. A `postgresql+psycopg2` URL uses
+`psycopg2`, available as the `psycopg2-binary` package. A
+`postgresql+psycopg` URL uses psycopg 3. Use psycopg 3 when you enable the
+[Iceberg emitter](#iceberg-export). For a source environment installed without
+the development group, install it with `uv pip install 'psycopg[binary]>=3.2'`.
 
 **Connection string format:**
 
@@ -265,6 +269,159 @@ tenants:
 | Backups | Copy the `.db` file | `pg_dump` / replication |
 
 **Rule of thumb:** Start with SQLite. Switch to PostgreSQL when you need multiple application instances or observe lock contention under write-heavy workloads.
+
+## Iceberg export
+
+Use `ghcr.io/waliaabhishek/chitragupta:latest-iceberg` for the Iceberg-enabled
+worker image. To pin a release, append `-iceberg` to the backend release tag.
+Use the regular release tag for the UI image.
+
+For a local image build, pass `--build-arg ICEBERG=1` to the Docker build.
+When running the worker or Iceberg commands from source, install the extra
+with `uv sync --python 3.14 --frozen --extra iceberg`.
+
+Before enabling the [tenant emitter](../configuration/index.md#iceberg-emitter),
+create the namespace and an Iceberg v2 table in the destination catalog. Give
+the worker identity permission to load and commit the table and read and
+write its metadata and data files. Give readers access to the tables they
+need. Assign one publisher deployment to each table.
+
+Use one S3 credential set that covers both the table's metadata and data.
+The REST catalog can provide that set for the table, or you can supply
+credentials in the tenant's YAML.
+
+Use the following columns in the destination table.
+
+| Columns | Iceberg types |
+|---|---|
+| `ecosystem`, `tenant_id`, `identity_id`, `product_category`, `product_type`, `cost_type` | Required strings |
+| `chargeback_date` | Required date |
+| `timestamp` | Required timestamp with time zone |
+| `amount` | Required decimal with precision 38 and scale 5 |
+| `tags` | Map of string to string |
+| `resource_id`, `allocation_method`, `allocation_detail`, `env_id`, `team`, `calculation_id` | Optional strings |
+| `calculation_completed_at` | Optional timestamp with time zone |
+
+Use Parquet data files. Partition by the exact values of `ecosystem`,
+`tenant_id`, and `chargeback_date` using identity transforms. Set
+`commit.retry.num-retries=0`. Use uncompressed or deflate-compressed Avro
+manifests. The worker uses the partition values in the manifests to replace
+one tenant-day. Full column statistics are optional.
+
+Use the current partition spec for every live data manifest. Qualify your
+compaction and retention jobs on a test table before enabling them. After
+maintenance, replace and clear a day and check that neighboring data stays
+intact. Keep the snapshots needed for readers and recovery. Pause the
+publisher before changing the table format, storage locations, or main
+branch retention settings.
+
+Set the REST endpoint, token, and any storage options in the existing
+Chitragupta YAML. Run `--validate` to check the config. Start the worker,
+then use [Iceberg status](troubleshooting.md#iceberg-export) to find a
+confirmed day. Query that day with your warehouse's Iceberg reader. Each
+worker cycle can publish up to 10 dates across all enabled tenants, so a
+backfill can take several cycles.
+
+The worker rounds the amounts across one UTC day and passes bounded batches
+to a Linux destination process. One catalog commit replaces or clears the
+tenant-day. Main readers can keep reading the previous day while files are
+written. The commit can add several snapshots, which time-travel readers can
+query individually.
+
+Give the worker writable temporary storage. Set `SQLITE_TMPDIR` to choose the
+location. Allow up to 256 MiB per active exporter, including the temporary
+database and one batch handoff file. The worker can write up to 128 Parquet
+files per day. Each attempt has up to 60 seconds for preparation, publication,
+and recording the result. A scheduled pass has a 90-second budget. The worker
+continues from the deferred day on a later pass.
+
+PyIceberg manages catalog and storage credentials, including table credentials
+returned by the catalog and its standard S3 credential chain. The destination
+process has a 2 GiB virtual address-space limit, including REST responses and
+decoded metadata. For Avro metadata, the exporter
+allows up to 4 MiB per file, 64 MiB of encoded data in total, and 512 reads.
+Use a representative large day and table history to check these limits before
+rollout.
+
+An interrupted write can leave unreferenced Parquet and manifest objects.
+Remove them through your catalog's normal Iceberg orphan-file maintenance.
+
+DuckDB 2.0.1 can report an Avro block error when an empty export creates a
+snapshot in a wholly empty table. Use an Iceberg reader that supports that
+empty snapshot, such as Trino 484, to read the result.
+
+In your Iceberg reader, substitute your table, source tenant ID, and a
+confirmed date in this query.
+
+```sql
+SELECT timestamp, identity_id, amount
+FROM finance.chargebacks
+WHERE ecosystem = 'confluent_cloud'
+  AND tenant_id = 'prod-org'
+  AND chargeback_date = DATE '2026-11-01'
+ORDER BY timestamp, identity_id;
+```
+
+Before backfilling an existing SQL database, confirm which UTC days still
+have complete chargeback data. Start with an emitter lookback that stays
+within that range. For deployments that used timestamp-based retention,
+an old completed calculation can have only part of a day left. See
+[Data Retention](data-retention.md#tenant-pipeline-data).
+
+Test the catalog and object store from the worker image. Verify permissions,
+the certificate trust chain, and the worker's response time when either
+service stops responding. Measure the backfill and normal refresh together
+with representative data to check that publication meets the expected lag.
+
+Use a file-backed database for a SQLite source. For PostgreSQL, use a
+`postgresql+psycopg` source URL with a numeric address or Unix socket.
+If your current URL starts with `postgresql+psycopg2`, change it before you
+enable Iceberg. To use a hostname for TLS verification, keep the hostname
+in the URL and set the `hostaddr` option to its numeric address. This lets the
+worker apply its connection deadline without waiting for a DNS lookup. If
+you use a PostgreSQL service file, set `hostaddr` in the connection URL.
+
+For a local integration check, run `bash tests/integration/iceberg/run.sh`
+from the checkout. It uses Docker Compose to start a REST catalog and MinIO
+on a private network. The test runner uses DuckDB to query the table. Add
+`--trino` to test replacement after Trino compaction and commit conflicts
+against the same catalog. The script tears down its containers, network,
+and volumes when it exits.
+
+### Upgrading an existing table to Iceberg v3
+
+Keep export tables on Iceberg v2. Chitragupta uses PyIceberg 0.12.0, which
+lacks the v3 file overwrite support needed to replace or clear a tenant-day.
+The worker rejects v3 tables before writing. Follow the
+[PyIceberg v3 write issue](https://github.com/apache/iceberg-python/issues/1551).
+
+An in-place upgrade can preserve the existing Parquet files and retained
+snapshots, so there is no need to backfill from SQL. The first new v3 snapshot
+must assign row IDs to the existing files through metadata. Check your
+catalog's upgrade procedure for any required maintenance, such as removing
+active position deletes. See the [Iceberg upgrade rules](https://iceberg.apache.org/spec/#row-lineage-for-upgraded-tables)
+and the [Snowflake upgrade guide](https://docs.snowflake.com/en/user-guide/tables-iceberg-upgrade-version).
+
+Before upgrading a production table, test an in-place upgrade on a copy with
+representative retained data and the same partition layout.
+
+1. Use a Chitragupta release that supports v3 file replacement and clearing.
+   Verify that its writer commits a valid first v3 snapshot, including row
+   lineage for existing and new files. Check that compaction leaves a layout
+   the emitter supports. The current emitter rejects row-level delete files.
+2. Record the test table's UUID and export status before upgrading it. Verify
+   that the UUID and retained snapshots survive the upgrade. Read old days
+   with the production query engine and compare their row counts and totals.
+3. Resume the worker with its existing checkpoints. Verify that it skips
+   days already confirmed for the current calculation and publishes pending
+   days. Replace and clear a day after compaction, verify neighboring days,
+   and test recovery from a lost commit response.
+
+For production, stop new publications and let active commits finish. Follow
+the catalog's in-place upgrade procedure, confirm the table UUID, and resume
+with the v3-capable worker. Export checkpoints use the table UUID. A new UUID
+is treated as a new destination. Plan recovery before changing the format.
+Rolling back a snapshot leaves the table format at v3.
 
 ## Prometheus collector script
 

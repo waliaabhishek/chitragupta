@@ -18,6 +18,7 @@ from core.engine.orchestrator import ChargebackOrchestrator, GatherFailureThresh
 from core.logging_context import safe_exception_context, safe_log_context
 from core.plugin.protocols import OverlayPlugin
 from core.plugin.registry import EcosystemBundle
+from core.storage.iceberg import IcebergExportUnitOfWork
 from core.storage.tenant_lifecycle import cleanup_orphaned_pipeline_run, prepare_tenant_backend
 from core.time_precision import canonical_utc_second
 
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from datetime import date as date_type
 
     from core.config.models import AppSettings, TenantConfig
+    from core.emitters.iceberg import IcebergSchedule
     from core.models.pipeline import PipelineRun
     from core.plugin.protocols import EcosystemPlugin, OverlayConfig
     from core.plugin.registry import PluginRegistry
@@ -174,12 +176,15 @@ class WorkflowRunner:
         self._tenant_runtimes: dict[str, TenantRuntime] = {}
         self._runtime_condition = threading.Condition(threading.RLock())
         self._runtime_leases: dict[str, int] = {}
-        self._retiring_runtime_names: set[str] = set()
+        self._changing_runtime_names: set[str] = set()
+        # Keep Alembic setup serial without blocking leases of prepared runtimes.
+        self._runtime_setup_lock = threading.Lock()
         self._running_tenants: set[str] = set()
         self._running_lock = threading.Lock()
         self._failed_tenants: dict[str, str] = {}  # name -> error message
         self._failed_tenants_lock = threading.Lock()
         self._shutdown_event: threading.Event | None = None
+        self._iceberg_schedule: IcebergSchedule | None = None
         self._revision_manager = revision_manager
         self._owned_preview_artifact_store = owned_preview_artifact_store
         if revision_manager is not None and preview_generation_scheduler is None:
@@ -210,24 +215,9 @@ class WorkflowRunner:
             return tenant_name in self._running_tenants
 
     @contextmanager
-    def _claim_tenant(self, tenant_name: str) -> Iterator[bool]:
+    def _claim_tenant(self, tenant_name: str, *, scheduled: bool = False) -> Iterator[bool]:
         with self._running_lock:
-            claimed = tenant_name not in self._running_tenants
-            if claimed:
-                self._running_tenants.add(tenant_name)
-        if not claimed:
-            yield False
-            return
-        try:
-            yield True
-        finally:
-            with self._running_lock:
-                self._running_tenants.discard(tenant_name)
-
-    @contextmanager
-    def _claim_tenant_for_scheduled_preview(self, tenant_name: str) -> Iterator[bool]:
-        with self._running_lock:
-            claimed = not self._is_shutdown_requested() and tenant_name not in self._running_tenants
+            claimed = tenant_name not in self._running_tenants and (not scheduled or not self._is_shutdown_requested())
             if claimed:
                 self._running_tenants.add(tenant_name)
         if not claimed:
@@ -269,26 +259,16 @@ class WorkflowRunner:
                     failures.append(exc)
             with self._runtime_condition:
                 self._closed = True
-                while any(self._runtime_leases.values()):
+                self._runtime_condition.notify_all()
+                while self._runtime_leases or self._changing_runtime_names:
                     self._runtime_condition.wait()
-            with self._runtime_condition:
-                while self._tenant_runtimes:
-                    tenant_name, runtime = next(iter(self._tenant_runtimes.items()))
-                    if tenant_name in self._retiring_runtime_names:
-                        self._runtime_condition.wait()
-                        continue
-                    self._retiring_runtime_names.add(tenant_name)
-                    while self._runtime_leases.get(tenant_name, 0):
-                        self._runtime_condition.wait()
-                    if self._tenant_runtimes.get(tenant_name) is runtime:
-                        del self._tenant_runtimes[tenant_name]
-                    try:
-                        runtime.close()
-                    except BaseException as exc:
-                        failures.append(exc)
-                    finally:
-                        self._retiring_runtime_names.remove(tenant_name)
-                        self._runtime_condition.notify_all()
+                runtimes = tuple(self._tenant_runtimes.values())
+                self._tenant_runtimes.clear()
+            for runtime in runtimes:
+                try:
+                    runtime.close()
+                except BaseException as exc:
+                    failures.append(exc)
             if self._owned_preview_artifact_store is not None:
                 try:
                     self._owned_preview_artifact_store.close()
@@ -301,49 +281,62 @@ class WorkflowRunner:
     def preview_generation_scheduler(self) -> PreviewGenerationScheduler | None:
         return self._preview_generation_scheduler
 
-    def _get_or_create_runtime(self, tenant_name: str, config: TenantConfig) -> TenantRuntime:
-        """Get cached runtime or create new one. Recreates if unhealthy or config changed."""
-        with self._runtime_condition:
-            return self._get_or_create_runtime_locked(tenant_name, config)
-
-    def _get_or_create_runtime_locked(self, tenant_name: str, config: TenantConfig) -> TenantRuntime:
+    def _get_or_create_runtime(self, tenant_name: str, config: TenantConfig, *, lease: bool = False) -> TenantRuntime:
+        """Return the prepared runtime and acquire its lease if requested."""
         current_hash = _config_hash(config)
-
-        while True:
+        with self._runtime_condition:
+            while not self._closed and tenant_name in self._changing_runtime_names:
+                self._runtime_condition.wait()
             if self._closed:
                 raise RuntimeError("workflow runner is closed")
-            if tenant_name in self._retiring_runtime_names:
-                self._runtime_condition.wait()
-                continue
             runtime = self._tenant_runtimes.get(tenant_name)
-            if runtime is None:
-                break
-            healthy = runtime.is_healthy()
-            if runtime.config_hash == current_hash and healthy:
+            healthy = runtime is not None and runtime.is_healthy()
+            if runtime is not None and runtime.config_hash == current_hash and healthy:
+                if lease:
+                    self._runtime_leases[tenant_name] = self._runtime_leases.get(tenant_name, 0) + 1
                 return runtime
-            logger.info(
-                "Tenant %s: recreating runtime (config_changed=%s, healthy=%s)",
-                tenant_name,
-                runtime.config_hash != current_hash,
-                healthy,
-            )
-            # This thread is the sole owner of retiring this exact cache entry.
-            self._retiring_runtime_names.add(tenant_name)
-            while self._runtime_leases.get(tenant_name, 0):
-                self._runtime_condition.wait()
-            if self._tenant_runtimes.get(tenant_name) is runtime:
-                del self._tenant_runtimes[tenant_name]
-            try:
-                runtime.close()
-            finally:
-                self._retiring_runtime_names.remove(tenant_name)
+            self._changing_runtime_names.add(tenant_name)
+        try:
+            with self._runtime_condition:
+                while not self._closed and self._runtime_leases.get(tenant_name, 0):
+                    self._runtime_condition.wait()
+                if self._closed:
+                    raise RuntimeError("workflow runner is closed")
+                if runtime is not None:
+                    del self._tenant_runtimes[tenant_name]
+
+            with self._runtime_setup_lock:
+                if runtime is not None:
+                    logger.info(
+                        "Tenant %s: recreating runtime (config_changed=%s, healthy=%s)",
+                        tenant_name,
+                        runtime.config_hash != current_hash,
+                        healthy,
+                    )
+                    runtime.close()
+                with self._runtime_condition:
+                    if self._closed:
+                        raise RuntimeError("workflow runner is closed")
+                runtime = self._create_runtime(tenant_name, config, current_hash)
+
+            with self._runtime_condition:
+                self._tenant_runtimes[tenant_name] = runtime
+                if self._closed:
+                    raise RuntimeError("workflow runner is closed")
+                if lease:
+                    self._runtime_leases[tenant_name] = 1
+                return runtime
+        finally:
+            with self._runtime_condition:
+                self._changing_runtime_names.remove(tenant_name)
                 self._runtime_condition.notify_all()
 
+    def _create_runtime(self, tenant_name: str, config: TenantConfig, config_hash: str) -> TenantRuntime:
         plugin = self._plugin_registry.create(config.ecosystem)
         storage: StorageBackend | None = None
         try:
             try:
-                plugin.initialize(config.plugin_settings.model_dump())
+                plugin.initialize(config.plugin_settings.plugin_payload())
             except ValueError as exc:
                 detail = str(exc)
                 if detail.startswith("invalid_self_managed_cost_rate"):
@@ -407,34 +400,33 @@ class WorkflowRunner:
                     )
             raise
 
-        runtime = TenantRuntime(
+        logger.debug("Tenant %s: created new runtime", tenant_name)
+        return TenantRuntime(
             tenant_name=tenant_name,
             plugin=plugin,
             storage=storage,
             orchestrator=orchestrator,
-            config_hash=current_hash,
+            config_hash=config_hash,
             created_at=datetime.now(UTC),
             bootstrap_result=bootstrap_result,
         )
-        self._tenant_runtimes[tenant_name] = runtime
-        logger.debug("Tenant %s: created new runtime", tenant_name)
-        return runtime
 
     @contextmanager
     def _acquire_runtime(self, tenant_name: str, config: TenantConfig) -> Iterator[TenantRuntime]:
-        with self._runtime_condition:
-            runtime = self._get_or_create_runtime_locked(tenant_name, config)
-            self._runtime_leases[tenant_name] = self._runtime_leases.get(tenant_name, 0) + 1
+        runtime = self._get_or_create_runtime(tenant_name, config, lease=True)
         try:
             yield runtime
         finally:
-            with self._runtime_condition:
-                remaining = self._runtime_leases[tenant_name] - 1
-                if remaining:
-                    self._runtime_leases[tenant_name] = remaining
-                else:
-                    del self._runtime_leases[tenant_name]
-                self._runtime_condition.notify_all()
+            self._release_runtime_lease(tenant_name)
+
+    def _release_runtime_lease(self, tenant_name: str) -> None:
+        with self._runtime_condition:
+            remaining = self._runtime_leases[tenant_name] - 1
+            if remaining:
+                self._runtime_leases[tenant_name] = remaining
+            else:
+                del self._runtime_leases[tenant_name]
+            self._runtime_condition.notify_all()
 
     @contextmanager
     def acquire_backend(self, tenant_name: str, tenant_config: TenantConfig) -> Iterator[StorageBackend]:
@@ -476,6 +468,12 @@ class WorkflowRunner:
             return self._mark_tenant_permanently_failed(tenant_name, config, exc)
 
     def run_once(self) -> dict[str, PipelineRunResult]:
+        try:
+            return self._run_calculation_cycle()
+        finally:
+            self._publish_iceberg()
+
+    def _run_calculation_cycle(self) -> dict[str, PipelineRunResult]:
         if not self._bootstrapped:
             self.bootstrap_storage()
 
@@ -642,17 +640,18 @@ class WorkflowRunner:
                     )
 
                     # Post-pipeline hook: emit after successful pipeline commit
-                    if config.plugin_settings.emitters:
+                    ordinary_specs = config.plugin_settings.ordinary_emitters
+                    if ordinary_specs:
                         chargeback_date_source = ChargebackDateSource(runtime.storage)
                         # Billing/resource/identity rows are Prometheus-only — only pass prometheus specs
                         # to avoid spurious emission tracking records for CSV emitters.
-                        prometheus_specs = [s for s in config.plugin_settings.emitters if s.type == "prometheus"]
+                        prometheus_specs = [s for s in ordinary_specs if s.type == "prometheus"]
 
                         emitter_runners = [
                             EmitterRunner(
                                 ecosystem=config.ecosystem,
                                 storage_backend=runtime.storage,
-                                emitter_specs=config.plugin_settings.emitters,
+                                emitter_specs=ordinary_specs,
                                 date_source=chargeback_date_source,
                                 row_fetcher=ChargebackRowFetcher(runtime.storage),
                                 emitter_builder=RegistryEmitterBuilder(),
@@ -1537,6 +1536,13 @@ class WorkflowRunner:
                         config.tenant_id,
                         calculation_cutoff_date,
                     )
+                    deleted_iceberg_exports = 0
+                    if isinstance(uow, IcebergExportUnitOfWork):
+                        deleted_iceberg_exports = uow.iceberg_exports.delete_before(
+                            config.ecosystem,
+                            config.tenant_id,
+                            calculation_cutoff_date,
+                        )
 
                     ta_config = _get_overlay_ta_config(runtime.plugin)
                     deleted_ta = 0
@@ -1559,6 +1565,7 @@ class WorkflowRunner:
                     + deleted_identities
                     + deleted_chargebacks
                     + deleted_pipeline_state
+                    + deleted_iceberg_exports
                     + deleted_ta
                 )
                 if config.focus_preview_enabled:
@@ -1724,6 +1731,63 @@ class WorkflowRunner:
                 type(exc).__name__,
             )
 
+    @contextmanager
+    def _acquire_iceberg_backend(self, tenant_name: str) -> Iterator[StorageBackend | None]:
+        config = self._settings.tenants[tenant_name]
+        with self._claim_tenant(tenant_name, scheduled=True) as claimed:
+            runtime = None
+            if claimed:
+                current_hash = _config_hash(config)
+                with self._runtime_condition:
+                    cached = self._tenant_runtimes.get(tenant_name)
+                    if (
+                        not self._closed
+                        and tenant_name not in self._changing_runtime_names
+                        and cached is not None
+                        and cached.config_hash == current_hash
+                        and cached.is_healthy()
+                    ):
+                        runtime = cached
+                        self._runtime_leases[tenant_name] = self._runtime_leases.get(tenant_name, 0) + 1
+            try:
+                yield runtime.storage if runtime is not None and not self._is_shutdown_requested() else None
+            finally:
+                if runtime is not None:
+                    self._release_runtime_lease(tenant_name)
+
+    def _publish_iceberg(self) -> None:
+        if self._is_shutdown_requested() or not any(
+            config.plugin_settings.iceberg_emitter is not None for config in self._settings.tenants.values()
+        ):
+            return
+        try:
+            from core.emitters.iceberg import IcebergSchedule, publish_iceberg
+
+            if self._iceberg_schedule is None:
+                self._iceberg_schedule = IcebergSchedule()
+            summary = publish_iceberg(
+                self._settings.tenants,
+                acquire_backend=self._acquire_iceberg_backend,
+                now=datetime.now(UTC),
+                shutdown_check=self._is_shutdown_requested,
+                schedule=self._iceberg_schedule,
+            )
+            logger.info(
+                "Iceberg export attempted=%d confirmed=%d failed=%d unconfirmed=%d errors=%d",
+                summary.attempted,
+                summary.confirmed,
+                summary.failed,
+                summary.unconfirmed,
+                summary.errors,
+            )
+        except Exception as exc:
+            logger.error(
+                "iceberg_export_pass_failed%s",
+                safe_log_context(
+                    stage="emit", operation="iceberg_export", outcome="failed", error_type=type(exc).__name__
+                ),
+            )
+
     def _publish_scheduled_revisions(
         self,
         results: dict[str, PipelineRunResult],
@@ -1797,7 +1861,7 @@ class WorkflowRunner:
             return
         from core.preview.persistence import PreviewStorageBackend
 
-        with self._claim_tenant_for_scheduled_preview(tenant_name) as claimed:
+        with self._claim_tenant(tenant_name, scheduled=True) as claimed:
             if not claimed:
                 return
             try:

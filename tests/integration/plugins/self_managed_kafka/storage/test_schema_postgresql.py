@@ -90,14 +90,14 @@ def test_postgresql_selected_migration_and_repository_round_trip(postgresql_sche
     finally:
         backend.dispose()
 
-    assert _version(postgresql_schema_url) == "033"
+    assert _version(postgresql_schema_url) == "034"
     assert _table_names(postgresql_schema_url) >= _PLUGIN_TABLES
     assert [row.metadata for row in rows] == [{"team": "team-data"}]
 
 
 def test_postgresql_already_head_selected_prepare_and_downgrade_selection(postgresql_schema_url: str) -> None:
     command.upgrade(_config(postgresql_schema_url), "head")
-    assert _version(postgresql_schema_url) == "033"
+    assert _version(postgresql_schema_url) == "034"
     assert _PLUGIN_TABLES.isdisjoint(_table_names(postgresql_schema_url))
 
     selected = _config(postgresql_schema_url, plugin_storage="self_managed_kafka")
@@ -106,7 +106,7 @@ def test_postgresql_already_head_selected_prepare_and_downgrade_selection(postgr
 
     with pytest.raises(RuntimeError, match="plugin_storage"):
         command.downgrade(_config(postgresql_schema_url), "032")
-    assert _version(postgresql_schema_url) == "033"
+    assert _version(postgresql_schema_url) == "034"
     assert _table_names(postgresql_schema_url) >= _PLUGIN_TABLES
 
     command.downgrade(_config(postgresql_schema_url, plugin_storage="disabled"), "032")

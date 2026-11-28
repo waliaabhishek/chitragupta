@@ -27,6 +27,8 @@ from core.models.graph import (
 )
 
 if TYPE_CHECKING:
+    from sqlmodel.sql.expression import Select
+
     from core.emitters.models import EmissionRecord
     from core.models.billing import BillingLineItem, CoreBillingLineItem
     from core.models.chargeback import ChargebackDimensionInfo, ChargebackRow
@@ -853,6 +855,12 @@ class SQLModelChargebackRepository:
     def _to_domain_rows(self, results: Sequence[Any]) -> list[ChargebackRow]:
         return [chargeback_to_domain(dim, fact) for dim, fact in results]
 
+    def _iter_chargeback_batches(
+        self, statement: Select[tuple[ChargebackDimensionTable, ChargebackFactTable]], batch_size: int
+    ) -> Iterator[list[ChargebackRow]]:
+        for partition in self._session.execute(statement).partitions(batch_size):
+            yield self._to_domain_rows(partition)
+
     def _query_joined(self, *where_clauses: Any) -> list[ChargebackRow]:
         """Execute a joined query on dimensions+facts. where_clauses are SQLAlchemy column elements."""
         stmt = (
@@ -1261,8 +1269,7 @@ class SQLModelChargebackRepository:
             .where(*where)
             .execution_options(yield_per=batch_size)
         )
-        for partition in self._session.execute(stmt).partitions(batch_size):
-            batch = self._to_domain_rows(partition)
+        for batch in self._iter_chargeback_batches(stmt, batch_size):
             if tags_repo is not None:
                 _overlay_tags(batch, tags_repo)
             yield from batch

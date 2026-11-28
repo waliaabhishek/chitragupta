@@ -14,17 +14,17 @@ jobs:
     name: Backend quality
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0  # git-cliff integration test needs full history + tags
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.14'
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
 
@@ -44,10 +44,10 @@ jobs:
         run: uv run ruff check
 
       - name: Type check
-        run: uv run mypy src/
+        run: make typecheck
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: frontend/.nvmrc
           cache: 'npm'
@@ -84,10 +84,10 @@ jobs:
           done
 
       - name: Test with coverage
-        run: uv run pytest --cov=src --cov-fail-under=75 --cov-report=xml
+        run: uv run pytest -n auto --maxprocesses=8 --dist=worksteal --cov=src --cov-fail-under=75 --cov-report=xml
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7.1.1
         with:
           files: coverage.xml
 
@@ -98,10 +98,10 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -140,26 +140,27 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.14'
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
 
       - name: Install dependencies
         run: uv sync --frozen
 
-      - name: Run PostgreSQL migration tests
+      - name: Run PostgreSQL storage tests
         env:
           TEST_POSTGRESQL_URL: postgresql+psycopg://chitragupta:chitragupta@localhost:5432/chitragupta_test  # pragma: allowlist secret
         run: >-
           uv run pytest
+          tests/integration/core/storage/test_iceberg_sql_deadline_postgresql.py
           tests/integration/core/storage/test_migration_029_postgresql.py
           tests/integration/core/storage/test_manual_alembic_command.py
           tests/integration/plugins/self_managed_kafka/storage/test_schema_postgresql.py

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, SecretStr
 
 if TYPE_CHECKING:
-    from core.config.models import StorageConfig
+    from core.config.models import StorageConfig, TenantConfig
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +31,12 @@ def _fingerprint_value(value: Any) -> Any:
     return value
 
 
-def tenant_config_fingerprint(config: BaseModel) -> str:
-    """Return a stable digest that includes the values behind every SecretStr."""
+def tenant_config_fingerprint(config: TenantConfig) -> str:
+    """Return a stable digest of tenant settings used by the source runtime."""
+    runtime_settings = dict(config)
+    runtime_settings["plugin_settings"] = config.plugin_settings.plugin_payload()
     payload = json.dumps(
-        _fingerprint_value(config),
+        _fingerprint_value(runtime_settings),
         default=str,
         ensure_ascii=False,
         separators=(",", ":"),

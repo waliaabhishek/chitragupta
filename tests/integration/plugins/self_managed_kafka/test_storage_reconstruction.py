@@ -129,7 +129,7 @@ def test_selected_backend_reconstruction_prepares_plugin_schema_at_existing_core
     try:
         with provider.acquire_backend("tenant", no_plugin):
             pass
-        assert _version(url) == "033"
+        assert _version(url) == "034"
         assert {
             "self_managed_kafka_scope_state",
             "self_managed_kafka_principal_team_snapshots",

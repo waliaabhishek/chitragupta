@@ -1,0 +1,55 @@
+services:
+  catalog:
+    image: apache/iceberg-rest-fixture:1.10.0
+    environment:
+      CATALOG_WAREHOUSE: s3://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: fixture-admin
+      AWS_SECRET_ACCESS_KEY: fixture-admin-password  # pragma: allowlist secret
+    volumes:
+      - catalog:/tmp
+  minio:
+    build:
+      context: ../../..
+      dockerfile: tests/integration/iceberg/Dockerfile
+      target: minio
+    environment:
+      MINIO_ROOT_USER: fixture-admin
+      MINIO_ROOT_PASSWORD: fixture-admin-password  # pragma: allowlist secret
+    volumes:
+      - warehouse:/data
+  checks:
+    command: ["python", "-u", "/checks/check.py"]
+    build:
+      context: ../../..
+      dockerfile: tests/integration/iceberg/Dockerfile
+      target: checks
+    depends_on:
+      catalog:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      ICEBERG_EXAMPLE: "${ICEBERG_EXAMPLE:-}"
+      ICEBERG_FOCUSED_LARGE: "${ICEBERG_FOCUSED_LARGE:-}"
+      SQLITE_TMPDIR: /state
+    volumes:
+      - .:/checks:ro
+      - ../../../examples/iceberg:/example:ro
+      - source:/state
+      - ../../unit/core/emitters:/app/tests/unit/core/emitters:ro
+      - ../../unit/core/storage:/app/tests/unit/core/storage:ro
+    tmpfs:
+      - /state/scratch:size=128m
+
+networks:
+  default:
+    internal: true
+
+volumes:
+  catalog:
+  warehouse:
+  source:
