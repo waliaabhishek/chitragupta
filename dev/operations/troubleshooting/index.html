@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -1461,6 +1461,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#iceberg-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iceberg export
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Iceberg export">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#check-a-missing-or-stale-day" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check a missing or stale day
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#replay-a-date-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replay a date range
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#database-issues" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2195,6 +2234,45 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#iceberg-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iceberg export
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Iceberg export">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#check-a-missing-or-stale-day" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check a missing or stale day
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#replay-a-date-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replay a date range
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#database-issues" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2745,6 +2823,53 @@ to <code>0</code>. To disable repair waiting independently, set
 <h3 id="permission-denied-writing-csv">Permission denied writing CSV<a class="headerlink" href="#permission-denied-writing-csv" title="Permanent link">&para;</a></h3>
 <p><strong>Cause</strong>: <code>output_dir</code> not writable by engine process.
 <strong>Fix</strong>: Create directory and grant write access, or change <code>output_dir</code>.</p>
+<h2 id="iceberg-export">Iceberg export<a class="headerlink" href="#iceberg-export" title="Permanent link">&para;</a></h2>
+<h3 id="check-a-missing-or-stale-day">Check a missing or stale day<a class="headerlink" href="#check-a-missing-or-stale-day" title="Permanent link">&para;</a></h3>
+<p>Run the status command with the tenant name from the YAML file and the
+first and last UTC dates. Both dates are included.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--extra<span class="w"> </span>iceberg<span class="w"> </span>python<span class="w"> </span>src/main.py<span class="w"> </span>--config-file<span class="w"> </span>config.yaml<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--iceberg-status<span class="w"> </span>ccloud-prod<span class="w"> </span><span class="m">2026</span>-11-01<span class="w"> </span><span class="m">2026</span>-11-07
+</code></pre></div>
+<p>Check the current calculation revision, last confirmed snapshot, and published
+row count. The command prints one JSON object per date. For a confirmed
+empty day, the output contains <code>"current": true</code>, <code>"row_count": 0</code>, and
+<code>"outcome": "succeeded"</code>. If a new revision is pending or failed, readers can
+still see the previous result. An unconfirmed attempt can mean the worker
+lost the catalog response. The worker checks the durable record on its next
+pass.</p>
+<p>Catalog and storage failures can retry on a later pass. An invalid or
+unrepresentable amount blocks that revision. The engine tries again after a
+new calculation or an explicit replay. If an API calculation reports that the
+tenant is busy during export, retry when the tenant is available.</p>
+<p>If a large day exceeds a size or time limit, check its error in the status
+output. Check temporary disk capacity and the response times of the source
+database, REST catalog, and object store. If preparation fails, readers keep
+seeing the previously published day. Later dates can still publish. If the same day
+keeps hitting a size limit with enough disk available, report the tenant
+name, UTC date, and error code to the Chitragupta operator.
+For <code>destination_file_limit</code>, check whether the destination table sets a very
+small <code>write.target-file-size-bytes</code>.</p>
+<p>For <code>table_layout</code> after maintenance, check that the current snapshot uses
+the configured identity partitions, Parquet data files, and data manifests
+for the current partition spec. The partition fields in each manifest must
+follow the field order in that spec. Use a compatible destination layout
+before retrying the affected day.</p>
+<p>If an older worker reported <code>table_metrics</code> after compaction, retry or
+replay the affected dates on the updated worker while their source data
+is still retained.</p>
+<h3 id="replay-a-date-range">Replay a date range<a class="headerlink" href="#replay-a-date-range" title="Permanent link">&para;</a></h3>
+<p>Use replay after a tag edit, warehouse rollback, or SQL restore. Stop the
+scheduled publisher and pause calculation, repair, and retention for the
+affected tenant until the command exits.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--extra<span class="w"> </span>iceberg<span class="w"> </span>python<span class="w"> </span>src/main.py<span class="w"> </span>--config-file<span class="w"> </span>config.yaml<span class="w"> </span>--emit-once<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--iceberg-replay<span class="w"> </span>ccloud-prod<span class="w"> </span><span class="m">2026</span>-11-01<span class="w"> </span><span class="m">2026</span>-11-07
+</code></pre></div>
+<p>The command saves the replay request in SQL and publishes the selected dates.
+Exit code zero means every requested date was confirmed. Check the reported
+dates if the command exits with an error. A date outside the retained source
+range or emitter lookback is excluded. If SQL could not confirm that the
+request was saved, issue it again while the publisher is paused. Resume the
+worker after the command exits.</p>
 <h2 id="database-issues">Database issues<a class="headerlink" href="#database-issues" title="Permanent link">&para;</a></h2>
 <h3 id="sqlite3operationalerror-database-is-locked"><code>sqlite3.OperationalError: database is locked</code><a class="headerlink" href="#sqlite3operationalerror-database-is-locked" title="Permanent link">&para;</a></h3>
 <p><strong>Cause</strong>: Two processes writing to the same SQLite file simultaneously, or a crashed process left a lock.
@@ -2965,7 +3090,7 @@ package; scheduled publication reevaluates the month on a later periodic cycle.<
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.indexes", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
         <script src="../../javascripts/external-links.js"></script>
       

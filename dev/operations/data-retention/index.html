@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.5">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -1539,6 +1539,10 @@ exact timestamp cutoff described below.</p>
 <p>Set <code>retention_days</code> greater than <code>lookback_days</code> when you want recalculation to
 retain all data inside the acquisition window. <code>lookback_days</code> is not an
 archive or a guarantee that old provider inputs can be reconstructed.</p>
+<p>Iceberg export checkpoints use the same UTC cut-off as chargebacks. Iceberg
+keeps its own warehouse retention settings. Complete a backfill while the dates
+are still available in SQL and within the
+<a href="../../configuration/#iceberg-emitter">Iceberg emitter's lookback</a>.</p>
 <p>There is no CLI for selective manual retention cleanup. To remove all data for
 a tenant, stop the service and remove or recreate that tenant's database only
 after taking any required backup.</p>
@@ -1712,7 +1716,7 @@ published revisions must survive an upgrade or restore.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "navigation.indexes", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
         <script src="../../javascripts/external-links.js"></script>
       
