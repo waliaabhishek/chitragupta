@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-11-28
+
+### Added
+- Feat: Add engine-level Iceberg chargeback export ([c0fb24e](https://github.com/waliaabhishek/chitragupta/commit/c0fb24e82976a2bae098682a379a4583ff05d72d))
+
+
+### Documentation
+- Docs: Document Iceberg v3 upgrade checks ([01e96ba](https://github.com/waliaabhishek/chitragupta/commit/01e96ba88d987611bdb71cf94aca863988a467de))
+
+
+### Fixed
+- Fix: Stream Iceberg tenant-day writes in bounded batches ([a85b210](https://github.com/waliaabhishek/chitragupta/commit/a85b210c99cf38ed649d1298c2107705fd631449))
+- Fix: Preserve Kafka metadata in Iceberg exports ([3115078](https://github.com/waliaabhishek/chitragupta/commit/31150780b51dce888303f4dd27b8783b1fb33615))
+- Fix: Pin cost comparison test clocks ([f504a2c](https://github.com/waliaabhishek/chitragupta/commit/f504a2cc743f0bf97f5f3ed9e4723e5c9f08f30c))
+
+
 ## [2.3.0] - 2026-09-08
 
 ### Changed
